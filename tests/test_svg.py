@@ -48,6 +48,16 @@ def test_forest_bar_treats_unbounded_upper_as_clipped():
     assert "<polygon" in svg
 
 
+def test_forest_bar_caps_clipped_lower_bound():
+    svg = forest_bar(1.0, -99.0, 1.5, domain=(0.0, 2.0), ref=0.0, color="#000", theme=DEFAULT)
+    assert "<polygon" in svg
+
+
+def test_forest_bar_treats_unbounded_lower_as_clipped():
+    svg = forest_bar(1.0, None, 1.5, domain=(0.0, 2.0), ref=0.0, color="#000", theme=DEFAULT)
+    assert "<polygon" in svg
+
+
 def test_forest_bar_without_clipping_has_no_cap():
     svg = forest_bar(1.0, 0.5, 1.5, domain=(0.0, 2.0), ref=0.0, color="#000", theme=DEFAULT)
     assert "<polygon" not in svg

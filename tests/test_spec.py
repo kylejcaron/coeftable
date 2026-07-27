@@ -104,3 +104,25 @@ def test_estimate_default_format_is_number():
 
 def test_column_not_found_error_is_available():
     assert issubclass(ColumnNotFoundError, Exception)
+
+
+
+def test_direction_for_scalar_direction():
+    table = CoefTable(DATA, rows="metric", estimate="mean").estimate("A", "mean")
+    assert table.direction_for("a") == "higher_is_better"
+
+
+def test_direction_for_mapping_lookup():
+    table = CoefTable(
+        DATA, rows="metric", estimate="mean",
+        direction={"revenue": "lower_is_better"},
+    )
+    assert table.direction_for("revenue") == "lower_is_better"
+
+
+def test_direction_for_mapping_default_fallback():
+    table = CoefTable(
+        DATA, rows="metric", estimate="mean",
+        direction={"revenue": "lower_is_better"},
+    )
+    assert table.direction_for("other") == "higher_is_better"

@@ -44,12 +44,24 @@ def compact_number(value: float) -> str:
     """
     av = abs(value)
     if av >= 1_000_000_000:
+        scaled = round(av / 1_000_000_000, 1)
+        if scaled >= 1000:
+            return f"{value / 1_000_000_000_000:.1f}T"
         return f"{value / 1_000_000_000:.1f}B"
     if av >= 1_000_000:
+        scaled = round(av / 1_000_000, 1)
+        if scaled >= 1000:
+            return f"{value / 1_000_000_000:.1f}B"
         return f"{value / 1_000_000:.1f}M"
     if av >= 1_000:
+        scaled = round(av / 1_000, 1)
+        if scaled >= 1000:
+            return f"{value / 1_000_000:.1f}M"
         return f"{value / 1_000:.1f}k"
     if av >= 1:
+        scaled = round(av, 1)
+        if scaled >= 1000:
+            return f"{value / 1_000:.1f}k"
         return f"{value:.1f}"
     return f"{value:.2f}"
 

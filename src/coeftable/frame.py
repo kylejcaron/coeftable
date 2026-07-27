@@ -90,11 +90,17 @@ def _numeric(frame: nw.DataFrame, name: str) -> list[float | None]:
             continue
         try:
             out.append(float(value))
-        except (TypeError, ValueError) as exc:
-            raise TypeError(
-                f"Column {name!r} must be numeric to be used as an estimate or bound; "
-                f"found {value!r}."
-            ) from exc
+        except (TypeError, ValueError):
+            # Some missing-value sentinels (pd.NA, pd.NaT, masked arrays) are
+            # not None but should be treated as missing rather than rejected.
+            s = str(value)
+            if s in ("<NA>", "NaT", "nan"):
+                out.append(None)
+            else:
+                raise TypeError(
+                    f"Column {name!r} must be numeric to be used as an estimate or "
+                    f"bound; found {value!r}."
+                ) from None
     return out
 
 

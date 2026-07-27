@@ -214,6 +214,8 @@ class CoefTable:
         self.title = title
         self.subtitle = subtitle
         self.sort_rows = sort_rows
+        if declared:
+            validate_columns(declared)
 
     def _with(self, **changes: Any) -> CoefTable:
         settings: dict[str, Any] = {
@@ -405,13 +407,10 @@ class CoefTable:
         -------
         GT
             The rendered table.
-
-        Raises
-        ------
-        NotImplementedError
-            Rendering lives in `coeftable.render`, which is not yet available.
         """
-        raise NotImplementedError("Rendering is not available yet.")
+        from coeftable.render import to_gt
+
+        return to_gt(self)
 
     def _repr_html_(self) -> str:
         return self.gt()._repr_html_()
