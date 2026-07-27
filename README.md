@@ -1,7 +1,7 @@
 # coeftable
 
 Publication-quality summary tables for estimates with uncertainty. Renders
-inline forest plots, boots great_tables HTML output, and works with pandas,
+inline forest plots, boosts great_tables HTML output, and works with pandas,
 polars, or pyarrow frames.
 
 ## Installation
