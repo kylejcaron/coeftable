@@ -11,3 +11,5 @@ coverage.xml
 .ipynb_checkpoints/
 .DS_Store
 .kata.local.toml
+# roborev snapshots
+/.roborev/
