@@ -106,23 +106,28 @@ def test_column_not_found_error_is_available():
     assert issubclass(ColumnNotFoundError, Exception)
 
 
-
 def test_direction_for_scalar_direction():
     table = CoefTable(DATA, rows="metric", estimate="mean").estimate("A", "mean")
     assert table.direction_for("a") == "higher_is_better"
 
 
 def test_direction_for_mapping_lookup():
+    direction: dict[str, str] = {"revenue": "lower_is_better"}
     table = CoefTable(
-        DATA, rows="metric", estimate="mean",
-        direction={"revenue": "lower_is_better"},
+        DATA,
+        rows="metric",
+        estimate="mean",
+        direction=direction,  # type: ignore
     )
     assert table.direction_for("revenue") == "lower_is_better"
 
 
 def test_direction_for_mapping_default_fallback():
+    direction: dict[str, str] = {"revenue": "lower_is_better"}
     table = CoefTable(
-        DATA, rows="metric", estimate="mean",
-        direction={"revenue": "lower_is_better"},
+        DATA,
+        rows="metric",
+        estimate="mean",
+        direction=direction,  # type: ignore
     )
     assert table.direction_for("other") == "higher_is_better"

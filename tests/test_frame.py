@@ -209,11 +209,11 @@ def test_column_not_found_error_lists_available_columns():
         resolve(table)
 
 
-
 def test_nullable_pandas_dtype_raises_clear_error():
     import pandas as pd
 
     from coeftable.theme import DEFAULT
+
     pdf = pd.DataFrame({"metric": ["a", "b"], "rel": pd.array([None, 1.2], dtype="Float64")})
     table = CoefTable(pdf, rows="metric").estimate("E", "rel")
     out = resolve(table)
