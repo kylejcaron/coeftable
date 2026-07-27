@@ -1,0 +1,115 @@
+"""Turn a resolved specification into a great_tables object."""
+
+from __future__ import annotations
+
+from great_tables import GT, loc, style
+
+from coeftable.frame import resolve
+from coeftable.spec import CoefTable
+
+
+def to_gt(table: CoefTable) -> GT:
+    """Render `table` to a `great_tables` object.
+
+    Parameters
+    ----------
+    table
+        The specification to render.
+
+    Returns
+    -------
+    GT
+        A styled table; further native `great_tables` calls may be chained.
+    """
+    resolved = resolve(table)
+    theme = table.theme
+
+    gt = GT(
+        resolved.frame,
+        groupname_col=resolved.group_column,
+    )
+
+    if table.title:
+        gt = gt.tab_header(title=table.title, subtitle=table.subtitle or None)
+        gt = gt.tab_style(
+            style=[
+                style.text(color=theme.header_fg, weight="bold", size="26px", align="left"),
+                style.fill(color=theme.header_bg),
+            ],
+            locations=loc.title(),
+        )
+        if table.subtitle:
+            gt = gt.tab_style(
+                style=[
+                    style.text(color=theme.header_fg, size="16px", align="left"),
+                    style.fill(color=theme.header_bg),
+                ],
+                locations=loc.subtitle(),
+            )
+
+    gt = gt.tab_style(
+        style=[
+            style.text(weight="bold", color=theme.header_fg, align="center", size="16px"),
+            style.fill(color=theme.column_label_bg),
+            style.borders(sides="bottom", color=theme.header_bg, weight="2px"),
+        ],
+        locations=loc.column_labels(),
+    )
+
+    for split_value, columns in resolved.spanners.items():
+        gt = gt.tab_spanner(label=split_value, columns=columns)
+
+    if resolved.labels:
+        gt = gt.cols_label(cases=dict(resolved.labels))
+
+    gt = gt.fmt_markdown(columns=resolved.markdown_columns).cols_align(align="center")
+
+    if resolved.band_rows:
+        gt = gt.tab_style(
+            style=style.fill(color=theme.band),
+            locations=loc.body(rows=resolved.band_rows),
+        )
+    if resolved.divider_rows:
+        gt = gt.tab_style(
+            style=style.borders(sides="top", color=theme.header_bg, weight="2px"),
+            locations=loc.body(rows=resolved.divider_rows),
+        )
+    if resolved.axis_rows:
+        gt = gt.tab_style(
+            style=[
+                style.fill(color=theme.surface),
+                style.borders(sides="top", color=theme.rule, weight="1px"),
+                style.borders(sides="bottom", color=theme.surface, weight="0px"),
+            ],
+            locations=loc.body(rows=resolved.axis_rows),
+        )
+    if resolved.group_column:
+        gt = gt.tab_style(
+            style=[
+                style.text(
+                    weight="bold", color=theme.header_fg, size="16px", transform="uppercase"
+                ),
+                style.fill(color=theme.column_label_bg),
+                style.css("letter-spacing: 0.8px;"),
+            ],
+            locations=loc.row_groups(),
+        )
+
+    return gt.tab_options(
+        table_font_size=theme.table_font_size,
+        column_labels_font_size="16px",
+        data_row_padding="10px",
+        column_labels_padding="12px",
+        data_row_padding_horizontal="16px",
+        column_labels_padding_horizontal="16px",
+        table_border_top_color=theme.header_bg,
+        table_border_top_style="solid",
+        table_border_bottom_color=theme.header_bg,
+        table_border_bottom_style="solid",
+        table_border_left_color=theme.header_bg,
+        table_border_left_style="solid",
+        table_border_right_color=theme.header_bg,
+        table_border_right_style="solid",
+        table_body_border_bottom_color=theme.header_bg,
+        table_body_border_bottom_style="solid",
+    )
