@@ -1311,7 +1311,7 @@ git commit -m "feat: add inline SVG forest bars and axis"
 
 `CoefTable` is a plain class, not a dataclass: the `estimate=` constructor argument and the `.estimate()` method would otherwise collide on the class namespace. It is immutable by convention — every chain method returns a new instance via `_with`.
 
-`.gt()` raises `NotImplementedError` in this task and is completed in Task 7.
+`.gt()` is not yet functional in this task — it imports from the nonexistent `render.py` and raises `ModuleNotFoundError`. Implementation is completed in Task 7.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2506,7 +2506,7 @@ git commit -m "feat: resolve specifications against frames"
 
 **Files:**
 - Create: `src/coeftable/render.py`
-- Modify: `src/coeftable/spec.py` — `CoefTable.gt()` currently reads `raise NotImplementedError` (Task 5 shipped it that way to keep `ty check` clean before this module existed). Replace the body with the lazy import: `from coeftable.render import to_gt; return to_gt(self)`.
+- Verify: `src/coeftable/spec.py` — `CoefTable.gt()` was already shipped with the lazy import in Task 5. Confirm no change is needed.
 - Test: `tests/test_render.py`
 
 **Interfaces:**

@@ -83,8 +83,7 @@ ct.CoefTable(
 )
 ```
 
-`CoefTable` is a frozen dataclass; every chain method returns a new instance via
-`dataclasses.replace`. `.gt()` returns the raw `great_tables.GT` so native GT
+`CoefTable` is a plain class immutable by convention; every chain method returns a new instance. `.gt()` returns the raw `great_tables.GT` so native GT
 calls can continue the chain. `_repr_html_` delegates to `.gt()`, so a bare
 `CoefTable` renders in a notebook.
 
