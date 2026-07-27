@@ -2501,11 +2501,12 @@ git commit -m "feat: resolve specifications against frames"
 
 **Files:**
 - Create: `src/coeftable/render.py`
+- Modify: `src/coeftable/spec.py` — `CoefTable.gt()` currently reads `raise NotImplementedError` (Task 5 shipped it that way to keep `ty check` clean before this module existed). Replace the body with the lazy import: `from coeftable.render import to_gt; return to_gt(self)`.
 - Test: `tests/test_render.py`
 
 **Interfaces:**
 - Consumes: `Resolved` and `resolve` (Task 6), `CoefTable` (Task 5), `Theme` (Task 3).
-- Produces: `to_gt(table: CoefTable) -> GT`. Called by `CoefTable.gt()`.
+- Produces: `to_gt(table: CoefTable) -> GT`. Called by `CoefTable.gt()` after the `spec.py` edit above.
 
 - [ ] **Step 1: Write the failing test**
 
