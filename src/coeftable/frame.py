@@ -16,6 +16,7 @@ from coeftable.spec import (
     Estimate,
     Forest,
     Passthrough,
+    SpecError,
     validate_columns,
 )
 from coeftable.svg import forest_axis, forest_bar
@@ -180,6 +181,17 @@ def resolve(table: CoefTable) -> Resolved:
         When the column specification is inconsistent.
     """
     validate_columns(table.columns)
+
+    # A column label colliding with a layout key silently overwrites the
+    # layout column in the output frame. Catch it here at spec-check time.
+    layout_keys = {n for n in (table.rows, table.nest, table.groups) if n is not None}
+    for column in table.columns:
+        if column.label in layout_keys:
+            raise SpecError(
+                f"Column label {column.label!r} collides with layout column "
+                f"(rows/nest/groups key {column.label!r}); choose a different label."
+            )
+
     frame = nw.from_native(table.data, eager_only=True)
     _check_columns(frame, table)
 
@@ -229,7 +241,18 @@ def resolve(table: CoefTable) -> Resolved:
                 ordered.append(identity)
 
     splits = _ordered_unique(split_keys, sort=table.sort_rows) if table.split_columns else [None]
-    source_index = {(identities[i], split_keys[i]): i for i in range(n)}
+    source_index: dict[tuple[tuple[Any, Any], Any], int] = {}
+    for i in range(n):
+        key = (identities[i], split_keys[i])
+        if key in source_index:
+            row_label, nest_label = identities[i]
+            extra = f", split={split_keys[i]!r}" if split_keys[i] is not None else ""
+            raise SpecError(
+                f"Duplicate input row for row={row_label!r}, nest={nest_label!r}{extra}"
+                f" — each (rows, nest, split_columns) combination "
+                f"must appear at most once."
+            )
+        source_index[key] = i
 
     def output_name(column: Column, split: Any) -> str:
         return column.label if split is None else f"{split}{SPLIT_JOINER}{column.label}"
