@@ -4,7 +4,7 @@ import polars as pl
 import pytest
 
 from coeftable.frame import resolve
-from coeftable.spec import CoefTable, ColumnNotFoundError
+from coeftable.spec import CoefTable, ColumnNotFoundError, SpecError
 
 RAW = {
     "area": ["Core", "Core", "Core", "Core"],
@@ -209,7 +209,7 @@ def test_column_not_found_error_lists_available_columns():
         resolve(table)
 
 
-def test_nullable_pandas_dtype_raises_clear_error():
+def test_nullable_pandas_dtype_treated_as_missing():
     import pandas as pd
 
     from coeftable.theme import DEFAULT
@@ -219,3 +219,20 @@ def test_nullable_pandas_dtype_raises_clear_error():
     out = resolve(table)
     frame = nw.from_native(out.frame)
     assert frame["E"].to_list()[0] == DEFAULT.na_text
+
+
+def test_layout_column_collision_raises_spec_error():
+    table = CoefTable(pl.DataFrame(RAW), rows="metric").estimate(
+        "metric", "rel", ci=("rel_lb", "rel_ub")
+    )
+    with pytest.raises(SpecError, match="collides with layout"):
+        resolve(table)
+
+
+def test_duplicate_identity_rows_raise_spec_error():
+    dup = dict(RAW) | {"metric": ["Revenue", "Revenue", "Revenue", "Latency"]}
+    table = CoefTable(pl.DataFrame(dup), rows="metric", nest="variant").estimate(
+        "Lift %", "rel", ci=("rel_lb", "rel_ub")
+    )
+    with pytest.raises(SpecError, match="Duplicate input row"):
+        resolve(table)

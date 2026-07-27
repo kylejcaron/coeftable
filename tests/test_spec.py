@@ -10,7 +10,7 @@ from coeftable.spec import (
     SpecError,
     validate_columns,
 )
-from coeftable.theme import MONO
+from coeftable.theme import MONO, Direction
 
 DATA = {"metric": ["a"], "mean": [1.0], "lb": [0.5], "ub": [1.5]}
 
@@ -112,22 +112,22 @@ def test_direction_for_scalar_direction():
 
 
 def test_direction_for_mapping_lookup():
-    direction: dict[str, str] = {"revenue": "lower_is_better"}
+    direction: dict[str, Direction] = {"revenue": "lower_is_better"}
     table = CoefTable(
         DATA,
         rows="metric",
         estimate="mean",
-        direction=direction,  # type: ignore
+        direction=direction,
     )
     assert table.direction_for("revenue") == "lower_is_better"
 
 
 def test_direction_for_mapping_default_fallback():
-    direction: dict[str, str] = {"revenue": "lower_is_better"}
+    direction: dict[str, Direction] = {"revenue": "lower_is_better"}
     table = CoefTable(
         DATA,
         rows="metric",
         estimate="mean",
-        direction=direction,  # type: ignore
+        direction=direction,
     )
     assert table.direction_for("other") == "higher_is_better"

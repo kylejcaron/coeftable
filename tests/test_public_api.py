@@ -3,6 +3,7 @@ import polars as pl
 import pytest
 
 import coeftable as ct
+from coeftable.theme import Direction
 
 RAW = {
     "area": ["Core", "Core", "Ops", "Ops"],
@@ -26,14 +27,14 @@ ONE_LINE_RAW = {
 
 @pytest.mark.parametrize("frame", [pd.DataFrame(RAW), pl.DataFrame(RAW)])
 def test_full_experiment_table_renders(frame):
-    direction: dict[str, str] = {"Latency": "lower_is_better"}
+    direction: dict[str, Direction] = {"Latency": "lower_is_better"}
     html = (
         ct.CoefTable(frame, rows="metric", nest="variant", groups="area")
         .estimate("Lift Amount", "att", ci=("att_lb", "att_ub"), fmt=ct.Number(compact=True))
         .estimate("Lift %", "rel", ci=("rel_lb", "rel_ub"), fmt=ct.Percent(signed=True))
         .forest("Lift Plot", of="Lift %", ref=0.0)
         .header("Experiment Results", "Q3 holdout")
-        .with_direction(direction)  # type: ignore
+        .with_direction(direction)
         .gt()
         .as_raw_html()
     )

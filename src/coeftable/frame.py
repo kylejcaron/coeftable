@@ -95,7 +95,7 @@ def _numeric(frame: nw.DataFrame, name: str) -> list[float | None]:
             # Some missing-value sentinels (pd.NA, pd.NaT, masked arrays) are
             # not None but should be treated as missing rather than rejected.
             s = str(value)
-            if s in ("<NA>", "NaT", "nan"):
+            if s in ("<NA>", "NaT"):
                 out.append(None)
             else:
                 raise TypeError(
