@@ -790,7 +790,12 @@ def test_theme_is_frozen_and_replaceable():
     assert custom.color("favorable") == "#123456"
     assert DEFAULT.color("favorable") != "#123456"
     with pytest.raises(dataclasses.FrozenInstanceError):
-        DEFAULT.favorable = "#000000"
+        # setattr(), not `DEFAULT.favorable = ...`: ty statically flags a
+        # direct attribute assignment on a frozen dataclass as an error at
+        # check time, which is correct for real code but defeats testing the
+        # RUNTIME FrozenInstanceError this line exists to verify. setattr()
+        # is opaque to that check and raises the same FrozenInstanceError.
+        setattr(DEFAULT, "favorable", "#000000")
 
 
 def test_theme_is_hashable():
