@@ -1,7 +1,7 @@
 # coeftable
 
 Publication-quality summary tables for estimates with uncertainty. Renders
-inline forest plots, boosts great_tables HTML output, and works with pandas,
+inline forest plots, builds on great_tables HTML output, and works with pandas,
 polars, or pyarrow frames.
 
 ## Installation
@@ -27,12 +27,14 @@ df = pl.DataFrame(
     }
 )
 
-html = (
-    ct.CoefTable(df, rows="metric", estimate="est", ci=("lb", "ub"))
-    .gt()
-    .as_raw_html()
-)
+ct.CoefTable(df, rows="metric", estimate="est", ci=("lb", "ub"))
 ```
+
+A `CoefTable` renders itself in marimo, Jupyter, and any other `_repr_html_`-aware viewer —
+leave it as the last expression in a cell, no extra call needed. Outside a notebook, use
+`.gt()` to reach the underlying [great_tables](https://posit-dev.github.io/great-tables/)
+object: `table.gt().as_raw_html()` for an HTML string, `table.gt().save("t.png")` for an
+image, `table.gt().tab_options(...)` to keep styling with great_tables' own API.
 
 ## Experiment table
 
@@ -43,7 +45,7 @@ plot column, grouped row sections, nested variants, and direction hints:
 import polars as pl
 import coeftable as ct
 
-df = pl.DataFrame(
+experiment = pl.DataFrame(
     {
         "area": ["Core", "Core", "Ops", "Ops"],
         "metric": ["Revenue", "Revenue", "Latency", "Latency"],
@@ -57,15 +59,13 @@ df = pl.DataFrame(
     }
 )
 
-html = (
-    ct.CoefTable(df, rows="metric", nest="variant", groups="area")
+(
+    ct.CoefTable(experiment, rows="metric", nest="variant", groups="area")
     .estimate("Lift Amount", "att", ci=("att_lb", "att_ub"), fmt=ct.Number(compact=True))
     .estimate("Lift %", "rel", ci=("rel_lb", "rel_ub"), fmt=ct.Percent(signed=True))
     .forest("Lift Plot", of="Lift %", ref=0.0)
     .header("Experiment Results", "Q3 holdout")
     .with_direction({"Latency": "lower_is_better"})
-    .gt()
-    .as_raw_html()
 )
 ```
 
@@ -78,7 +78,7 @@ split column produces its own set of estimate / forest columns:
 import polars as pl
 import coeftable as ct
 
-df = pl.DataFrame(
+methods = pl.DataFrame(
     {
         "metric": ["Revenue", "Revenue", "Latency", "Latency"],
         "method": ["A", "B", "A", "B"],
@@ -88,11 +88,11 @@ df = pl.DataFrame(
     }
 )
 
-html = (
-    ct.CoefTable(df, rows="metric", split_columns="method", estimate="est", ci=("lb", "ub"))
+(
+    ct.CoefTable(
+        methods, rows="metric", split_columns="method", estimate="est", ci=("lb", "ub")
+    )
     .header("Cohort Revenue by Method")
-    .gt()
-    .as_raw_html()
 )
 ```
 
@@ -120,7 +120,6 @@ Use `with_direction` to mark rows where lower values are favourable:
 table = (
     ct.CoefTable(df, rows="metric", estimate="est", ci=("lb", "ub"))
     .with_direction({"Latency": "lower_is_better"})
-    .gt()
 )
 ```
 
