@@ -114,7 +114,8 @@ from dataclasses import replace
 my_theme = replace(ct.DEFAULT, favorable="#0072B2")
 ```
 
-Use `with_direction` to mark rows where lower values are favourable:
+Use `with_direction` to mark rows where lower values are favourable (reusing
+the `df` frame from [Quick start](#quick-start)):
 
 ```python
 table = (
