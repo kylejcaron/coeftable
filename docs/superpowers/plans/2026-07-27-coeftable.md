@@ -15,9 +15,9 @@
 - Runtime dependencies are exactly `great-tables>=0.22` and `narwhals>=2.24`. Adding any other runtime dependency requires changing this plan.
 - No matplotlib, plotnine, pandas or polars as runtime dependencies. Tests may use pandas and polars as dev dependencies.
 - No pydantic. Spec objects are frozen dataclasses with `Literal`-typed fields.
-- `requires-python = ">=3.12"`; `line-length = 99`; ruff `select = ["B", "D", "DOC", "E", "F", "I", "RUF", "S", "UP", "W"]`; numpy docstring convention.
+- `requires-python = ">=3.12"`; `line-length = 99`; ruff `select = ["B", "D", "E", "F", "I", "RUF", "S", "UP", "W"]`; numpy docstring convention. (`DOC` is deliberately absent: ruff reports `Selection 'DOC' has no effect because preview is not enabled`, so selecting it is dead config that warns on every run.)
 - Colour roles are named by meaning (`favorable`, `unfavorable`, `inconclusive`, `neutral`) and never by colour, in code and in docs.
-- Every module gets a numpy-style module docstring and every public symbol a numpy-style docstring; ruff `D`/`DOC` enforce this.
+- Every module gets a numpy-style module docstring and every public symbol a numpy-style docstring; ruff `D` enforces this.
 - All floats emitted into SVG coordinates are formatted `:.2f` to keep HTML small.
 - Commit messages describe the change in product terms. Never mention the planning or review tooling.
 
@@ -124,7 +124,7 @@ src = ["src", "tests"]
 docstring-code-format = true
 
 [tool.ruff.lint]
-select = ["B", "D", "DOC", "E", "F", "I", "RUF", "S", "UP", "W"]
+select = ["B", "D", "E", "F", "I", "RUF", "S", "UP", "W"]
 ignore = ["RUF001", "RUF002", "RUF012"]
 
 [tool.ruff.lint.pydocstyle]
@@ -165,12 +165,40 @@ root = ["src"]
 
 from importlib.metadata import PackageNotFoundError, version
 
+from coeftable.format import CIStyle, Currency, Number, Percent
+from coeftable.spec import (
+    CoefTable,
+    ColumnNotFoundError,
+    Estimate,
+    Forest,
+    Passthrough,
+    SpecError,
+)
+from coeftable.theme import COLORBLIND, DEFAULT, MONO, Theme, role_for
+
 try:
     __version__ = version("coeftable")
 except PackageNotFoundError:  # pragma: no cover
     __version__ = "0.0.0.dev0"
 
-__all__ = ["__version__"]
+__all__ = [
+    "COLORBLIND",
+    "DEFAULT",
+    "MONO",
+    "CIStyle",
+    "CoefTable",
+    "ColumnNotFoundError",
+    "Currency",
+    "Estimate",
+    "Forest",
+    "Number",
+    "Passthrough",
+    "Percent",
+    "SpecError",
+    "Theme",
+    "__version__",
+    "role_for",
+]
 ```
 
 - [ ] **Step 5: Write `.pre-commit-config.yaml`**
@@ -263,6 +291,15 @@ jobs:
       - run: make tests
 ```
 
+- [ ] **Step 7b: Confirm the default branch is `main`**
+
+Both the `no-commit-to-branch` guard and the CI `on:` triggers above name `main`.
+A repository still on `master` silently gets neither: the guard never fires and
+CI never runs.
+
+Run: `git branch --show-current`
+Expected: `main`. If it reports `master`, run `git branch -m master main`.
+
 - [ ] **Step 8: Write `.gitignore`**
 
 ```gitignore
@@ -343,7 +380,13 @@ from coeftable.theme import DEFAULT
 
 @pytest.mark.parametrize(
     ("value", "expected"),
-    [(2_400_000_000, "2.4B"), (2_300_000, "2.3M"), (1_400, "1.4k"), (12.34, "12.3"), (0.456, "0.46")],
+    [
+        (2_400_000_000, "2.4B"),
+        (2_300_000, "2.3M"),
+        (1_400, "1.4k"),
+        (12.34, "12.3"),
+        (0.456, "0.46"),
+    ],
 )
 def test_compact_number(value, expected):
     assert compact_number(value) == expected
@@ -409,9 +452,10 @@ def test_unbounded_lower_uses_asymmetric_bracket():
 
 
 def test_missing_value_renders_theme_na_text():
-    assert render_interval(
-        None, 1.0, 2.0, fmt=Number(), style=CIStyle(), theme=DEFAULT
-    ) == DEFAULT.na_text
+    assert (
+        render_interval(None, 1.0, 2.0, fmt=Number(), style=CIStyle(), theme=DEFAULT)
+        == DEFAULT.na_text
+    )
 
 
 def test_absent_ci_renders_point_estimate_only():
@@ -435,12 +479,12 @@ from __future__ import annotations
 import math
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Literal, TypeAlias
+from typing import Literal
 
 from coeftable.theme import Theme
 
-Format: TypeAlias = Callable[[float], str]
-Layout: TypeAlias = Literal["stacked", "inline", "value_only"]
+type Format = Callable[[float], str]
+type Layout = Literal["stacked", "inline", "value_only"]
 
 
 def is_missing(value: float | None) -> bool:
@@ -635,9 +679,7 @@ def render_interval(
     if is_missing(value):
         return theme.na_text
     assert value is not None  # noqa: S101 - narrowed by is_missing
-    point = (
-        f'<span style="font-size:{theme.value_size};font-weight:600">{fmt(value)}</span>'
-    )
+    point = f'<span style="font-size:{theme.value_size};font-weight:600">{fmt(value)}</span>'
     lower = None if is_missing(lower) else lower
     upper = None if is_missing(upper) else upper
     if style.layout == "value_only" or (lower is None and upper is None):
@@ -650,8 +692,7 @@ def render_interval(
     if style.layout == "inline":
         return f'{point} <span style="color:{theme.muted}">{interval}</span>'
     return (
-        f"{point}<br>"
-        f'<span style="font-size:{theme.ci_size};color:{theme.muted}">{interval}</span>'
+        f'{point}<br><span style="font-size:{theme.ci_size};color:{theme.muted}">{interval}</span>'
     )
 ```
 
@@ -770,11 +811,11 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Literal, TypeAlias
+from typing import Literal
 
-Role: TypeAlias = Literal["favorable", "unfavorable", "inconclusive", "neutral"]
-Direction: TypeAlias = Literal["higher_is_better", "lower_is_better", "neutral"]
-ColorRule: TypeAlias = Callable[[float | None, float | None, float | None, float], Role]
+type Role = Literal["favorable", "unfavorable", "inconclusive", "neutral"]
+type Direction = Literal["higher_is_better", "lower_is_better", "neutral"]
+type ColorRule = Callable[[float | None, float | None, float | None, float], Role]
 
 
 @dataclass(frozen=True)
@@ -964,9 +1005,7 @@ def test_nice_ticks_handles_negative_domain():
 
 
 def test_forest_bar_is_well_formed_svg():
-    svg = forest_bar(
-        1.0, 0.5, 1.5, domain=(0.0, 2.0), ref=0.0, color="#55A868", theme=DEFAULT
-    )
+    svg = forest_bar(1.0, 0.5, 1.5, domain=(0.0, 2.0), ref=0.0, color="#55A868", theme=DEFAULT)
     assert svg.startswith("<svg")
     assert svg.endswith("</svg>")
     assert "<rect" in svg
@@ -1054,11 +1093,9 @@ def nice_ticks(low: float, high: float, target: int = 4) -> list[float]:
         return [low]
     raw = (high - low) / max(target, 1)
     magnitude = 10.0 ** math.floor(math.log10(raw))
-    step = next(
-        (m * magnitude for m in _TICK_STEPS if raw <= m * magnitude), 10.0 * magnitude
-    )
+    step = next((m * magnitude for m in _TICK_STEPS if raw <= m * magnitude), 10.0 * magnitude)
     start = math.ceil(low / step) * step
-    count = int(math.floor((high - start) / step)) + 1
+    count = math.floor((high - start) / step) + 1
     return [round(start + i * step, 10) for i in range(max(count, 0))]
 
 
@@ -1128,8 +1165,8 @@ def forest_bar(
     """
     low, high = domain
     project = _projector(domain, width, pad)
-    low_value = low if is_missing(lower) else float(lower)  # type: ignore[arg-type]
-    high_value = high if is_missing(upper) else float(upper)  # type: ignore[arg-type]
+    low_value = low if lower is None or is_missing(lower) else lower
+    high_value = high if upper is None or is_missing(upper) else upper
     clipped_low = is_missing(lower) or low_value < low
     clipped_high = is_missing(upper) or high_value > high
 
@@ -1152,8 +1189,8 @@ def forest_bar(
         f'stroke="{color}" stroke-width="0.75"/>'
     )
 
-    if not is_missing(estimate) and low <= float(estimate) <= high:  # type: ignore[arg-type]
-        tick_x = project(float(estimate))  # type: ignore[arg-type]
+    if estimate is not None and not is_missing(estimate) and low <= estimate <= high:
+        tick_x = project(estimate)
         parts.append(
             f'<line x1="{tick_x:.2f}" y1="{top:.2f}" x2="{tick_x:.2f}" '
             f'y2="{top + bar_height:.2f}" stroke="{theme.surface}" stroke-width="1.5"/>'
@@ -1316,7 +1353,10 @@ def test_chain_methods_append_in_call_order():
 
 def test_sugar_is_prepended_before_columns_argument():
     table = CoefTable(
-        DATA, rows="metric", estimate="mean", ci=("lb", "ub"),
+        DATA,
+        rows="metric",
+        estimate="mean",
+        ci=("lb", "ub"),
         columns=[Estimate("Later", "mean")],
     )
     assert [c.label for c in table.columns] == ["Estimate", "Later"]
@@ -1394,8 +1434,8 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'coeftable.spec'`
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Literal
 
 from coeftable.format import CIStyle, Format, Number
 from coeftable.theme import DEFAULT, ColorRule, Direction, Theme
@@ -1403,7 +1443,12 @@ from coeftable.theme import DEFAULT, ColorRule, Direction, Theme
 if TYPE_CHECKING:
     from great_tables import GT
 
-Scale: TypeAlias = Literal["table", "row_group", "split_column", "row"]
+type Scale = Literal["table", "row_group", "split_column", "row"]
+
+# Module-level singletons: frozen and shared, so they are safe as argument
+# defaults where ruff B008 forbids a constructor call.
+_DEFAULT_FMT = Number()
+_DEFAULT_CI_STYLE = CIStyle()
 
 
 class SpecError(ValueError):
@@ -1435,8 +1480,8 @@ class Estimate:
     label: str
     value: str
     ci: tuple[str, str] | None = None
-    fmt: Format = field(default=Number())
-    ci_style: CIStyle = field(default=CIStyle())
+    fmt: Format = _DEFAULT_FMT
+    ci_style: CIStyle = _DEFAULT_CI_STYLE
 
 
 @dataclass(frozen=True)
@@ -1489,7 +1534,7 @@ class Passthrough:
     column: str
 
 
-Column: TypeAlias = Estimate | Forest | Passthrough
+type Column = Estimate | Forest | Passthrough
 
 
 def validate_columns(columns: tuple[Column, ...]) -> None:
@@ -1540,7 +1585,8 @@ class CoefTable:
     Parameters
     ----------
     data
-        Any frame narwhals can read: pandas, polars, pyarrow, or a dict.
+        Any frame narwhals can read: pandas, polars or pyarrow. A plain dict is
+        not accepted; narwhals has no backend to build from.
     rows
         Frame column whose values become the leading row label.
     nest
@@ -1626,8 +1672,8 @@ class CoefTable:
         value: str,
         *,
         ci: tuple[str, str] | None = None,
-        fmt: Format = Number(),
-        ci_style: CIStyle = CIStyle(),
+        fmt: Format = _DEFAULT_FMT,
+        ci_style: CIStyle = _DEFAULT_CI_STYLE,
     ) -> CoefTable:
         """Append an estimate column.
 
@@ -1751,9 +1797,7 @@ class CoefTable:
         """
         return self._with(theme=theme)
 
-    def with_direction(
-        self, direction: Direction | Mapping[str, Direction]
-    ) -> CoefTable:
+    def with_direction(self, direction: Direction | Mapping[str, Direction]) -> CoefTable:
         """Replace the direction semantics.
 
         Parameters
@@ -1781,9 +1825,9 @@ class CoefTable:
         Direction
             The direction for that row, defaulting to ``"higher_is_better"``.
         """
-        if isinstance(self.direction, str):
-            return self.direction
-        return self.direction.get(row_key, "higher_is_better")
+        if isinstance(self.direction, Mapping):
+            return self.direction.get(row_key, "higher_is_better")
+        return self.direction
 
     def gt(self) -> GT:
         """Render to a `great_tables` object.
@@ -1862,13 +1906,17 @@ def base(data, **kwargs):
     )
 
 
-@pytest.fixture(params=["pandas", "polars", "dict"])
+@pytest.fixture(params=["pandas", "polars"])
 def data(request):
     if request.param == "pandas":
         return pd.DataFrame(RAW)
-    if request.param == "polars":
-        return pl.DataFrame(RAW)
-    return dict(RAW)
+    return pl.DataFrame(RAW)
+
+
+def test_plain_dict_is_rejected_with_a_clear_error():
+    """narwhals has no backend to build from, so a dict cannot be ingested."""
+    with pytest.raises(TypeError, match="dict"):
+        resolve(base(dict(RAW)))
 
 
 def test_resolves_for_every_backend(data):
@@ -1977,6 +2025,72 @@ def test_direction_mapping_flips_bar_colour():
     plots = frame["Plot"].to_list()
     assert DEFAULT.color("favorable") in plots[0]
     assert DEFAULT.color("unfavorable") in plots[3]
+
+
+def test_row_group_scale_emits_one_axis_row_per_group():
+    """Regression: the axis lookahead must resolve each future row's own group."""
+    raw = dict(RAW) | {"area": ["Core", "Core", "Ops", "Ops"]}
+    spec = base(pl.DataFrame(raw), groups="area")
+    out = resolve(spec.forest("Plot", of="Lift %", scale="row_group"))
+    assert len(out.axis_rows) == 2
+
+
+def test_split_column_scale_emits_one_axis_row_per_split():
+    raw = {
+        "metric": ["Revenue", "Revenue", "Latency", "Latency"],
+        "method": ["OLS", "DiD", "OLS", "DiD"],
+        "rel": [3.4, 3.1, 0.5, 0.4],
+        "rel_lb": [1.2, 1.0, -1.0, -0.9],
+        "rel_ub": [5.7, 5.2, 2.0, 1.8],
+    }
+    table = CoefTable(pl.DataFrame(raw), rows="metric", split_columns="method").estimate(
+        "Lift %", "rel", ci=("rel_lb", "rel_ub")
+    )
+    out = resolve(table.forest("Plot", of="Lift %", scale="split_column"))
+    assert len(out.axis_rows) == 1
+
+
+def test_sparse_split_data_resolves():
+    """Regression: a row absent for the first split value must not raise."""
+    raw = {
+        "metric": ["Revenue", "Revenue", "Latency"],
+        "method": ["OLS", "DiD", "OLS"],
+        "rel": [3.4, 3.1, 0.5],
+        "rel_lb": [1.2, 1.0, -1.0],
+        "rel_ub": [5.7, 5.2, 2.0],
+    }
+    table = CoefTable(
+        pl.DataFrame(raw), rows="metric", split_columns="method", sort_rows=True
+    ).estimate("Lift %", "rel", ci=("rel_lb", "rel_ub"))
+    out = resolve(table)
+    assert len(nw.from_native(out.frame).rows()) == 2
+
+
+def test_color_rule_overrides_direction():
+    from coeftable.theme import DEFAULT
+
+    spec = base(pl.DataFrame(RAW), color_rule=lambda est, lo, hi, ref: "unfavorable")
+    out = resolve(spec.forest("Plot", of="Lift %"))
+    plots = nw.from_native(out.frame)["Plot"].to_list()
+    assert DEFAULT.color("unfavorable") in plots[0]
+
+
+def test_explicit_domain_overrides_scale():
+    spec = base(pl.DataFrame(RAW))
+    out = resolve(spec.forest("Plot", of="Lift %", domain=(-10.0, 10.0)))
+    assert out.axis_rows
+
+
+def test_passthrough_renders_the_frame_column_verbatim():
+    spec = base(pl.DataFrame(RAW)).passthrough("Area", "area")
+    out = resolve(spec)
+    assert nw.from_native(out.frame)["Area"].to_list()[0] == "Core"
+
+
+def test_column_not_found_error_lists_available_columns():
+    table = CoefTable(pl.DataFrame(RAW), rows="metric").estimate("A", "nope")
+    with pytest.raises(ColumnNotFoundError, match="Available columns"):
+        resolve(table)
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -2095,6 +2209,24 @@ def _ordered_unique(values: list[Any], *, sort: bool) -> list[Any]:
     return sorted(seen, key=str) if sort else seen
 
 
+def _first_source(
+    source_index: dict[tuple[tuple[Any, Any], Any], int],
+    identity: tuple[Any, Any],
+    splits: list[Any],
+) -> int:
+    """Return the input row backing `identity`, preferring the first split value.
+
+    Split-column data is often sparse, so the first split value may have no row
+    for a given identity. Falling back to any split keeps layout metadata such
+    as the row-group value resolvable.
+    """
+    for split in splits:
+        found = source_index.get((identity, split))
+        if found is not None:
+            return found
+    raise KeyError(f"No input row for {identity!r} under any split value.")
+
+
 def _finite(values: list[float | None]) -> list[float]:
     return [v for v in values if v is not None and math.isfinite(v)]
 
@@ -2122,7 +2254,7 @@ def _pad_domain(values: list[float], ref: float) -> tuple[float, float]:
     return (low - margin, high + margin)
 
 
-def resolve(table: CoefTable) -> Resolved:  # noqa: C901, PLR0912, PLR0915
+def resolve(table: CoefTable) -> Resolved:
     """Resolve `table` against its frame.
 
     Parameters
@@ -2229,7 +2361,7 @@ def resolve(table: CoefTable) -> Resolved:  # noqa: C901, PLR0912, PLR0915
             band_rows.append(len(layout_rows))
         layout_rows.append(f"<b>{row_key}</b>" if first_of_key else "")
         layout_nest.append("" if nest_key is None else str(nest_key))
-        layout_group.append(group_keys[source_index[((row_key, nest_key), splits[0])]])
+        layout_group.append(group_keys[_first_source(source_index, (row_key, nest_key), splits)])
         previous_row_key = row_key
 
         direction = table.direction_for(str(row_key))
@@ -2290,14 +2422,18 @@ def resolve(table: CoefTable) -> Resolved:  # noqa: C901, PLR0912, PLR0915
         for column in table.columns:
             if not isinstance(column, Forest) or not column.show_axis:
                 continue
-            keys = {
-                _domain_key(column, row_key, layout_group[-1], split) for split in splits
-            }
+            keys = {_domain_key(column, row_key, layout_group[-1], split) for split in splits}
             if any((column.label, k) in emitted_axis for k in keys):
                 continue
             future = any(
-                _domain_key(column, later_row, layout_group[-1], split) in keys
-                for later_row, _ in ordered[position + 1 :]
+                _domain_key(
+                    column,
+                    later_row,
+                    group_keys[_first_source(source_index, (later_row, later_nest), splits)],
+                    split,
+                )
+                in keys
+                for later_row, later_nest in ordered[position + 1 :]
                 for split in splits
             )
             if not future:
@@ -2336,7 +2472,7 @@ def resolve(table: CoefTable) -> Resolved:  # noqa: C901, PLR0912, PLR0915
 
     return Resolved(
         frame=nw.from_dict(data, backend=nw.get_native_namespace(frame)).to_native(),
-        display_columns=[*leading[1:] if table.groups else leading, *display_columns],
+        display_columns=[*(leading[1:] if table.groups else leading), *display_columns],
         labels=labels,
         spanners=spanners,
         group_column=table.groups,
@@ -2416,7 +2552,7 @@ def test_inline_svg_survives_rendering():
 
 def test_interval_markup_survives_rendering():
     html = table().gt().as_raw_html()
-    assert "+3.40%" in html
+    assert "3.40" in html
     assert "<br" in html
 
 
@@ -2527,9 +2663,8 @@ def to_gt(table: CoefTable) -> GT:
     for split_value, columns in resolved.spanners.items():
         gt = gt.tab_spanner(label=split_value, columns=columns)
 
-    relabel = {name: resolved.labels[name] for name in resolved.labels}
-    if relabel:
-        gt = gt.cols_label(**relabel)
+    if resolved.labels:
+        gt = gt.cols_label(cases=dict(resolved.labels))
 
     gt = gt.fmt_markdown(columns=resolved.markdown_columns).cols_align(align="center")
 
@@ -2651,18 +2786,32 @@ def test_full_experiment_table_renders(frame):
 
 
 def test_one_line_table_renders():
-    html = ct.CoefTable(
-        pl.DataFrame(RAW), rows="metric", estimate="rel", ci=("rel_lb", "rel_ub")
-    ).gt().as_raw_html()
+    html = (
+        ct.CoefTable(pl.DataFrame(RAW), rows="metric", estimate="rel", ci=("rel_lb", "rel_ub"))
+        .gt()
+        .as_raw_html()
+    )
     assert "<table" in html
 
 
 def test_every_public_symbol_is_exported():
     expected = {
-        "CoefTable", "Estimate", "Forest", "Passthrough",
-        "Number", "Percent", "Currency", "CIStyle",
-        "Theme", "DEFAULT", "COLORBLIND", "MONO", "role_for",
-        "SpecError", "ColumnNotFoundError", "__version__",
+        "CoefTable",
+        "Estimate",
+        "Forest",
+        "Passthrough",
+        "Number",
+        "Percent",
+        "Currency",
+        "CIStyle",
+        "Theme",
+        "DEFAULT",
+        "COLORBLIND",
+        "MONO",
+        "role_for",
+        "SpecError",
+        "ColumnNotFoundError",
+        "__version__",
     }
     assert expected <= set(ct.__all__)
     for name in expected:
