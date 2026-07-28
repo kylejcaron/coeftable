@@ -1,4 +1,4 @@
-.PHONY: setup tests prek lint
+.PHONY: setup tests tests-all lint typecheck prek
 
 setup:
 	uv sync --all-extras
@@ -6,8 +6,14 @@ setup:
 tests:
 	uv run pytest
 
-prek:
-	SKIP=no-commit-to-branch uv run prek run --all-files
+tests-all:
+	uv run nox -s tests
 
 lint:
-	uv run ruff check src tests && uv run ruff format --check src tests && uv run ty check
+	uv run nox -s lint
+
+typecheck:
+	uv run nox -s typecheck
+
+prek:
+	SKIP=no-commit-to-branch uv run prek run --all-files

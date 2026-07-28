@@ -1,6 +1,7 @@
 __pycache__/
 *.py[cod]
 .venv/
+.nox/
 dist/
 build/
 *.egg-info/
