@@ -41,6 +41,19 @@ def test_forest_column_gets_reduced_vertical_padding():
     assert "padding-top: 2px; padding-bottom: 2px;" in html
 
 
+def test_inline_estimate_stays_nowrap_alongside_a_forest_column():
+    from coeftable.format import CIStyle
+
+    html = (
+        CoefTable(pl.DataFrame(RAW), rows="metric", nest="variant")
+        .estimate("Lift %", "rel", ci=("rel_lb", "rel_ub"), ci_style=CIStyle(layout="inline"))
+        .forest("Plot", of="Lift %")
+        .gt()
+        .as_raw_html()
+    )
+    assert "white-space:nowrap" in html
+
+
 def test_interval_markup_survives_rendering():
     html = table().gt().as_raw_html()
     assert "3.40" in html

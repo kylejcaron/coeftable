@@ -70,6 +70,17 @@ def test_render_interval_inline_layout_has_no_break():
     assert "<br>" not in html
 
 
+def test_render_interval_inline_layout_does_not_wrap():
+    # Regression: without white-space:nowrap, a browser's table-layout:auto
+    # can shrink this column below its content width when a wide sibling
+    # column (e.g. a forest-plot bar) is also present, wrapping the value
+    # and CI onto two lines at the space between them.
+    html = render_interval(
+        3.4, 1.2, 5.7, fmt=Percent(decimals=1), style=CIStyle(layout="inline"), theme=DEFAULT
+    )
+    assert "white-space:nowrap" in html
+
+
 def test_render_interval_value_only_omits_ci():
     html = render_interval(
         3.4, 1.2, 5.7, fmt=Percent(decimals=1), style=CIStyle(layout="value_only"), theme=DEFAULT
