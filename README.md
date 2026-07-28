@@ -64,10 +64,12 @@ experiment = pl.DataFrame(
     .estimate("Lift Amount", "att", ci=("att_lb", "att_ub"), fmt=ct.Number(compact=True))
     .estimate("Lift %", "rel", ci=("rel_lb", "rel_ub"), fmt=ct.Percent(signed=True))
     .forest("Lift Plot", of="Lift %", ref=0.0)
-    .header("Experiment Results", "Q3 holdout")
+    .header("Experiment Results", "Example Experiment")
     .with_direction({"Latency": "lower_is_better"})
 )
 ```
+
+![Rendered experiment results table with grouped sections, nested variants, and an inline forest plot](docs/images/example.png)
 
 ## Comparing methods
 
@@ -98,12 +100,22 @@ methods = pl.DataFrame(
 
 ## Theming
 
-Three built-in themes are available:
+Four built-in themes are available from `coeftable.theme`:
 
 ```python
-ct.DEFAULT       # Blue-grey palette for print
-ct.COLORBLIND    # Colourblind-safe palette
-ct.MONO          # Grayscale for mono journals
+from coeftable.theme import BLUE, COLORBLIND, DEFAULT, MONO, TEXTUAL
+
+DEFAULT       # Alias for TEXTUAL -- what CoefTable uses if you don't set a theme
+TEXTUAL       # Minimal, publication-style: muted colours, light chrome
+BLUE          # The original blue-grey palette
+COLORBLIND    # Colourblind-safe palette
+MONO          # Grayscale for mono journals
+```
+
+Apply one with `.with_theme(...)`:
+
+```python
+table.with_theme(BLUE)
 ```
 
 Customise a theme with `dataclasses.replace`:
@@ -111,7 +123,7 @@ Customise a theme with `dataclasses.replace`:
 ```python
 from dataclasses import replace
 
-my_theme = replace(ct.DEFAULT, favorable="#0072B2")
+my_theme = replace(BLUE, favorable="#0072B2")
 ```
 
 Use `with_direction` to mark rows where lower values are favourable (reusing
