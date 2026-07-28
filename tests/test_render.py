@@ -84,3 +84,17 @@ def test_textual_theme_omits_vertical_borders():
     html = table().with_theme(TEXTUAL).gt().as_raw_html()
     assert "border-left-style: none" in html
     assert "border-right-style: none" in html
+
+
+def test_textual_theme_uses_border_color_for_structural_borders():
+    # Structural rules (table frame, table body, column labels, row
+    # groups) must stay visible even though header_bg is a near-white
+    # title banner -- they should resolve to border_color, not header_bg.
+    import re
+
+    html = table(groups="area").with_theme(TEXTUAL).gt().as_raw_html()
+    match = re.search(r"\.gt_table \{[^}]+\}", html)
+    assert match is not None
+    assert TEXTUAL.border_color is not None
+    assert TEXTUAL.border_color.lower() in match.group(0).lower()
+    assert TEXTUAL.header_bg.lower() not in match.group(0).lower()

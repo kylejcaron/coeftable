@@ -103,3 +103,18 @@ def test_textual_axis_labels_are_legible():
     # Forest-plot xtick labels render at a small font size against a white
     # background; they must be at least as dark as BLUE's axis colour.
     assert _luminance(TEXTUAL.axis) <= _luminance(BLUE.axis)
+
+
+def test_textual_border_color_is_decoupled_from_header_bg():
+    # header_bg stays a light title banner; border_color independently
+    # drives every structural rule (table frame, table body, column
+    # labels, row groups) so they stay visible against the light banner.
+    assert TEXTUAL.border_color is not None
+    assert TEXTUAL.border_color != TEXTUAL.header_bg
+    assert _luminance(TEXTUAL.border_color) < _luminance(TEXTUAL.header_bg)
+
+
+def test_other_themes_have_no_border_color_override():
+    assert BLUE.border_color is None
+    assert COLORBLIND.border_color is None
+    assert MONO.border_color is None
