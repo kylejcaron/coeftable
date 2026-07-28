@@ -2,7 +2,7 @@ import dataclasses
 
 import pytest
 
-from coeftable.theme import COLORBLIND, DEFAULT, MONO, Theme, role_for
+from coeftable.theme import BLUE, COLORBLIND, DEFAULT, MONO, TEXTUAL, Theme, role_for
 
 
 @pytest.mark.parametrize(
@@ -48,9 +48,19 @@ def test_color_raises_on_unknown_role():
         DEFAULT.color("bogus")  # ty: ignore[invalid-argument-type]
 
 
-def test_mono_encodes_no_significance():
-    colors = {MONO.color(r) for r in ("favorable", "unfavorable", "inconclusive", "neutral")}
-    assert len(colors) == 1
+def _luminance(hex_color: str) -> int:
+    """Sum of RGB channels; lower means visually darker."""
+    r, g, b = (int(hex_color[i : i + 2], 16) for i in (1, 3, 5))
+    return r + g + b
+
+
+def test_mono_shades_significant_results_darker():
+    # Favorable and unfavorable share a shade (MONO never colour-codes
+    # direction), but that shade is darker than inconclusive's, and
+    # neutral sits between the two.
+    assert MONO.color("favorable") == MONO.color("unfavorable")
+    assert _luminance(MONO.color("favorable")) < _luminance(MONO.color("neutral"))
+    assert _luminance(MONO.color("neutral")) < _luminance(MONO.color("inconclusive"))
 
 
 def test_colorblind_separates_favorable_from_unfavorable():
@@ -67,3 +77,44 @@ def test_theme_is_frozen_and_replaceable():
 
 def test_theme_is_hashable():
     assert isinstance(hash(Theme()), int)
+
+
+def test_builtin_themes_except_textual_are_boxed():
+    assert BLUE.border_style == "boxed"
+    assert COLORBLIND.border_style == "boxed"
+    assert MONO.border_style == "boxed"
+
+
+def test_textual_is_minimal_border():
+    assert TEXTUAL.border_style == "minimal"
+
+
+def test_textual_disables_row_banding():
+    # A publication-style table has no zebra striping: band matches surface.
+    assert TEXTUAL.band == TEXTUAL.surface
+
+
+def test_textual_uses_a_muted_palette():
+    assert TEXTUAL.color("favorable") != BLUE.color("favorable")
+    assert TEXTUAL.color("unfavorable") != BLUE.color("unfavorable")
+
+
+def test_textual_axis_labels_are_legible():
+    # Forest-plot xtick labels render at a small font size against a white
+    # background; they must be at least as dark as BLUE's axis colour.
+    assert _luminance(TEXTUAL.axis) <= _luminance(BLUE.axis)
+
+
+def test_textual_border_color_is_decoupled_from_header_bg():
+    # header_bg stays a light title banner; border_color independently
+    # drives every structural rule (table frame, table body, column
+    # labels, row groups) so they stay visible against the light banner.
+    assert TEXTUAL.border_color is not None
+    assert TEXTUAL.border_color != TEXTUAL.header_bg
+    assert _luminance(TEXTUAL.border_color) < _luminance(TEXTUAL.header_bg)
+
+
+def test_other_themes_have_no_border_color_override():
+    assert BLUE.border_color is None
+    assert COLORBLIND.border_color is None
+    assert MONO.border_color is None

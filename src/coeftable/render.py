@@ -23,6 +23,7 @@ def to_gt(table: CoefTable) -> GT:
     """
     resolved = resolve(table)
     theme = table.theme
+    border_color = theme.border_color or theme.header_bg
 
     gt = GT(
         resolved.frame,
@@ -51,7 +52,6 @@ def to_gt(table: CoefTable) -> GT:
         style=[
             style.text(weight="bold", color=theme.header_fg, align="center", size="16px"),
             style.fill(color=theme.column_label_bg),
-            style.borders(sides="bottom", color=theme.header_bg, weight="2px"),
         ],
         locations=loc.column_labels(),
     )
@@ -70,8 +70,13 @@ def to_gt(table: CoefTable) -> GT:
             locations=loc.body(rows=resolved.band_rows),
         )
     if resolved.divider_rows:
+        # Deliberately lighter than border_color: this is a subtle divider
+        # between row-key blocks within the light body-row region, not a
+        # structural/chrome border. theme.rule is the intended field for
+        # "divider on a light background"; border_color is for the darker
+        # borders around table/column-label/row-group chrome.
         gt = gt.tab_style(
-            style=style.borders(sides="top", color=theme.header_bg, weight="2px"),
+            style=style.borders(sides="top", color=theme.rule, weight="1px"),
             locations=loc.body(rows=resolved.divider_rows),
         )
     if resolved.axis_rows:
@@ -91,10 +96,25 @@ def to_gt(table: CoefTable) -> GT:
                 ),
                 style.fill(color=theme.column_label_bg),
                 style.css("letter-spacing: 0.8px;"),
+                style.css(
+                    f"border-top: 1px solid {border_color} !important;"
+                    f"border-bottom: 1px solid {border_color};"
+                ),
             ],
             locations=loc.row_groups(),
         )
+    if resolved.forest_columns:
+        # The bar SVG's own height fills the row's content box; the
+        # remaining gap around it is this cell's vertical padding, which
+        # is otherwise sized for the taller estimate/CI text next to it.
+        # Shrinking it here lets the bar (and its reference line) reach
+        # closer to the row's true top/bottom edge.
+        gt = gt.tab_style(
+            style=style.css("padding-top: 2px; padding-bottom: 2px;"),
+            locations=loc.body(columns=resolved.forest_columns),
+        )
 
+    side_border_style = "none" if theme.border_style == "minimal" else "solid"
     return gt.tab_options(
         table_font_size=theme.table_font_size,
         column_labels_font_size="16px",
@@ -102,14 +122,32 @@ def to_gt(table: CoefTable) -> GT:
         column_labels_padding="12px",
         data_row_padding_horizontal="16px",
         column_labels_padding_horizontal="16px",
-        table_border_top_color=theme.header_bg,
+        heading_border_bottom_color=border_color,
+        heading_border_bottom_style="solid",
+        heading_border_bottom_width="1px",
+        column_labels_border_top_color=border_color,
+        column_labels_border_top_style="solid",
+        column_labels_border_top_width="1px",
+        column_labels_border_bottom_color=border_color,
+        column_labels_border_bottom_style="solid",
+        column_labels_border_bottom_width="1px",
+        row_group_border_top_color=border_color,
+        row_group_border_top_style="solid",
+        row_group_border_top_width="1px",
+        row_group_border_bottom_color=border_color,
+        row_group_border_bottom_style="solid",
+        row_group_border_bottom_width="1px",
+        table_border_top_color=border_color,
         table_border_top_style="solid",
-        table_border_bottom_color=theme.header_bg,
+        table_border_bottom_color=border_color,
         table_border_bottom_style="solid",
-        table_border_left_color=theme.header_bg,
-        table_border_left_style="solid",
-        table_border_right_color=theme.header_bg,
-        table_border_right_style="solid",
-        table_body_border_bottom_color=theme.header_bg,
+        table_border_left_color=border_color,
+        table_border_left_style=side_border_style,
+        table_border_right_color=border_color,
+        table_border_right_style=side_border_style,
+        table_body_border_top_color=border_color,
+        table_body_border_top_style="solid",
+        table_body_border_top_width="1px",
+        table_body_border_bottom_color=border_color,
         table_body_border_bottom_style="solid",
     )

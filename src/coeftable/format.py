@@ -228,7 +228,10 @@ def render_interval(
     high_text = style.unbounded if upper is None else fmt(upper)
     interval = f"{open_bracket}{low_text}{style.separator}{high_text}{close_bracket}"
     if style.layout == "inline":
-        return f'{point} <span style="color:{theme.muted}">{interval}</span>'
+        return (
+            f'<span style="white-space:nowrap">{point} '
+            f'<span style="color:{theme.muted}">{interval}</span></span>'
+        )
     return (
         f'{point}<br><span style="font-size:{theme.ci_size};color:{theme.muted}">{interval}</span>'
     )

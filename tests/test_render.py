@@ -2,7 +2,7 @@ import polars as pl
 from great_tables import GT
 
 from coeftable.spec import CoefTable
-from coeftable.theme import MONO
+from coeftable.theme import MONO, TEXTUAL
 
 RAW = {
     "area": ["Core", "Core", "Ops", "Ops"],
@@ -34,6 +34,35 @@ def test_inline_svg_survives_rendering():
     html = table().forest("Plot", of="Lift %").gt().as_raw_html()
     assert "<svg" in html
     assert "<rect" in html
+
+
+def test_forest_column_gets_reduced_vertical_padding():
+    html = table().forest("Plot", of="Lift %").gt().as_raw_html()
+    assert "padding-top: 2px; padding-bottom: 2px;" in html
+
+
+def test_default_forest_bar_svg_uses_the_stacked_layout_height():
+    # Integration guard: unit tests on _forest_height() and forest_bar()
+    # pass height explicitly and can't catch the height=_forest_height(...)
+    # argument being dropped at its call site in frame.py -- that would
+    # silently regress every real table back to an 18px SVG with a short
+    # reference line, the exact bug this fix addresses.
+    html = table().forest("Plot", of="Lift %").gt().as_raw_html()
+    assert 'height="48"' in html
+    assert 'y2="48"' in html
+
+
+def test_inline_estimate_stays_nowrap_alongside_a_forest_column():
+    from coeftable.format import CIStyle
+
+    html = (
+        CoefTable(pl.DataFrame(RAW), rows="metric", nest="variant")
+        .estimate("Lift %", "rel", ci=("rel_lb", "rel_ub"), ci_style=CIStyle(layout="inline"))
+        .forest("Plot", of="Lift %")
+        .gt()
+        .as_raw_html()
+    )
+    assert "white-space:nowrap" in html
 
 
 def test_interval_markup_survives_rendering():
@@ -78,3 +107,36 @@ def test_theme_colours_reach_the_html():
 
 def test_repr_html_delegates_to_gt():
     assert "<table" in table()._repr_html_()
+
+
+def test_textual_theme_omits_vertical_borders():
+    html = table().with_theme(TEXTUAL).gt().as_raw_html()
+    assert "border-left-style: none" in html
+    assert "border-right-style: none" in html
+
+
+def test_textual_theme_uses_border_color_for_structural_borders():
+    # Structural rules (table frame, table body, column labels, row
+    # groups) must stay visible even though header_bg is a near-white
+    # title banner -- they should resolve to border_color, not header_bg.
+    import re
+
+    html = table(groups="area").with_theme(TEXTUAL).gt().as_raw_html()
+    assert TEXTUAL.border_color is not None
+    for selector in (".gt_table", ".gt_col_headings", ".gt_group_heading"):
+        match = re.search(re.escape(selector) + r" \{[^}]+\}", html)
+        assert match is not None, f"{selector} rule not found in rendered CSS"
+        assert TEXTUAL.border_color.lower() in match.group(0).lower(), (
+            f"{selector} does not use border_color"
+        )
+        assert TEXTUAL.header_bg.lower() not in match.group(0).lower(), (
+            f"{selector} still leaks header_bg"
+        )
+
+
+def test_blue_theme_is_boxed():
+    from coeftable.theme import BLUE
+
+    html = table().with_theme(BLUE).gt().as_raw_html()
+    assert "border-left-style: solid" in html
+    assert "border-right-style: solid" in html

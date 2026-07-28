@@ -96,3 +96,6 @@ exclude_lines = ["pragma: no cover", "if TYPE_CHECKING:"]
 [tool.ty.environment]
 python-version = "3.12"
 root = ["src"]
+
+[tool.ty.src]
+exclude = ["notebook.py"]

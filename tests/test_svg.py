@@ -31,6 +31,15 @@ def test_forest_bar_is_well_formed_svg():
     assert "#55A868" in svg
 
 
+def test_forest_bar_reference_line_spans_the_passed_height():
+    svg = forest_bar(
+        1.0, 0.5, 1.5, domain=(0.0, 2.0), ref=0.0, color="#000", theme=DEFAULT, height=48
+    )
+    assert 'y1="0" x2="' in svg
+    assert 'y2="48"' in svg
+    assert 'height="48"' in svg
+
+
 def test_forest_bar_draws_reference_line_only_when_inside_domain():
     inside = forest_bar(1.0, 0.5, 1.5, domain=(-1.0, 2.0), ref=0.0, color="#000", theme=DEFAULT)
     outside = forest_bar(1.0, 0.5, 1.5, domain=(0.5, 2.0), ref=0.0, color="#000", theme=DEFAULT)
