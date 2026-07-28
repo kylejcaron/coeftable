@@ -63,7 +63,7 @@ experiment = pl.DataFrame(
     ct.CoefTable(experiment, rows="metric", nest="variant", groups="area")
     .estimate("Lift Amount", "att", ci=("att_lb", "att_ub"), fmt=ct.Number(compact=True))
     .estimate("Lift %", "rel", ci=("rel_lb", "rel_ub"), fmt=ct.Percent(signed=True))
-    .forest("Lift Plot", of="Lift %", ref=0.0)
+    .forest("Lift Plot", of="Lift %", ref=0.0, symmetric=True)
     .header("Experiment Results", "Example Experiment")
     .with_direction({"Latency": "lower_is_better"})
 )
