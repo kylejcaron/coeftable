@@ -48,9 +48,19 @@ def test_color_raises_on_unknown_role():
         DEFAULT.color("bogus")  # ty: ignore[invalid-argument-type]
 
 
-def test_mono_encodes_no_significance():
-    colors = {MONO.color(r) for r in ("favorable", "unfavorable", "inconclusive", "neutral")}
-    assert len(colors) == 1
+def _luminance(hex_color: str) -> int:
+    """Sum of RGB channels; lower means visually darker."""
+    r, g, b = (int(hex_color[i : i + 2], 16) for i in (1, 3, 5))
+    return r + g + b
+
+
+def test_mono_shades_significant_results_darker():
+    # Favorable and unfavorable share a shade (MONO never colour-codes
+    # direction), but that shade is darker than inconclusive's, and
+    # neutral sits between the two.
+    assert MONO.color("favorable") == MONO.color("unfavorable")
+    assert _luminance(MONO.color("favorable")) < _luminance(MONO.color("neutral"))
+    assert _luminance(MONO.color("neutral")) < _luminance(MONO.color("inconclusive"))
 
 
 def test_colorblind_separates_favorable_from_unfavorable():

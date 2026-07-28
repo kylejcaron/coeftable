@@ -132,10 +132,16 @@ COLORBLIND = Theme(
 )
 
 MONO = Theme(
-    favorable="#4A4A4A",
-    unfavorable="#4A4A4A",
-    inconclusive="#4A4A4A",
-    neutral="#4A4A4A",
+    # Grayscale-only: direction is never colour-coded (favorable and
+    # unfavorable share a shade), but significance is. A result whose
+    # interval clears the reference (favorable/unfavorable) renders in a
+    # dark, high-contrast gray; an inconclusive result is rendered in a
+    # light gray to visually recede; neutral (no directional claim) sits
+    # in between.
+    favorable="#2B2B2B",
+    unfavorable="#2B2B2B",
+    inconclusive="#B0B0B0",
+    neutral="#6E6E6E",
     header_bg="#343538",
     column_label_bg="#72767E",
     band="#F4F4F4",
