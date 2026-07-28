@@ -8,8 +8,8 @@ description = "Publication-quality summary tables for estimates with uncertainty
 readme = "README.md"
 requires-python = ">=3.12"
 dynamic = ["version"]
-license = { text = "MIT" }
-authors = [{ name = "Kyle Caron" }]
+license = { file = "LICENSE" }
+authors = [{ name = "Kyle Caron", email = "kyle.j.caron@gmail.com" }]
 keywords = ["statistics", "tables", "forest-plot", "confidence-interval", "great-tables"]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -39,6 +39,7 @@ dev = [
 ]
 
 [project.urls]
+Homepage = "https://github.com/kylejcaron/coeftable"
 Repository = "https://github.com/kylejcaron/coeftable"
 Issues = "https://github.com/kylejcaron/coeftable/issues"
 
