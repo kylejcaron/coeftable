@@ -70,6 +70,11 @@ def to_gt(table: CoefTable) -> GT:
             locations=loc.body(rows=resolved.band_rows),
         )
     if resolved.divider_rows:
+        # Deliberately lighter than border_color: this is a subtle divider
+        # between row-key blocks within the light body-row region, not a
+        # structural/chrome border. theme.rule is the intended field for
+        # "divider on a light background"; border_color is for the darker
+        # borders around table/column-label/row-group chrome.
         gt = gt.tab_style(
             style=style.borders(sides="top", color=theme.rule, weight="1px"),
             locations=loc.body(rows=resolved.divider_rows),

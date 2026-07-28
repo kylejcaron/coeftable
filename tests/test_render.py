@@ -93,8 +93,21 @@ def test_textual_theme_uses_border_color_for_structural_borders():
     import re
 
     html = table(groups="area").with_theme(TEXTUAL).gt().as_raw_html()
-    match = re.search(r"\.gt_table \{[^}]+\}", html)
-    assert match is not None
     assert TEXTUAL.border_color is not None
-    assert TEXTUAL.border_color.lower() in match.group(0).lower()
-    assert TEXTUAL.header_bg.lower() not in match.group(0).lower()
+    for selector in (".gt_table", ".gt_col_headings", ".gt_group_heading"):
+        match = re.search(re.escape(selector) + r" \{[^}]+\}", html)
+        assert match is not None, f"{selector} rule not found in rendered CSS"
+        assert TEXTUAL.border_color.lower() in match.group(0).lower(), (
+            f"{selector} does not use border_color"
+        )
+        assert TEXTUAL.header_bg.lower() not in match.group(0).lower(), (
+            f"{selector} still leaks header_bg"
+        )
+
+
+def test_blue_theme_is_boxed():
+    from coeftable.theme import BLUE
+
+    html = table().with_theme(BLUE).gt().as_raw_html()
+    assert "border-left-style: solid" in html
+    assert "border-right-style: solid" in html

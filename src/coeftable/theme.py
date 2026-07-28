@@ -39,11 +39,14 @@ class Theme:
         default). ``"minimal"`` drops the left and right rules for a more
         textual, publication-style layout with only top and bottom rules.
     border_color
-        Colour used for all internal table rules (column-label divider,
-        group-header borders, table-body top rule, heading divider).  If
-        `None` (the default), ``header_bg`` is reused so that borders and
-        the title banner share a colour.  Set this independently to keep
-        the title banner light while still drawing visible rules.
+        Colour used for structural table chrome: the heading divider,
+        column-label rules, row-group borders, and the table frame
+        (including the table-body top rule).  If `None` (the default),
+        ``header_bg`` is reused so that these borders and the title
+        banner share a colour.  Set this independently to keep the title
+        banner light while still drawing visible chrome rules.  Does
+        *not* affect ``rule``, which styles lighter dividers within the
+        body-row region (nest-key separators, forest-plot axis lines).
     """
 
     favorable: str = "#55A868"

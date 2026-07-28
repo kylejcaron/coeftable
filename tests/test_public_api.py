@@ -89,6 +89,20 @@ def test_deprecated_theme_imports_warn():
         assert len(w) == 3
         assert all(issubclass(warning.category, DeprecationWarning) for warning in w)
         assert "from coeftable.theme import" in str(w[0].message)
+        # DEFAULT now aliases TEXTUAL, not the original blue theme; the
+        # warning must say so and point migrators at BLUE explicitly.
+        assert "BLUE" in str(w[0].message)
+        assert "TEXTUAL" in str(w[0].message)
+
+
+def test_blue_and_textual_are_not_deprecated_top_level_imports():
+    # BLUE and TEXTUAL never had top-level history (unlike DEFAULT,
+    # COLORBLIND, MONO), so they should not be reachable -- deprecated
+    # or otherwise -- from the top-level coeftable namespace.
+    with pytest.raises(AttributeError):
+        _ = ct.BLUE
+    with pytest.raises(AttributeError):
+        _ = ct.TEXTUAL
 
 
 def test_package_does_not_import_matplotlib():
