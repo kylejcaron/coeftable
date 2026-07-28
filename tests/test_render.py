@@ -90,8 +90,10 @@ def test_textual_theme_uses_a_visible_rule_under_column_labels():
     # The bottom border under the column-label row doubles as the divider
     # from a row-group header immediately below; it must not be near-white
     # (would be indistinguishable from the equally light column_label_bg
-    # fill both rows share).
+    # fill both rows share), and must be independent of the light header_bg
+    # banner colour.
     html = table(groups="area").with_theme(TEXTUAL).gt().as_raw_html()
-    assert TEXTUAL.header_bg.lstrip("#").lower() in html.lower()
-    assert TEXTUAL.header_bg != "#FFFFFF"
-    assert TEXTUAL.header_bg != TEXTUAL.column_label_bg
+    assert TEXTUAL.section_rule is not None
+    assert TEXTUAL.section_rule.lstrip("#").lower() in html.lower()
+    assert TEXTUAL.section_rule != TEXTUAL.header_bg
+    assert TEXTUAL.section_rule != TEXTUAL.column_label_bg
