@@ -3,8 +3,9 @@ import pandas as pd
 import polars as pl
 import pytest
 
-from coeftable.frame import resolve
-from coeftable.spec import CoefTable, ColumnNotFoundError, SpecError
+from coeftable.format import CIStyle
+from coeftable.frame import _forest_height, _pad_domain, resolve
+from coeftable.spec import CoefTable, ColumnNotFoundError, Estimate, Forest, SpecError
 
 RAW = {
     "area": ["Core", "Core", "Core", "Core"],
@@ -195,6 +196,64 @@ def test_explicit_domain_overrides_scale():
     spec = base(pl.DataFrame(RAW))
     out = resolve(spec.forest("Plot", of="Lift %", domain=(-10.0, 10.0)))
     assert out.axis_rows
+
+
+def test_pad_domain_default_is_not_symmetric():
+    low, high = _pad_domain([1.0, 5.0, -3.0, 1.0], ref=0.0)
+    assert (low, high) == (-3.64, 5.64)
+    assert low != -high
+
+
+def test_pad_domain_symmetric_centers_on_ref():
+    low, high = _pad_domain([1.0, 5.0, -3.0, 1.0], ref=0.0, symmetric=True)
+    assert (low, high) == (-5.64, 5.64)
+    assert low == -high
+
+
+def test_pad_domain_symmetric_respects_nonzero_ref():
+    low, high = _pad_domain([2.0, 8.0], ref=5.0, symmetric=True)
+    assert high - 5.0 == 5.0 - low
+
+
+def test_forest_symmetric_flag_resolves_without_error():
+    spec = base(pl.DataFrame(RAW))
+    out = resolve(spec.forest("Plot", of="Lift %", ref=0.0, symmetric=True))
+    assert out.axis_rows
+
+
+def test_explicit_domain_wins_over_symmetric():
+    spec = base(pl.DataFrame(RAW))
+    out = resolve(spec.forest("Plot", of="Lift %", domain=(-10.0, 10.0), symmetric=True))
+    assert out.axis_rows
+
+
+def test_forest_height_picks_stacked_layout_default():
+    estimate = Estimate("Lift %", "rel", ci=("lb", "ub"))
+    forest = Forest("Plot", of="Lift %")
+    assert _forest_height(forest, estimate) == 48
+
+
+def test_forest_height_picks_shorter_default_for_single_line_layouts():
+    estimate = Estimate("Lift %", "rel", ci=("lb", "ub"), ci_style=CIStyle(layout="inline"))
+    forest = Forest("Plot", of="Lift %")
+    assert _forest_height(forest, estimate) == 34
+
+
+def test_forest_height_explicit_override_wins():
+    estimate = Estimate("Lift %", "rel", ci=("lb", "ub"))
+    forest = Forest("Plot", of="Lift %", height=100)
+    assert _forest_height(forest, estimate) == 100
+
+
+def test_forest_columns_are_tracked_on_resolved():
+    spec = base(pl.DataFrame(RAW))
+    out = resolve(spec.forest("Plot", of="Lift %"))
+    assert out.forest_columns == ["Plot"]
+
+
+def test_non_forest_table_has_no_forest_columns():
+    out = resolve(base(pl.DataFrame(RAW)))
+    assert out.forest_columns == []
 
 
 def test_passthrough_renders_the_frame_column_verbatim():

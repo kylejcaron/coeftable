@@ -45,6 +45,9 @@ class Resolved:
         Zero-based row indices for banding, dividers and axis rows.
     markdown_columns
         Output columns whose contents are HTML.
+    forest_columns
+        Output columns rendering `Forest` bars, so the renderer can trim
+        their cell padding to let the bar fill the row.
     """
 
     frame: Any
@@ -56,6 +59,7 @@ class Resolved:
     divider_rows: list[int] = field(default_factory=list)
     axis_rows: list[int] = field(default_factory=list)
     markdown_columns: list[str] = field(default_factory=list)
+    forest_columns: list[str] = field(default_factory=list)
 
 
 def _required_columns(table: CoefTable) -> list[str]:
@@ -147,7 +151,9 @@ def _domain_key(column: Forest, row_key: Any, group: Any, split: Any) -> Any:
             return ("row", row_key)
 
 
-def _pad_domain(values: list[float], ref: float) -> tuple[float, float]:
+def _pad_domain(
+    values: list[float], ref: float, *, symmetric: bool = False
+) -> tuple[float, float]:
     if not values:
         return (ref - 1.0, ref + 1.0)
     low, high = min(values), max(values)
@@ -155,7 +161,24 @@ def _pad_domain(values: list[float], ref: float) -> tuple[float, float]:
     if low == high:
         return (low - 1.0, high + 1.0)
     margin = (high - low) * 0.08
-    return (low - margin, high + margin)
+    low, high = low - margin, high + margin
+    if symmetric:
+        half = max(ref - low, high - ref)
+        return (ref - half, ref + half)
+    return (low, high)
+
+
+# Content height (px) a forest bar needs to fill its row for each CI
+# layout, measured against the theme's default font sizes. Approximate but
+# close enough that the reference line spans the row instead of a short
+# segment centred in a taller cell; `Forest.height` overrides this per column.
+_LAYOUT_HEIGHTS = {"stacked": 48, "inline": 34, "value_only": 34}
+
+
+def _forest_height(column: Forest, source: Estimate) -> int:
+    if column.height is not None:
+        return column.height
+    return _LAYOUT_HEIGHTS.get(source.ci_style.layout, 18)
 
 
 def resolve(table: CoefTable) -> Resolved:
@@ -229,7 +252,9 @@ def resolve(table: CoefTable) -> Resolved:
                 _finite([numeric[source.value][i], numeric[low_name][i], numeric[high_name][i]])
             )
         for key, values in buckets.items():
-            domains[(column.label, key)] = column.domain or _pad_domain(values, column.ref)
+            domains[(column.label, key)] = column.domain or _pad_domain(
+                values, column.ref, symmetric=column.symmetric
+            )
 
     # Output row identity: one output row per (row key, nest key).
     identities = [(row_keys[i], nest_keys[i]) for i in range(n)]
@@ -260,6 +285,7 @@ def resolve(table: CoefTable) -> Resolved:
     display_columns: list[str] = []
     labels: dict[str, str] = {}
     spanners: dict[str, list[str]] = {}
+    forest_columns: list[str] = []
     for split in splits:
         for column in table.columns:
             name = output_name(column, split)
@@ -267,6 +293,8 @@ def resolve(table: CoefTable) -> Resolved:
             labels[name] = column.label
             if split is not None:
                 spanners.setdefault(str(split), []).append(name)
+            if isinstance(column, Forest):
+                forest_columns.append(name)
 
     cells: dict[str, list[str]] = {name: [] for name in display_columns}
     layout_rows: list[str] = []
@@ -343,6 +371,7 @@ def resolve(table: CoefTable) -> Resolved:
                             color=table.theme.color(role),
                             theme=table.theme,
                             width=column.width,
+                            height=_forest_height(column, source),
                         )
                     )
 
@@ -409,4 +438,5 @@ def resolve(table: CoefTable) -> Resolved:
         divider_rows=divider_rows,
         axis_rows=axis_rows,
         markdown_columns=markdown,
+        forest_columns=forest_columns,
     )

@@ -36,6 +36,11 @@ def test_inline_svg_survives_rendering():
     assert "<rect" in html
 
 
+def test_forest_column_gets_reduced_vertical_padding():
+    html = table().forest("Plot", of="Lift %").gt().as_raw_html()
+    assert "padding-top: 2px; padding-bottom: 2px;" in html
+
+
 def test_interval_markup_survives_rendering():
     html = table().gt().as_raw_html()
     assert "3.40" in html

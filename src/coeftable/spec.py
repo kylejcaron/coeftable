@@ -57,8 +57,6 @@ class Estimate:
 class Forest:
     """A column rendering an inline SVG interval bar.
 
-    Parameters
-    ----------
     label
         Column header.
     of
@@ -69,8 +67,16 @@ class Forest:
         Which set of bars share an x-domain.
     domain
         Explicit domain, overriding `scale`.
+    symmetric
+        When `domain` is not set, symmetrize the auto-computed domain
+        around `ref` instead of fitting tightly to the data.
     width
         Bar width in pixels.
+    height
+        Bar row height in pixels.  `None` (the default) picks a height
+        that fills the row based on the bound estimate's `ci_style.layout`
+        so the reference line spans the full cell instead of a short
+        segment centred in a taller row.
     show_axis
         Emit an axis row for each distinct domain.
     axis_fmt
@@ -82,7 +88,9 @@ class Forest:
     ref: float = 0.0
     scale: Scale = "table"
     domain: tuple[float, float] | None = None
+    symmetric: bool = False
     width: int = 220
+    height: int | None = None
     show_axis: bool = True
     axis_fmt: Format | None = None
 
@@ -276,7 +284,9 @@ class CoefTable:
         ref: float = 0.0,
         scale: Scale = "table",
         domain: tuple[float, float] | None = None,
+        symmetric: bool = False,
         width: int = 220,
+        height: int | None = None,
         show_axis: bool = True,
         axis_fmt: Format | None = None,
     ) -> CoefTable:
@@ -294,8 +304,15 @@ class CoefTable:
             Which set of bars share an x-domain.
         domain
             Explicit domain, overriding `scale`.
+        symmetric
+            When `domain` is not set, symmetrize the auto-computed domain
+            around `ref` instead of fitting tightly to the data.
         width
             Bar width in pixels.
+        height
+            Bar row height in pixels. `None` (the default) picks a height
+            that fills the row based on the bound estimate's
+            `ci_style.layout`.
         show_axis
             Emit an axis row per distinct domain.
         axis_fmt
@@ -313,7 +330,9 @@ class CoefTable:
                 ref=ref,
                 scale=scale,
                 domain=domain,
+                symmetric=symmetric,
                 width=width,
+                height=height,
                 show_axis=show_axis,
                 axis_fmt=axis_fmt,
             )
