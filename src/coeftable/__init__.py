@@ -39,9 +39,9 @@ def __getattr__(name: str):
     """Intercept deprecated theme imports and issue warnings."""
     import warnings
 
-    from coeftable.theme import COLORBLIND, DEFAULT, MONO
+    from coeftable.theme import BLUE, COLORBLIND, DEFAULT, MONO
 
-    _deprecated_themes = {"DEFAULT": DEFAULT, "COLORBLIND": COLORBLIND, "MONO": MONO}
+    _deprecated_themes = {"BLUE": BLUE, "COLORBLIND": COLORBLIND, "DEFAULT": DEFAULT, "MONO": MONO}
     if name in _deprecated_themes:
         warnings.warn(
             f"Importing {name} from coeftable is deprecated. "

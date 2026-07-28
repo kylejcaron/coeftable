@@ -38,6 +38,12 @@ class Theme:
         ``"boxed"`` draws a solid rule on all four table sides (the
         default). ``"minimal"`` drops the left and right rules for a more
         textual, publication-style layout with only top and bottom rules.
+    border_color
+        Colour used for all internal table rules (column-label divider,
+        group-header borders, table-body top rule, heading divider).  If
+        `None` (the default), ``header_bg`` is reused so that borders and
+        the title banner share a colour.  Set this independently to keep
+        the title banner light while still drawing visible rules.
     """
 
     favorable: str = "#55A868"
@@ -60,6 +66,7 @@ class Theme:
     table_font_size: str = "16px"
     na_text: str = "\u2014"
     border_style: Literal["boxed", "minimal"] = "boxed"
+    border_color: str | None = None
 
     def color(self, role: Role) -> str:
         """Return the colour registered for `role`.
@@ -124,7 +131,7 @@ def role_for(
     return "inconclusive"
 
 
-DEFAULT = Theme()
+BLUE = Theme()
 
 COLORBLIND = Theme(
     favorable="#0072B2",
@@ -170,4 +177,8 @@ TEXTUAL = Theme(
     muted="#757575",
     text="#212121",
     border_style="minimal",
+    border_color="#A8A8A8",
 )
+
+
+DEFAULT = TEXTUAL

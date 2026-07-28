@@ -2,7 +2,7 @@ import dataclasses
 
 import pytest
 
-from coeftable.theme import COLORBLIND, DEFAULT, MONO, TEXTUAL, Theme, role_for
+from coeftable.theme import BLUE, COLORBLIND, DEFAULT, MONO, TEXTUAL, Theme, role_for
 
 
 @pytest.mark.parametrize(
@@ -79,8 +79,8 @@ def test_theme_is_hashable():
     assert isinstance(hash(Theme()), int)
 
 
-def test_default_themes_are_boxed():
-    assert DEFAULT.border_style == "boxed"
+def test_builtin_themes_except_textual_are_boxed():
+    assert BLUE.border_style == "boxed"
     assert COLORBLIND.border_style == "boxed"
     assert MONO.border_style == "boxed"
 
@@ -95,12 +95,11 @@ def test_textual_disables_row_banding():
 
 
 def test_textual_uses_a_muted_palette():
-    assert TEXTUAL.color("favorable") != DEFAULT.color("favorable")
-    assert TEXTUAL.color("unfavorable") != DEFAULT.color("unfavorable")
+    assert TEXTUAL.color("favorable") != BLUE.color("favorable")
+    assert TEXTUAL.color("unfavorable") != BLUE.color("unfavorable")
 
 
 def test_textual_axis_labels_are_legible():
     # Forest-plot xtick labels render at a small font size against a white
-    # background; they must be at least as dark as DEFAULT's axis colour,
-    # not the near-invisible light gray this theme originally shipped with.
-    assert _luminance(TEXTUAL.axis) <= _luminance(DEFAULT.axis)
+    # background; they must be at least as dark as BLUE's axis colour.
+    assert _luminance(TEXTUAL.axis) <= _luminance(BLUE.axis)
