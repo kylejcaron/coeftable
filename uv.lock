@@ -136,7 +136,6 @@ wheels = [
 
 [[package]]
 name = "coeftable"
-version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "great-tables" },

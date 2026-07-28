@@ -1,13 +1,13 @@
 [build-system]
-requires = ["hatchling>=1.25"]
+requires = ["hatchling>=1.25", "hatch-vcs>=0.4"]
 build-backend = "hatchling.build"
 
 [project]
 name = "coeftable"
-version = "0.1.0"
 description = "Publication-quality summary tables for estimates with uncertainty."
 readme = "README.md"
 requires-python = ">=3.12"
+dynamic = ["version"]
 license = { text = "MIT" }
 authors = [{ name = "Kyle Caron" }]
 keywords = ["statistics", "tables", "forest-plot", "confidence-interval", "great-tables"]
@@ -44,6 +44,12 @@ Issues = "https://github.com/kylejcaron/coeftable/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/coeftable"]
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.build.hooks.vcs]
+version-file = "src/coeftable/_version.py"
 
 [tool.uv]
 default-groups = []
