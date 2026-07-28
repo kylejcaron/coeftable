@@ -68,9 +68,6 @@ def test_every_public_symbol_is_exported():
         "Currency",
         "CIStyle",
         "Theme",
-        "DEFAULT",
-        "COLORBLIND",
-        "MONO",
         "role_for",
         "SpecError",
         "ColumnNotFoundError",
@@ -79,6 +76,19 @@ def test_every_public_symbol_is_exported():
     assert expected <= set(ct.__all__)
     for name in expected:
         assert hasattr(ct, name)
+
+
+def test_deprecated_theme_imports_warn():
+    import warnings
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        _ = ct.DEFAULT
+        _ = ct.COLORBLIND
+        _ = ct.MONO
+        assert len(w) == 3
+        assert all(issubclass(warning.category, DeprecationWarning) for warning in w)
+        assert "from coeftable.theme import" in str(w[0].message)
 
 
 def test_package_does_not_import_matplotlib():
