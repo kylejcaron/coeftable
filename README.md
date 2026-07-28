@@ -1,6 +1,6 @@
 # coeftable
 
-Publication-quality summary tables for estimates with uncertainty. Renders
+Lightweight, report-ready summary tables for estimates with uncertainty. Renders
 inline forest plots, builds on great_tables HTML output, and works with pandas,
 polars, or pyarrow frames.
 
@@ -138,7 +138,7 @@ table = (
 
 ## Data shape
 
-coeftable expects a **tidy** frame where every row is an observation. The
+coeftable expects a dataframe where every row is a single comparison. The
 resolution logic maps pairs of upper / lower bound columns to each estimate, so
 your data should be **wide in triples** — one point-estimate column and (when
 applicable) its lower and upper bound columns — rather than in long format with
