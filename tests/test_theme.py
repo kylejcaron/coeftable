@@ -99,20 +99,6 @@ def test_textual_uses_a_muted_palette():
     assert TEXTUAL.color("unfavorable") != DEFAULT.color("unfavorable")
 
 
-def test_textual_section_rule_is_decoupled_from_header_bg():
-    # header_bg stays a light title banner; the column-label divider must
-    # be independently darker so it reads clearly above a row-group header.
-    assert TEXTUAL.section_rule is not None
-    assert TEXTUAL.section_rule != TEXTUAL.header_bg
-    assert _luminance(TEXTUAL.section_rule) < _luminance(TEXTUAL.header_bg)
-
-
-def test_default_themes_have_no_section_rule_override():
-    assert DEFAULT.section_rule is None
-    assert COLORBLIND.section_rule is None
-    assert MONO.section_rule is None
-
-
 def test_textual_axis_labels_are_legible():
     # Forest-plot xtick labels render at a small font size against a white
     # background; they must be at least as dark as DEFAULT's axis colour,

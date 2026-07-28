@@ -38,12 +38,6 @@ class Theme:
         ``"boxed"`` draws a solid rule on all four table sides (the
         default). ``"minimal"`` drops the left and right rules for a more
         textual, publication-style layout with only top and bottom rules.
-    section_rule
-        Colour of the rule below the column-label row. `None` (the
-        default) reuses `header_bg`, matching the outer table border.
-        Set this to separate that rule from `header_bg` -- e.g. to keep a
-        light title banner while still drawing a clearly visible divider
-        above a row-group header.
     """
 
     favorable: str = "#55A868"
@@ -66,7 +60,6 @@ class Theme:
     table_font_size: str = "16px"
     na_text: str = "\u2014"
     border_style: Literal["boxed", "minimal"] = "boxed"
-    section_rule: str | None = None
 
     def color(self, role: Role) -> str:
         """Return the colour registered for `role`.
@@ -162,9 +155,7 @@ MONO = Theme(
 TEXTUAL = Theme(
     # A quieter, publication-style theme: a muted palette, a light title
     # banner, no row banding, and borders confined to the top and bottom
-    # rules -- closer to a printed table than a dashboard. section_rule is
-    # set independently of the (light) header_bg so the divider below the
-    # column-label row stays clearly visible above a row-group header.
+    # rules -- closer to a printed table than a dashboard.
     favorable="#2E7D32",
     unfavorable="#C62828",
     inconclusive="#9E9E9E",
@@ -179,5 +170,4 @@ TEXTUAL = Theme(
     muted="#757575",
     text="#212121",
     border_style="minimal",
-    section_rule="#A8A8A8",
 )

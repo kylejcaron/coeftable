@@ -51,9 +51,7 @@ def to_gt(table: CoefTable) -> GT:
         style=[
             style.text(weight="bold", color=theme.header_fg, align="center", size="16px"),
             style.fill(color=theme.column_label_bg),
-            style.borders(
-                sides="bottom", color=theme.section_rule or theme.header_bg, weight="2px"
-            ),
+            style.borders(sides="bottom", color=theme.header_bg, weight="2px"),
         ],
         locations=loc.column_labels(),
     )
