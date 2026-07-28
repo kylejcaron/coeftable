@@ -43,6 +43,11 @@ def test_color_returns_the_slot_for_each_role():
         assert DEFAULT.color(role).startswith("#")
 
 
+def test_color_raises_on_unknown_role():
+    with pytest.raises(ValueError, match="Unknown role"):
+        DEFAULT.color("bogus")  # ty: ignore[invalid-argument-type]
+
+
 def test_mono_encodes_no_significance():
     colors = {MONO.color(r) for r in ("favorable", "unfavorable", "inconclusive", "neutral")}
     assert len(colors) == 1
