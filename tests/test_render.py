@@ -2,7 +2,7 @@ import polars as pl
 from great_tables import GT
 
 from coeftable.spec import CoefTable
-from coeftable.theme import MONO
+from coeftable.theme import MONO, TEXTUAL
 
 RAW = {
     "area": ["Core", "Core", "Ops", "Ops"],
@@ -78,3 +78,9 @@ def test_theme_colours_reach_the_html():
 
 def test_repr_html_delegates_to_gt():
     assert "<table" in table()._repr_html_()
+
+
+def test_textual_theme_omits_vertical_borders():
+    html = table().with_theme(TEXTUAL).gt().as_raw_html()
+    assert "border-left-style: none" in html
+    assert "border-right-style: none" in html

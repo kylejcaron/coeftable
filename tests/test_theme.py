@@ -2,7 +2,7 @@ import dataclasses
 
 import pytest
 
-from coeftable.theme import COLORBLIND, DEFAULT, MONO, Theme, role_for
+from coeftable.theme import COLORBLIND, DEFAULT, MONO, TEXTUAL, Theme, role_for
 
 
 @pytest.mark.parametrize(
@@ -77,3 +77,23 @@ def test_theme_is_frozen_and_replaceable():
 
 def test_theme_is_hashable():
     assert isinstance(hash(Theme()), int)
+
+
+def test_default_themes_are_boxed():
+    assert DEFAULT.border_style == "boxed"
+    assert COLORBLIND.border_style == "boxed"
+    assert MONO.border_style == "boxed"
+
+
+def test_textual_is_minimal_border():
+    assert TEXTUAL.border_style == "minimal"
+
+
+def test_textual_disables_row_banding():
+    # A publication-style table has no zebra striping: band matches surface.
+    assert TEXTUAL.band == TEXTUAL.surface
+
+
+def test_textual_uses_a_muted_palette():
+    assert TEXTUAL.color("favorable") != DEFAULT.color("favorable")
+    assert TEXTUAL.color("unfavorable") != DEFAULT.color("unfavorable")

@@ -95,6 +95,7 @@ def to_gt(table: CoefTable) -> GT:
             locations=loc.row_groups(),
         )
 
+    side_border_style = "none" if theme.border_style == "minimal" else "solid"
     return gt.tab_options(
         table_font_size=theme.table_font_size,
         column_labels_font_size="16px",
@@ -107,9 +108,9 @@ def to_gt(table: CoefTable) -> GT:
         table_border_bottom_color=theme.header_bg,
         table_border_bottom_style="solid",
         table_border_left_color=theme.header_bg,
-        table_border_left_style="solid",
+        table_border_left_style=side_border_style,
         table_border_right_color=theme.header_bg,
-        table_border_right_style="solid",
+        table_border_right_style=side_border_style,
         table_body_border_bottom_color=theme.header_bg,
         table_body_border_bottom_style="solid",
     )

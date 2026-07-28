@@ -34,6 +34,10 @@ class Theme:
         CSS font sizes.
     na_text
         Text substituted for a missing estimate.
+    border_style
+        ``"boxed"`` draws a solid rule on all four table sides (the
+        default). ``"minimal"`` drops the left and right rules for a more
+        textual, publication-style layout with only top and bottom rules.
     """
 
     favorable: str = "#55A868"
@@ -55,6 +59,7 @@ class Theme:
     ci_size: str = "11px"
     table_font_size: str = "16px"
     na_text: str = "\u2014"
+    border_style: Literal["boxed", "minimal"] = "boxed"
 
     def color(self, role: Role) -> str:
         """Return the colour registered for `role`.
@@ -145,4 +150,25 @@ MONO = Theme(
     header_bg="#343538",
     column_label_bg="#72767E",
     band="#F4F4F4",
+)
+
+TEXTUAL = Theme(
+    # A quieter, publication-style theme: a muted palette, no colour-coded
+    # banner (a light rule stands in for chrome), no row banding, and
+    # borders confined to the top and bottom rules -- closer to a printed
+    # table than a dashboard.
+    favorable="#2E7D32",
+    unfavorable="#C62828",
+    inconclusive="#9E9E9E",
+    neutral="#455A64",
+    header_bg="#F5F5F5",
+    header_fg="#1A1A1A",
+    column_label_bg="#FAFAFA",
+    band="#FFFFFF",
+    surface="#FFFFFF",
+    rule="#E0E0E0",
+    axis="#BDBDBD",
+    muted="#757575",
+    text="#212121",
+    border_style="minimal",
 )
