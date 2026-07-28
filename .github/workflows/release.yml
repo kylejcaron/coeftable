@@ -1,0 +1,89 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version bump"
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+        default: patch
+      version:
+        description: "Explicit version override (e.g. 1.2.3) -- takes precedence over bump"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Compute next version
+        id: version
+        env:
+          BUMP: ${{ inputs.bump }}
+          VERSION_OVERRIDE: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+
+          latest=$(git tag -l 'v*' --sort=-v:refname | sed 's/^v//' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | head -n1 || true)
+          latest="${latest:-0.0.0}"
+
+          if [ -n "$VERSION_OVERRIDE" ]; then
+            next="${VERSION_OVERRIDE#v}"
+            if ! [[ "$next" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::Invalid version '$next' -- must be MAJOR.MINOR.PATCH"
+              exit 1
+            fi
+
+            IFS='.' read -r next_major next_minor next_patch <<< "$next"
+            IFS='.' read -r latest_major latest_minor latest_patch <<< "$latest"
+            if [ "$((next_major * 1000000 + next_minor * 1000 + next_patch))" -le \
+                 "$((latest_major * 1000000 + latest_minor * 1000 + latest_patch))" ]; then
+              echo "::error::Explicit version '$next' is not greater than the latest release 'v$latest'"
+              exit 1
+            fi
+          else
+            IFS='.' read -r major minor patch <<< "$latest"
+            case "$BUMP" in
+              major) next="$((major + 1)).0.0" ;;
+              minor) next="${major}.$((minor + 1)).0" ;;
+              patch) next="${major}.${minor}.$((patch + 1))" ;;
+              *) echo "::error::Unknown bump type '$BUMP'"; exit 1 ;;
+            esac
+          fi
+
+          tag="v${next}"
+          if git rev-parse "$tag" >/dev/null 2>&1; then
+            echo "::error::Tag $tag already exists"
+            exit 1
+          fi
+
+          echo "Latest: v$latest -> Next: $tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Create and push tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ steps.version.outputs.tag }}" -m "Release ${{ steps.version.outputs.tag }}"
+          git push origin "${{ steps.version.outputs.tag }}"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "${{ steps.version.outputs.tag }}" --generate-notes
