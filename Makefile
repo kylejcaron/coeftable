@@ -2,6 +2,7 @@
 
 setup:
 	uv sync --all-extras
+	uv run prek install
 
 tests:
 	uv run pytest
