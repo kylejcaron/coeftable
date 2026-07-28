@@ -41,6 +41,17 @@ def test_forest_column_gets_reduced_vertical_padding():
     assert "padding-top: 2px; padding-bottom: 2px;" in html
 
 
+def test_default_forest_bar_svg_uses_the_stacked_layout_height():
+    # Integration guard: unit tests on _forest_height() and forest_bar()
+    # pass height explicitly and can't catch the height=_forest_height(...)
+    # argument being dropped at its call site in frame.py -- that would
+    # silently regress every real table back to an 18px SVG with a short
+    # reference line, the exact bug this fix addresses.
+    html = table().forest("Plot", of="Lift %").gt().as_raw_html()
+    assert 'height="48"' in html
+    assert 'y2="48"' in html
+
+
 def test_inline_estimate_stays_nowrap_alongside_a_forest_column():
     from coeftable.format import CIStyle
 
