@@ -78,6 +78,8 @@ class Theme:
                 return self.inconclusive
             case "neutral":
                 return self.neutral
+            case _:
+                raise ValueError(f"Unknown role: {role!r}")
 
 
 def role_for(
