@@ -4,6 +4,8 @@ Publication-quality summary tables for estimates with uncertainty. Renders
 inline forest plots, builds on great_tables HTML output, and works with pandas,
 polars, or pyarrow frames.
 
+![Rendered experiment results table with grouped sections, nested variants, and an inline forest plot](docs/images/example.png)
+
 ## Installation
 
 ```bash
@@ -68,8 +70,6 @@ experiment = pl.DataFrame(
     .with_direction({"Latency": "lower_is_better"})
 )
 ```
-
-![Rendered experiment results table with grouped sections, nested variants, and an inline forest plot](docs/images/example.png)
 
 ## Comparing methods
 
