@@ -154,14 +154,15 @@ MONO = Theme(
 
 TEXTUAL = Theme(
     # A quieter, publication-style theme: a muted palette, no colour-coded
-    # banner (a light rule stands in for chrome), no row banding, and
-    # borders confined to the top and bottom rules -- closer to a printed
-    # table than a dashboard.
+    # banner (a neutral gray rule stands in for chrome and keeps the
+    # column-label row visually separated from row-group headers), no row
+    # banding, and borders confined to the top and bottom rules -- closer
+    # to a printed table than a dashboard.
     favorable="#2E7D32",
     unfavorable="#C62828",
     inconclusive="#9E9E9E",
     neutral="#455A64",
-    header_bg="#F5F5F5",
+    header_bg="#A8A8A8",
     header_fg="#1A1A1A",
     column_label_bg="#FAFAFA",
     band="#FFFFFF",

@@ -84,3 +84,14 @@ def test_textual_theme_omits_vertical_borders():
     html = table().with_theme(TEXTUAL).gt().as_raw_html()
     assert "border-left-style: none" in html
     assert "border-right-style: none" in html
+
+
+def test_textual_theme_uses_a_visible_rule_under_column_labels():
+    # The bottom border under the column-label row doubles as the divider
+    # from a row-group header immediately below; it must not be near-white
+    # (would be indistinguishable from the equally light column_label_bg
+    # fill both rows share).
+    html = table(groups="area").with_theme(TEXTUAL).gt().as_raw_html()
+    assert TEXTUAL.header_bg.lstrip("#").lower() in html.lower()
+    assert TEXTUAL.header_bg != "#FFFFFF"
+    assert TEXTUAL.header_bg != TEXTUAL.column_label_bg
