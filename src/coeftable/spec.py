@@ -57,6 +57,8 @@ class Estimate:
 class Forest:
     """A column rendering an inline SVG interval bar.
 
+    Parameters
+    ----------
     label
         Column header.
     of
