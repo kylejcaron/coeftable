@@ -22,4 +22,4 @@ def lint(session):
 @nox.session(python="3.12")
 def typecheck(session):
     session.install("-e", ".[dev]")
-    session.run("ty", "check")
+    session.run("ty", "check", "src", "tests")
