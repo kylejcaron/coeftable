@@ -98,6 +98,36 @@ def test_missing_identity_in_companion_frame_yields_empty_series(make):
     )
 
 
+def test_companion_frame_groups_by_nest_and_split(make):
+    """Two rows sharing a row key but differing by nest or split resolve to
+    distinct series -- the identity tuple is (row, nest, split), not just row.
+    """
+    raw = {
+        "metric": ["Revenue", "Revenue", "Revenue", "Revenue"],
+        "variant": ["A", "A", "B", "B"],
+        "region": ["US", "EU", "US", "EU"],
+        "day": [0, 0, 0, 0],
+        "y": [1.0, 2.0, 3.0, 4.0],
+    }
+    result = resolve_companion_series(
+        make(raw),
+        [
+            ("Revenue", "A", "US"),
+            ("Revenue", "A", "EU"),
+            ("Revenue", "B", "US"),
+            ("Revenue", "B", "EU"),
+        ],
+        rows="metric",
+        nest="variant",
+        split_columns="region",
+        value="y",
+    )
+    assert result[("Revenue", "A", "US")].y == [1.0]
+    assert result[("Revenue", "A", "EU")].y == [2.0]
+    assert result[("Revenue", "B", "US")].y == [3.0]
+    assert result[("Revenue", "B", "EU")].y == [4.0]
+
+
 def test_companion_frame_without_x_keeps_row_order(make):
     raw = {"metric": ["Revenue", "Revenue"], "y": [20.0, 10.0]}
     result = resolve_companion_series(
