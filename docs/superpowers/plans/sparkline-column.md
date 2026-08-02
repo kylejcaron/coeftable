@@ -89,7 +89,7 @@ class Sparkline:
     scale: Scale = "row"                         # y-domain sharing
     domain: tuple[float, float] | None = None    # explicit y-domain
     width: int = 220
-    height: int | None = None                    # None -> layout-derived
+    height: int | None = None                    # None -> table row height
     show_axis: bool = True                       # footer x-axis row
     show_endpoint: bool = True                   # endpoint value label
     endpoint_width: int = 44                     # FIXED reserve, see Task 3
@@ -303,12 +303,22 @@ produces the same tick positions as `forest_axis` would.
   - `footer` — call `sparkline_axis` with the x domain.
 - `frame.py`: no new `isinstance` branches. If Task 5 requires one, Task 1 was
   done wrong.
-- Row height: follow `Forest`'s existing pattern rather than a bare constant.
-  `Forest.height` is `int | None`, resolved by `_forest_height()` against
-  `_LAYOUT_HEIGHTS` (`{"stacked": 48, "inline": 34, "value_only": 34}`) so the
-  bar fills the row its CI layout produces. `Sparkline.height` takes the same
-  `int | None` shape with its own default; it is **not** taller than a forest
-  row by default, which an earlier draft of this plan wrongly assumed.
+- Row height: follow `Forest`'s row-filling intent, but note the derivation
+  input differs. `_forest_height(column, source)` keys `_LAYOUT_HEIGHTS`
+  (`{"stacked": 48, "inline": 34, "value_only": 34}`) off the **bound
+  estimate's** `source.ci_style.layout` — a `Sparkline` has no bound `Estimate`,
+  so that exact function cannot serve it.
+
+  Generalise instead of inventing a parallel mechanism: resolve `height=None`
+  against the **tallest CI layout among the table's `Estimate` columns**,
+  falling back to a module constant (30) when the table declares none. Rename
+  `_forest_height` to `_plot_height` and give it that table-level lookup, with
+  `Forest` keeping its existing per-column binding as the more specific case.
+
+  This is what makes the padding trim below actually pay off — trimming cell
+  padding only helps if the SVG is sized to the row it now reaches the edges
+  of. A fixed constant would leave a sparkline floating in a 48px row whenever
+  a stacked-CI estimate sits beside it.
 - `Resolved.forest_columns` drives a padding trim in `render.py` (`padding-top:
   2px; padding-bottom: 2px`) so the SVG reaches the row's true edges. Sparkline
   output columns **must join that set** — generalise the field to
