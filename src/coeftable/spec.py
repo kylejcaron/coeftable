@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 import narwhals as nw
 
-from coeftable.format import CIStyle, Format, Number, is_missing, render_interval
+from coeftable.format import CIStyle, Format, Number, coerce_numeric, is_missing, render_interval
 from coeftable.svg import forest_axis, forest_bar
 from coeftable.theme import DEFAULT, ColorRule, Direction, Theme, role_for
 
@@ -147,26 +147,7 @@ class ColumnKind(Protocol):
 
 
 def _numeric(frame: nw.DataFrame, name: str) -> list[float | None]:
-    values = frame[name].to_list()
-    out: list[float | None] = []
-    for value in values:
-        if value is None:
-            out.append(None)
-            continue
-        try:
-            out.append(float(value))
-        except (TypeError, ValueError):
-            # Some missing-value sentinels (pd.NA, pd.NaT, masked arrays) are
-            # not None but should be treated as missing rather than rejected.
-            s = str(value)
-            if s in ("<NA>", "NaT"):
-                out.append(None)
-            else:
-                raise TypeError(
-                    f"Column {name!r} must be numeric to be used as an estimate or "
-                    f"bound; found {value!r}."
-                ) from None
-    return out
+    return coerce_numeric(frame[name].to_list(), subject=f"Column {name!r}")
 
 
 @dataclass(frozen=True)

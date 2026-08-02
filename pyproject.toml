@@ -36,6 +36,7 @@ dev = [
     "ty>=0.0.49",
     "prek>=0.4.5",
     "nox>=2025.5",
+    "pyarrow>=25.0.0",
 ]
 
 [project.urls]

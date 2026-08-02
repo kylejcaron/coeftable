@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 from coeftable.theme import Theme
 
@@ -27,6 +27,50 @@ def is_missing(value: float | None) -> bool:
         True when the value carries no information.
     """
     return value is None or (isinstance(value, float) and math.isnan(value))
+
+
+def coerce_numeric(values: Iterable[Any], *, subject: str = "Value") -> list[float | None]:
+    """Coerce raw backend values to `float | None`, `None` for anything missing.
+
+    Handles `None` directly, and NaN uniformly as missing regardless of its
+    source (plain `float`, numpy, `Decimal`) once coerced. Also recognises
+    the missing-value sentinels narwhals' supported backends surface for
+    non-float columns that `float()` cannot parse directly: pandas'
+    nullable ``<NA>`` and ``NaT``.
+
+    Parameters
+    ----------
+    values
+        Raw values, e.g. a narwhals column's `.to_list()`.
+    subject
+        Identifies what is being coerced in the `TypeError` message raised
+        for a value that is neither missing nor numeric, e.g. ``"Column 'x'"``.
+
+    Returns
+    -------
+    list[float | None]
+        One entry per input value.
+
+    Raises
+    ------
+    TypeError
+        When a value is neither a recognised missing sentinel nor coercible
+        to `float`.
+    """
+    out: list[float | None] = []
+    for value in values:
+        if value is None:
+            out.append(None)
+            continue
+        try:
+            coerced = float(value)
+        except (TypeError, ValueError):
+            if str(value) in ("<NA>", "NaT"):
+                out.append(None)
+                continue
+            raise TypeError(f"{subject} must be numeric; found {value!r}.") from None
+        out.append(None if math.isnan(coerced) else coerced)
+    return out
 
 
 def compact_number(value: float) -> str:
