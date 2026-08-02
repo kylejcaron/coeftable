@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+import math
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
-from coeftable.format import CIStyle, Format, Number
-from coeftable.theme import DEFAULT, ColorRule, Direction, Theme
+import narwhals as nw
+
+from coeftable.format import CIStyle, Format, Number, is_missing, render_interval
+from coeftable.svg import forest_axis, forest_bar
+from coeftable.theme import DEFAULT, ColorRule, Direction, Theme, role_for
 
 if TYPE_CHECKING:
     from great_tables import GT
@@ -26,6 +30,150 @@ class SpecError(ValueError):
 
 class ColumnNotFoundError(KeyError):
     """Raised when a specification names a column absent from the frame."""
+
+
+@dataclass(frozen=True)
+class Scan:
+    """Frame-level context available to `ColumnKind.prepare`.
+
+    Parameters
+    ----------
+    frame
+        The input frame, narwhals-wrapped.
+    columns
+        Every declared column, in display order -- lets a column look up
+        another one it depends on, e.g. `Forest.of`.
+    row_keys, group_keys, split_keys
+        Per-input-row values, aligned to `frame`'s row order.
+    """
+
+    frame: nw.DataFrame
+    columns: tuple[Column, ...]
+    row_keys: list[Any]
+    group_keys: list[Any]
+    split_keys: list[Any]
+
+
+@dataclass(frozen=True)
+class Prepared:
+    """Per-column state from `prepare()`, threaded back through `cell`/`footer`.
+
+    `payload` holds whatever a column kind needs privately; it is opaque to
+    `resolve()` and to `grid.py`. `footer_key`, when set, maps this column's
+    `(row key, row-group value, split)` for one output row to an opaque
+    domain key, driving the shared footer-scheduling pass in `grid.py`;
+    `None` means this column has nothing to schedule.
+    """
+
+    payload: Any
+    footer_key: Callable[[Any, Any, Any], Any] | None = None
+
+
+@dataclass(frozen=True)
+class Cell:
+    """Context passed to `ColumnKind.cell` to render one cell.
+
+    Parameters
+    ----------
+    prepared
+        This column's own state, from `prepare()`.
+    index
+        Input frame row backing this cell.
+    row_key, group, split
+        This cell's row key, row-group value and split value.
+    direction
+        Favourable direction for this row.
+    color_rule
+        Table-wide override for role resolution, if any.
+    theme
+        Colour and typography.
+    """
+
+    prepared: Prepared
+    index: int
+    row_key: Any
+    group: Any
+    split: Any
+    direction: Direction
+    color_rule: ColorRule | None
+    theme: Theme
+
+
+@dataclass(frozen=True)
+class Footer:
+    """Context passed to `ColumnKind.footer` when a domain key is complete.
+
+    Parameters
+    ----------
+    prepared
+        This column's own state, from `prepare()`.
+    key
+        The domain key that is now complete.
+    theme
+        Colour and typography.
+    """
+
+    prepared: Prepared
+    key: Any
+    theme: Theme
+
+
+class ColumnKind(Protocol):
+    """Structural interface for a declared column.
+
+    `resolve()` drives every column through the same four seams: which frame
+    columns it reads (`sources`), the state it precomputes once (`prepare`),
+    one rendered cell (`cell`), and an optional footer row (`footer`) --
+    e.g. `Forest`'s shared axis.
+    """
+
+    label: str
+
+    def sources(self) -> Iterable[str]:
+        """Frame columns this column reads."""
+        ...
+
+    def prepare(self, scan: Scan) -> Prepared:
+        """Precompute state shared across this column's cells."""
+        ...
+
+    def cell(self, ctx: Cell) -> str:
+        """Render one cell."""
+        ...
+
+    def footer(self, ctx: Footer) -> str | None:
+        """Render a footer row for a completed domain key, or None."""
+        ...
+
+
+def _numeric(frame: nw.DataFrame, name: str) -> list[float | None]:
+    values = frame[name].to_list()
+    out: list[float | None] = []
+    for value in values:
+        if value is None:
+            out.append(None)
+            continue
+        try:
+            out.append(float(value))
+        except (TypeError, ValueError):
+            # Some missing-value sentinels (pd.NA, pd.NaT, masked arrays) are
+            # not None but should be treated as missing rather than rejected.
+            s = str(value)
+            if s in ("<NA>", "NaT"):
+                out.append(None)
+            else:
+                raise TypeError(
+                    f"Column {name!r} must be numeric to be used as an estimate or "
+                    f"bound; found {value!r}."
+                ) from None
+    return out
+
+
+@dataclass(frozen=True)
+class _EstimateState:
+    value: list[float | None]
+    low: list[float | None] | None
+    high: list[float | None] | None
 
 
 @dataclass(frozen=True)
@@ -51,6 +199,98 @@ class Estimate:
     ci: tuple[str, str] | None = None
     fmt: Format = _DEFAULT_FMT
     ci_style: CIStyle = _DEFAULT_CI_STYLE
+
+    def sources(self) -> Iterable[str]:
+        """Frame columns this column reads."""
+        names = [self.value]
+        if self.ci is not None:
+            names.extend(self.ci)
+        return names
+
+    def prepare(self, scan: Scan) -> Prepared:
+        """Precompute the numeric value and bound columns."""
+        value = _numeric(scan.frame, self.value)
+        low: list[float | None] | None = None
+        high: list[float | None] | None = None
+        if self.ci is not None:
+            low = _numeric(scan.frame, self.ci[0])
+            high = _numeric(scan.frame, self.ci[1])
+        return Prepared(payload=_EstimateState(value=value, low=low, high=high))
+
+    def cell(self, ctx: Cell) -> str:
+        """Render the point estimate and its interval."""
+        state: _EstimateState = ctx.prepared.payload
+        low = state.low[ctx.index] if state.low is not None else None
+        high = state.high[ctx.index] if state.high is not None else None
+        return render_interval(
+            state.value[ctx.index], low, high, fmt=self.fmt, style=self.ci_style, theme=ctx.theme
+        )
+
+    def footer(self, ctx: Footer) -> str | None:
+        """`Estimate` has no footer row."""
+        return None
+
+
+def _finite(values: list[float | None]) -> list[float]:
+    return [v for v in values if v is not None and math.isfinite(v)]
+
+
+def _domain_key(column: Forest, row_key: Any, group: Any, split: Any) -> Any:
+    match column.scale:
+        case "table":
+            return ("table",)
+        case "row_group":
+            return ("group", group)
+        case "split_column":
+            return ("split", split)
+        case "row":
+            return ("row", row_key)
+
+
+def _pad_domain(
+    values: list[float], ref: float, *, symmetric: bool = False
+) -> tuple[float, float]:
+    if not values:
+        return (ref - 1.0, ref + 1.0)
+    low, high = min(values), max(values)
+    low, high = min(low, ref), max(high, ref)
+    if low == high:
+        return (low - 1.0, high + 1.0)
+    margin = (high - low) * 0.08
+    low, high = low - margin, high + margin
+    if symmetric:
+        half = max(ref - low, high - ref)
+        return (ref - half, ref + half)
+    return (low, high)
+
+
+# Content height (px) a forest bar needs to fill its row for each CI
+# layout, measured against the theme's default font sizes. Approximate but
+# close enough that the reference line spans the row instead of a short
+# segment centred in a taller cell; `Forest.height` overrides this per column.
+_LAYOUT_HEIGHTS = {"stacked": 48, "inline": 34, "value_only": 34}
+
+
+def _forest_height(column: Forest, source: Estimate) -> int:
+    if column.height is not None:
+        return column.height
+    return _LAYOUT_HEIGHTS.get(source.ci_style.layout, 18)
+
+
+def _estimate_by_label(columns: tuple[Column, ...], label: str) -> Estimate:
+    for column in columns:
+        if isinstance(column, Estimate) and column.label == label:
+            return column
+    raise KeyError(label)  # pragma: no cover - guaranteed by validate_columns
+
+
+@dataclass(frozen=True)
+class _ForestState:
+    domains: dict[Any, tuple[float, float]]
+    source: Estimate
+    value: list[float | None]
+    low: list[float | None]
+    high: list[float | None]
 
 
 @dataclass(frozen=True)
@@ -96,6 +336,73 @@ class Forest:
     show_axis: bool = True
     axis_fmt: Format | None = None
 
+    def sources(self) -> Iterable[str]:
+        """`Forest` reads no frame column directly; it derives from its source estimate."""
+        return ()
+
+    def prepare(self, scan: Scan) -> Prepared:
+        """Compute this column's per-key domains, and its footer schedule if `show_axis`."""
+        source = _estimate_by_label(scan.columns, self.of)
+        assert source.ci is not None  # noqa: S101 - guaranteed by validate_columns
+        source_state: _EstimateState = source.prepare(scan).payload
+        assert source_state.low is not None and source_state.high is not None  # noqa: S101
+        value, low, high = source_state.value, source_state.low, source_state.high
+
+        buckets: dict[Any, list[float]] = {}
+        for i in range(len(scan.row_keys)):
+            key = _domain_key(self, scan.row_keys[i], scan.group_keys[i], scan.split_keys[i])
+            buckets.setdefault(key, []).extend(_finite([value[i], low[i], high[i]]))
+        domains = {
+            key: self.domain or _pad_domain(vals, self.ref, symmetric=self.symmetric)
+            for key, vals in buckets.items()
+        }
+
+        def footer_key(row_key: Any, group: Any, split: Any) -> Any:
+            return _domain_key(self, row_key, group, split)
+
+        return Prepared(
+            payload=_ForestState(domains=domains, source=source, value=value, low=low, high=high),
+            footer_key=footer_key if self.show_axis else None,
+        )
+
+    def cell(self, ctx: Cell) -> str:
+        """Render an interval bar, coloured by role, against its shared domain."""
+        state: _ForestState = ctx.prepared.payload
+        value = state.value[ctx.index]
+        low = state.low[ctx.index]
+        high = state.high[ctx.index]
+        if is_missing(value):
+            return ""
+        key = _domain_key(self, ctx.row_key, ctx.group, ctx.split)
+        domain = state.domains[key]
+        role = (
+            ctx.color_rule(value, low, high, self.ref)
+            if ctx.color_rule is not None
+            else role_for(low, high, self.ref, ctx.direction)
+        )
+        return forest_bar(
+            value,
+            low,
+            high,
+            domain=domain,
+            ref=self.ref,
+            color=ctx.theme.color(role),
+            theme=ctx.theme,
+            width=self.width,
+            height=_forest_height(self, state.source),
+        )
+
+    def footer(self, ctx: Footer) -> str | None:
+        """Render the shared axis for a completed domain."""
+        state: _ForestState = ctx.prepared.payload
+        return forest_axis(
+            domain=state.domains[ctx.key],
+            ref=self.ref,
+            fmt=self.axis_fmt or state.source.fmt,
+            theme=ctx.theme,
+            width=self.width,
+        )
+
 
 @dataclass(frozen=True)
 class Passthrough:
@@ -111,6 +418,22 @@ class Passthrough:
 
     label: str
     column: str
+
+    def sources(self) -> Iterable[str]:
+        """Frame columns this column reads."""
+        return (self.column,)
+
+    def prepare(self, scan: Scan) -> Prepared:
+        """Read the column verbatim."""
+        return Prepared(payload=scan.frame[self.column].to_list())
+
+    def cell(self, ctx: Cell) -> str:
+        """Render the value verbatim."""
+        return str(ctx.prepared.payload[ctx.index])
+
+    def footer(self, ctx: Footer) -> str | None:
+        """`Passthrough` has no footer row."""
+        return None
 
 
 type Column = Estimate | Forest | Passthrough
