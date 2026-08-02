@@ -198,7 +198,7 @@ def resolve(table: CoefTable) -> Resolved:
                 for (row_key, _nest), group in zip(grid.ordered, grid.row_group, strict=True)
             ]
 
-    def render_footer(position: int, pending: dict[str, list[Any]]) -> dict[str, str]:
+    def render_footer(pending: dict[str, list[Any]]) -> dict[str, str]:
         out: dict[str, str] = {}
         for label, keys in pending.items():
             column = column_by_label[label]

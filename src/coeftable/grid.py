@@ -161,7 +161,7 @@ def assemble_rows(
     display_columns: list[str],
     cell_values: dict[str, list[str]],
     footer_keys: dict[str, list[list[Any]]],
-    render_footer: Callable[[int, dict[str, list[Any]]], dict[str, str]],
+    render_footer: Callable[[dict[str, list[Any]]], dict[str, str]],
 ) -> AssembledRows:
     """Interleave rendered cells with footer rows, and lay out band/dividers.
 
@@ -186,8 +186,8 @@ def assemble_rows(
         `(grid.ordered position, split index)`; see `Prepared.footer_keys`.
         Columns with nothing to schedule are absent.
     render_footer
-        Called with a row position and the labels (with their keys) due
-        there; returns the rendered footer text per display column.
+        Called with the labels (with their keys) due at this row; returns
+        the rendered footer text per display column.
 
     Returns
     -------
@@ -244,7 +244,7 @@ def assemble_rows(
             axis_rows.append(len(layout_rows) - 1)
             for label, keys in pending.items():
                 emitted[label].update(keys)
-            for name, text in render_footer(position, pending).items():
+            for name, text in render_footer(pending).items():
                 cells[name][-1] = text
 
     return AssembledRows(
