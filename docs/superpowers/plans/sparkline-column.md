@@ -126,8 +126,12 @@ series has no scalar `Estimate` to bind to, so it declares its own columns.
   time axis is almost never wanted. Not configurable, so `scale=` unambiguously
   means y.
 
-Cell height is a fixed pixel constant (`height=30`, matching nanoplot's `2em`
-default). `scale` changes only which value range maps onto those pixels.
+Cell height is whatever the table's row height is — `height=None` resolves
+against the tallest CI layout among the declared `Estimate` columns, falling
+back to a constant 30 only when the table declares none (Task 5,
+`_plot_height`). Either way it is a per-table constant, not a per-row one:
+`scale` changes only which value range maps onto those pixels, never how many
+pixels there are.
 
 ### Colour
 
