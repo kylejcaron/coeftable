@@ -43,8 +43,8 @@ memory transfers.
 ### Why the refactor comes first
 
 Adding a fourth column kind touches `resolve()` in five places:
-`_required_columns` (61-73), extraction (204-213), the domain pass (215-232),
-cell emission (299-347), and the footer/axis lookahead (349-387). The last is
+`_required_columns`, the extraction block, the domain pass, cell emission, and
+the footer/axis lookahead at the tail of `resolve()`. The last is
 the real problem — it is O(rows² × splits) and hardcodes *footer =
 `forest_axis`*. A sparkline footer is a different shape (dates, not y-ticks).
 
@@ -89,9 +89,10 @@ class Sparkline:
     scale: Scale = "row"                         # y-domain sharing
     domain: tuple[float, float] | None = None    # explicit y-domain
     width: int = 220
-    height: int = 30
+    height: int | None = None                    # None -> layout-derived
     show_axis: bool = True                       # footer x-axis row
     show_endpoint: bool = True                   # endpoint value label
+    endpoint_width: int = 44                     # FIXED reserve, see Task 3
     fmt: Format = _DEFAULT_FMT                   # formats endpoint label
     axis_fmt: Format | TimeFormat | None = None  # x tick labels
 ```
@@ -116,7 +117,7 @@ series has no scalar `Estimate` to bind to, so it declares its own columns.
   different units. A shared y across dollars and milliseconds renders every
   small-magnitude metric as a flat line at the bottom of its cell.
 
-  `_domain_key` (`frame.py:138-147`) returns `("row", row_key)`, keyed on the
+  `_domain_key` returns `("row", row_key)`, keyed on the
   **`rows`** value and not the nest — so with `nest="variant"`, Revenue/B and
   Revenue/C automatically share a domain while Latency gets its own. Correct
   semantics for free.
@@ -143,7 +144,7 @@ estimate lives on x so `ref` is a *vertical* dashed line; for `Sparkline` the
 estimate lives on y so the identical `ref` is *horizontal*. Same `theme.axis`
 colour, same `2,2` dash. One line per row.
 
-`_pad_domain(values, ref)` (`frame.py:150-158`) already forces `ref` into the
+`_pad_domain(values, ref, *, symmetric=False)` already forces `ref` into the
 domain, so a lift series sitting entirely above zero still renders with the zero
 line visible instead of cropped.
 
@@ -158,7 +159,7 @@ gap). No option — matches nanoplot's `missing_vals="gap"` default.
 
 - New `src/coeftable/grid.py`: row identity, ordering, `source_index`, banding,
   divider rows, and footer *scheduling* (the generic "emit when no later row
-  shares this domain key" rule from `frame.py:349-387`). **Zero column
+  shares this domain key" rule at the tail of `resolve()`). **Zero column
   knowledge** — no `isinstance` on any column kind.
 - New protocol, in `spec.py` beside the dataclasses:
   ```python
@@ -169,8 +170,8 @@ gap). No option — matches nanoplot's `missing_vals="gap"` default.
       def cell(self, ctx: Cell) -> str: ...            # one rendered cell
       def footer(self, ctx: Footer) -> str | None: ... # axis row, or None
   ```
-  These name seams that already exist: `prepare` is `frame.py:215-232`,
-  `cell` is 299-347, `footer` is 349-387.
+  These name seams that already exist inside `resolve()`: the domain pass, the
+  cell `if/elif/else`, and the footer lookahead, in that order.
 - `Estimate`, `Forest`, `Passthrough` implement it. `Estimate` and
   `Passthrough` return `None` from `footer()`. `resolve()` shrinks to: build
   grid → `prepare` each column → `cell` per (row, split, column) → run the
@@ -188,7 +189,7 @@ task; a changed test means changed behaviour.
 
 - `Series` value object: parallel `x`, `y`, `lower`, `upper` lists, already
   coerced to `float | None`, `None` for missing. Reuses `_numeric`'s missing
-  sentinel handling (`<NA>`, `NaT`) from `frame.py:85-105` — lift that helper
+  sentinel handling (`<NA>`, `NaT`) from `_numeric` — lift that helper
   into a shared spot rather than duplicating it.
 - List-column path: read a list-valued column across pandas / polars / pyarrow
   via narwhals; validate that `value`, each `ci` bound, and `x` have equal
@@ -197,7 +198,7 @@ task; a changed test means changed behaviour.
   `split_columns`) keys, sort by `x`, and emit the same `Series`. A row key
   present in the main frame but absent from `data` yields an empty `Series`
   (renders as a blank cell, consistent with how `resolve` blanks a missing
-  split at `frame.py:301-302`).
+  split when `index is None`).
 - `x=None` falls back to positional index `0..n-1`.
 - Temporal `x` (date / datetime / pyarrow timestamp) is normalised to a float
   epoch for projection, with the original dtype retained so the axis knows to
@@ -220,12 +221,25 @@ Draw order (back to front):
    upper path then the lower path reversed, `fill-opacity` ~0.15.
 2. **Reference line** — horizontal dashed `<line>` at `ref`, `theme.axis`,
    `stroke-dasharray="2,2"`, drawn only when `ref` is inside the y-domain
-   (mirroring `forest_bar:117-122`).
+   (mirroring the same guard in `forest_bar`).
 3. **Series line** — `<polyline>` per contiguous run, `stroke-width` 1.5.
 4. **Endpoint dot** — small filled `<circle>` at the last non-missing point.
 5. **Endpoint label** — `<text>` right of the dot when `show_endpoint`,
-   formatted with `fmt`. Reserve its width from the plot area so it cannot
-   overlap the line.
+   formatted with `fmt`, right-aligned within the reserved strip.
+
+**The endpoint reserve must be a fixed pixel constant, never derived from the
+formatted string.** `forest_bar` and `forest_axis` line up only because both
+build `_projector(domain, width, pad)` with identical `width` and `pad`. If the
+plot area shrinks by a text-dependent amount, two guarantees break at once:
+the footer ticks stop sitting under their data points, and — because the
+reserve would differ per row — rows stop aligning with each other, destroying
+the "x always shared table-wide" property that is the whole reason the x-domain
+is not configurable.
+
+So: `endpoint_width` is a config constant, and **both** `sparkline_bar` and
+`sparkline_axis` project over the same reduced inner width
+(`width - 2*pad - endpoint_width` when `show_endpoint`, else `width - 2*pad`).
+A value too long for the strip is clipped, not allowed to widen it.
 
 Colour is a single resolved `color` argument, as `forest_bar` already takes —
 role resolution stays in the caller.
@@ -237,6 +251,15 @@ gap; `ref` outside the domain omits the dashed line; `show_endpoint=False` emits
 no `<text>`; an all-missing series emits a valid empty `<svg>` rather than
 raising; unevenly spaced x produces non-uniform point spacing (asserted on the
 projected coordinates, this is the anti-index-spacing guard).
+
+**The alignment invariant gets its own test, in both directions.** Render two
+rows whose endpoint labels format to very different string lengths (e.g. `1%`
+and `-12,345%`) and assert their first and last *data* x-coordinates are
+identical — proving the reserve is text-independent. Then assert
+`sparkline_axis`'s tick x-coordinates coincide with `sparkline_bar`'s projected
+point x-coordinates for the same domain and `show_endpoint` setting. This is
+the regression guard for the failure mode where ticks drift out from under
+their points.
 
 ## Task 4: Calendar ticks, `TimeFormat`, and `sparkline_axis`
 
@@ -280,8 +303,17 @@ produces the same tick positions as `forest_axis` would.
   - `footer` — call `sparkline_axis` with the x domain.
 - `frame.py`: no new `isinstance` branches. If Task 5 requires one, Task 1 was
   done wrong.
-- Row height: sparkline rows are taller than forest rows (30px vs 18px). Confirm
-  `render.py`'s `tab_options` chrome does not clip them.
+- Row height: follow `Forest`'s existing pattern rather than a bare constant.
+  `Forest.height` is `int | None`, resolved by `_forest_height()` against
+  `_LAYOUT_HEIGHTS` (`{"stacked": 48, "inline": 34, "value_only": 34}`) so the
+  bar fills the row its CI layout produces. `Sparkline.height` takes the same
+  `int | None` shape with its own default; it is **not** taller than a forest
+  row by default, which an earlier draft of this plan wrongly assumed.
+- `Resolved.forest_columns` drives a padding trim in `render.py` (`padding-top:
+  2px; padding-bottom: 2px`) so the SVG reaches the row's true edges. Sparkline
+  output columns **must join that set** — generalise the field to
+  `plot_columns` (updating `Forest`'s use) rather than adding a sibling.
+  Without it the SVG sits inside text-sized vertical padding.
 
 **Verification:** New `tests/test_sparkline.py`: end-to-end render of the
 motivating experiment table (lift % over dates, `ref=0`, `nest="variant"`,
