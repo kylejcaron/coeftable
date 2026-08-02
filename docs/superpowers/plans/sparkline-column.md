@@ -269,8 +269,8 @@ produces the same tick positions as `forest_axis` would.
 - `spec.py`: add the `Sparkline` dataclass per the Design section; add to the
   `Column` union; add a `.sparkline(...)` builder method following the existing
   `.forest(...)` shape; extend `validate_columns` — `ci` bounds must be given as
-  a pair, `data=` and list-column mode are mutually exclusive, `scale="row"`
-  with an explicit `domain=` is a contradiction.
+  a pair, and `data=` and list-column mode are mutually exclusive. `domain=`
+  overrides `scale=`, matching `Forest`'s documented behaviour — not an error.
 - Implement `sources` / `prepare` / `cell` / `footer` for `Sparkline` against
   the Task 1 protocol:
   - `prepare` — bucket **y** values (including `lower`/`upper`) by
@@ -287,8 +287,9 @@ produces the same tick positions as `forest_axis` would.
 motivating experiment table (lift % over dates, `ref=0`, `nest="variant"`,
 `groups="area"`); `scale="row"` gives each metric its own y-domain while nested
 variants of one metric share one (assert on distinct projected extents);
-`scale="table"` gives all rows one domain; the footer axis row appears once per
-distinct x-domain; a row whose last interval straddles `ref` renders in the
+`scale="table"` gives all rows one domain; exactly one footer axis row is
+emitted for the column, since x is always shared table-wide; a row whose last
+interval straddles `ref` renders in the
 `inconclusive` colour, one clearly above renders `favorable`, and the same row
 under `lower_is_better` flips to `unfavorable`. Plus a smoke test that
 `.gt().as_raw_html()` contains the expected `<svg>` count.
