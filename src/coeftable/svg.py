@@ -143,7 +143,7 @@ def calendar_ticks(low: float, high: float, target: int = 4) -> list[float]:
     """Return epoch-second tick positions on real day/week/month/quarter/year boundaries.
 
     Selects a step from a fixed ladder (day, week, month, quarter, year)
-    based on the span, then walks real calendar boundaries for that step.
+    against the domain, then walks real calendar boundaries for that step.
     Months run 28-31 days, so month/quarter/year ticks use calendar
     arithmetic rather than a fixed number of seconds; `nice_ticks` is not
     involved anywhere in this path.
