@@ -74,10 +74,10 @@ experiment = pl.DataFrame(
 ## Trend over time
 
 Add a `.sparkline(...)` column to plot a metric's trajectory next to its
-point estimate: an inline SVG line with a shaded credible interval, a dashed
-reference line, and an endpoint label. Below, `ref=0.0` draws the reference
-line that Latency's series crosses as its credible interval narrows over
-three weeks of data:
+point estimate: an inline SVG line with a shaded credible interval and a
+dashed reference line (pass `show_endpoint=True` to also label the last
+value). Below, `ref=0.0` draws the reference line that Latency's series
+crosses as its credible interval narrows over three weeks of data:
 
 There are two front doors for the series data, the same list-columns vs.
 companion-frame choice used elsewhere in coeftable:
