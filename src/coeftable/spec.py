@@ -268,7 +268,13 @@ def _pad_domain(
 def _clamp_domain(
     domain: tuple[float, float], ref: float, max_domain: float
 ) -> tuple[float, float]:
-    """Narrow `domain` to fit inside `ref - max_domain, ref + max_domain`; never widens it."""
+    """Narrow `domain` to fit inside `ref - max_domain, ref + max_domain`; never widens it.
+
+    Requires `ref` inside `domain` and `max_domain >= 0` -- both guaranteed
+    by `_bucket_domain`'s one call site, which only ever clamps a
+    `_pad_domain` result (already forced to contain `ref`). Outside that
+    precondition the two independent bound clamps can invert (`low > high`).
+    """
     low, high = domain
     return (max(low, ref - max_domain), min(high, ref + max_domain))
 

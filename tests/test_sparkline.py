@@ -367,6 +367,15 @@ def test_clamp_domain_never_widens_regardless_of_ceiling_size():
         assert high - low <= 7.0
 
 
+def test_clamp_domain_negative_max_domain_inverts_like_an_unvalidated_reversed_domain():
+    # max_domain has no positivity validation, matching domain=(low, high)
+    # itself, which is equally unvalidated (validate_columns has no shape
+    # check for it either). Locking in the current, accepted, non-crashing
+    # artifact rather than leaving it undocumented -- see _clamp_domain's
+    # docstring for the precondition this violates.
+    assert _clamp_domain((-0.08, 1.08), ref=0.0, max_domain=-5.0) == (5.0, -5.0)
+
+
 def test_bucket_domain_override_wins_even_when_max_domain_is_set():
     assert _bucket_domain([100.0], 0.0, override=(-5.0, 5.0), max_domain=1.0) == (-5.0, 5.0)
 
