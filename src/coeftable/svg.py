@@ -422,8 +422,7 @@ def sparkline_bar(
     width, height, pad
         Geometry in pixels.
     show_endpoint
-        Draw the endpoint value label. The endpoint dot itself is always
-        drawn when the series has a last valid point.
+        Draw the endpoint value label.
     endpoint_width
         Fixed pixel reserve carved out of `width` for the endpoint label,
         independent of the formatted label's length. `sparkline_axis` must
@@ -468,16 +467,14 @@ def sparkline_bar(
         pts = " ".join(f"{project_x(xi):.2f},{project_y(yi):.2f}" for xi, yi in run)
         parts.append(f'<polyline points="{pts}" fill="none" stroke="{color}" stroke-width="1.5"/>')
 
-    if line_runs:
-        ex, ey = line_runs[-1][-1]
-        ex_px, ey_px = project_x(ex), project_y(ey)
-        parts.append(f'<circle cx="{ex_px:.2f}" cy="{ey_px:.2f}" r="2.5" fill="{color}"/>')
-        if show_endpoint:
-            label = _clip_label(fmt(ey), max(endpoint_width - 4, 4), 9.0)
-            parts.append(
-                f'<text x="{right_edge}" y="{ey_px + 3:.2f}" fill="{color}" '
-                f'font-size="9" text-anchor="end">{label}</text>'
-            )
+    if line_runs and show_endpoint:
+        _, ey = line_runs[-1][-1]
+        ey_px = project_y(ey)
+        label = _clip_label(fmt(ey), max(endpoint_width - 4, 4), 9.0)
+        parts.append(
+            f'<text x="{right_edge}" y="{ey_px + 3:.2f}" fill="{color}" '
+            f'font-size="9" text-anchor="end">{label}</text>'
+        )
 
     return _svg(width, height, "".join(parts))
 

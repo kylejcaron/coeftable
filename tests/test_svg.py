@@ -119,7 +119,6 @@ def test_sparkline_bar_is_well_formed_svg():
     assert svg.endswith("</svg>")
     assert "<polyline" in svg
     assert "<polygon" in svg
-    assert "<circle" in svg
     assert "#55A868" in svg
 
 
@@ -214,7 +213,6 @@ def test_sparkline_bar_hides_endpoint_label_when_disabled():
         show_endpoint=False,
     )
     assert "<text" not in svg
-    assert "<circle" in svg
 
 
 def test_sparkline_bar_all_missing_series_is_valid_and_empty():
@@ -263,30 +261,6 @@ def test_sparkline_bar_clips_overlong_endpoint_label():
     assert label
     assert label.group(1).endswith("\u2026")
     assert label.group(1) != "-12,345.6789%"
-
-
-def test_sparkline_bar_endpoint_dot_lands_on_last_valid_point_after_trailing_gap():
-    x = [0.0, 1.0, 2.0]
-    y = [1.0, 1.2, None]
-    lower = [0.8, 1.0, None]
-    upper = [1.2, 1.4, None]
-    svg = sparkline_bar(
-        x,
-        y,
-        lower,
-        upper,
-        x_domain=(0.0, 2.0),
-        domain=(0.0, 2.0),
-        ref=0.0,
-        color="#000",
-        fmt=Number(decimals=1),
-    )
-    dot = re.search(r'<circle cx="([^"]+)" cy="([^"]+)"', svg)
-    assert dot
-    line = re.search(r'<polyline points="([^"]+)"', svg)
-    assert line
-    last_point = line.group(1).split(" ")[-1]
-    assert f"{dot.group(1)},{dot.group(2)}" == last_point
 
 
 def test_sparkline_bar_projects_true_x_not_index():
