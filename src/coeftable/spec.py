@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 import statistics
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
@@ -267,20 +267,20 @@ def _pad_domain(
     return (low, high)
 
 
-def _robust_domain(
-    values: list[float], ref: float, anchors: Sequence[float] = ()
-) -> tuple[float, float]:
+def _robust_domain(values: list[float], ref: float) -> tuple[float, float]:
     """Pad an IQR/Tukey-fenced domain to `values`, discounting outliers.
 
     Falls back to `_pad_domain`'s plain min/max fit entirely -- not a
     partial fence -- when quartiles are not meaningful: fewer than 4
     pooled values, or a zero IQR (e.g. all-identical values).
 
-    `anchors` -- each contributing row's last-plotted value and CI bounds
-    (`_last_point`) -- are unioned back into the result even where the
-    fence would otherwise exclude one. `role_for` colours a row from its
-    last point, so a domain that hides it would mislead the reader more
-    than the tight fit this option exists to improve on.
+    A value the fence discounts is not specially protected, even when it
+    is a row's own last-plotted point: `sparkline_bar` clips it to the
+    resulting domain edge and flags it via `show_clip_indicators`, the
+    same mechanism a `domain=`/`max_domain=` overflow already uses. That
+    is safe because colour resolution (`role_for`, in `Sparkline.cell`)
+    always reads a row's true last point directly, never the domain it
+    ends up plotted against.
     """
     if len(values) < 4:
         return _pad_domain(values, ref)
@@ -290,7 +290,7 @@ def _robust_domain(
         return _pad_domain(values, ref)
     fence_low, fence_high = q1 - 1.5 * iqr, q3 + 1.5 * iqr
     inliers = [v for v in values if fence_low <= v <= fence_high]
-    return _pad_domain([*inliers, *anchors], ref)
+    return _pad_domain(inliers, ref)
 
 
 def _clamp_domain(
@@ -314,20 +314,19 @@ def _bucket_domain(
     override: tuple[float, float] | None,
     max_domain: float | None,
     autoscale: Autoscale = "tight",
-    anchors: Sequence[float] = (),
 ) -> tuple[float, float]:
     """Resolve one domain bucket for `Sparkline.prepare`.
 
     `override` wins outright; otherwise the domain is fit to `values` --
     tightly (`_pad_domain`) or, when `autoscale="robust"`, with an
-    IQR/Tukey fence that discounts outliers while still keeping every
-    value in `anchors` visible (`_robust_domain`) -- and, when
-    `max_domain` is set, clamped to `ref - max_domain, ref + max_domain`.
+    IQR/Tukey fence that discounts outliers (`_robust_domain`) -- and,
+    when `max_domain` is set, clamped to `ref - max_domain, ref +
+    max_domain`.
     """
     if override is not None:
         return override
     if autoscale == "robust":
-        domain = _robust_domain(values, ref, anchors)
+        domain = _robust_domain(values, ref)
     else:
         domain = _pad_domain(values, ref)
     return _clamp_domain(domain, ref, max_domain) if max_domain is not None else domain
@@ -621,13 +620,15 @@ class Sparkline:
         `"tight"` (default) fits tightly to the exact min/max of the
         bucket's pooled values -- unchanged from before this option
         existed. `"robust"` fits an IQR/Tukey fence instead, discounting
-        outliers that would otherwise flatten the rest of the series,
-        while still keeping every contributing row's last-plotted value
-        and CI bounds visible -- that is the exact point `role_for`
-        colours the row from, so a fence that hid it would mislead more
-        than it helps. Composes with `max_domain`: the robust fit runs
-        first, then the ceiling clamps it exactly as it clamps a tight
-        fit.
+        outliers that would otherwise flatten the rest of the series. A
+        discounted point is not hidden, even when it is a row's own
+        last-plotted one: it clips to the resulting domain edge and is
+        flagged via `show_clip_indicators`, the same mechanism a
+        `domain=`/`max_domain=` overflow already uses. Colour resolution
+        is unaffected either way -- `role_for` always reads a row's true
+        last-plotted value, never the domain it ends up plotted against.
+        Composes with `max_domain`: the robust fit runs first, then the
+        ceiling clamps it exactly as it clamps a tight fit.
     width
         Plot width in pixels.
     height
@@ -723,17 +724,12 @@ class Sparkline:
             series_list = [by_identity[identity] for identity in identities]
 
         buckets: dict[Any, list[float]] = {}
-        anchors: dict[Any, list[float]] = {}
         x_values: list[float] = []
         x_temporal = False
         for i in range(len(scan.row_keys)):
             series = series_list[i]
             key = _domain_key(self, scan.row_keys[i], scan.group_keys[i], scan.split_keys[i])
             buckets.setdefault(key, []).extend(_finite([*series.y, *series.lower, *series.upper]))
-            if self.autoscale == "robust":
-                last = _last_point(series)
-                if last is not None:
-                    anchors.setdefault(key, []).extend(_finite(list(last)))
             x_values.extend(_finite(series.x))
             x_temporal = x_temporal or series.x_temporal
 
@@ -744,7 +740,6 @@ class Sparkline:
                 override=self.domain,
                 max_domain=self.max_domain,
                 autoscale=self.autoscale,
-                anchors=anchors.get(key, ()),
             )
             for key, vals in buckets.items()
         }
@@ -1119,10 +1114,13 @@ class CoefTable:
             `"tight"` (default) fits tightly to the pooled values, same as
             before this option existed. `"robust"` fits an IQR/Tukey fence
             instead, discounting outliers that would otherwise flatten the
-            rest of the series, while still keeping every row's
-            last-plotted value and CI bounds visible. Composes with
-            `max_domain`: the robust fit runs first, then the ceiling
-            clamps it.
+            rest of the series. A discounted point -- including a row's
+            own last-plotted one -- clips to the resulting domain edge and
+            is flagged via `show_clip_indicators` rather than being
+            hidden; colour resolution is unaffected, since it always
+            reads a row's true last-plotted value, never the domain.
+            Composes with `max_domain`: the robust fit runs first, then
+            the ceiling clamps it.
         width
             Plot width in pixels.
         height

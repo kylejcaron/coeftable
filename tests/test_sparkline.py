@@ -514,11 +514,16 @@ def test_robust_domain_excludes_a_spike_the_fence_flags_as_an_outlier():
     assert (robust[1] - robust[0]) < (tight[1] - tight[0]) / 100
 
 
-def test_robust_domain_keeps_an_anchor_visible_even_when_the_fence_would_exclude_it():
-    without_anchor = _robust_domain(_SPIKE_LIFT, 1.0)
-    with_anchor = _robust_domain(_SPIKE_LIFT, 1.0, anchors=[300.0])
-    assert not (without_anchor[0] <= 300.0 <= without_anchor[1])
-    assert with_anchor[0] <= 300.0 <= with_anchor[1]
+def test_robust_domain_has_no_anchor_override_and_cannot_be_bypassed():
+    # The anchor-forcing parameter this test used to cover is gone
+    # entirely -- _robust_domain now takes exactly (values, ref). There
+    # is no longer any way to force an excluded outlier back into the
+    # domain; this locks in the fix, so silently reintroducing an
+    # anchors kwarg -- even an optional, default-off one -- would
+    # resurrect the exact bug this task fixes rather than pass silently.
+    stale_kwargs = {"anchors": [300.0]}
+    with pytest.raises(TypeError):
+        _robust_domain(_SPIKE_LIFT, 1.0, **stale_kwargs)
 
 
 def test_robust_domain_forces_ref_into_the_domain():
@@ -575,51 +580,107 @@ def test_autoscale_robust_keeps_the_bulk_of_a_spiking_series_legible():
     assert robust_plot.count("<polygon") == 1
 
 
-def test_autoscale_robust_single_row_last_point_is_the_outlier_stays_visible():
+def test_autoscale_robust_single_row_last_point_is_the_outlier_clips_and_flags():
     raw = {"metric": ["A"], "lift": [[1.0, 1.05, 0.95, 300.0]]}
     table = CoefTable(pl.DataFrame(raw), rows="metric").sparkline(
         "Trend", value="lift", ref=1.0, autoscale="robust"
     )
     plot = nw.from_native(resolve(table).frame)["Trend"].to_list()[0]
-    # The IQR fence alone excludes 300.0 -- but it is also this row's last
-    # point, the exact value role_for colours the row from, so the anchor
-    # union must force it back into the domain. No clip flag proves it
-    # was not clamped.
-    assert "<polygon" not in plot
+    # 300.0 is both the IQR fence's only excluded outlier and this row's
+    # own last point. There is no anchor mechanism left to protect it:
+    # the line still draws -- clamped to the domain's edge, not hidden
+    # -- and raises exactly one clip flag, the same clip-then-flag
+    # mechanism a domain=/max_domain= overflow already uses.
+    assert "<polyline" in plot
+    assert plot.count("<polygon") == 1
 
 
-def test_autoscale_robust_multi_row_bucket_keeps_every_rows_last_point_visible():
+def test_autoscale_robust_keeps_the_bulk_legible_when_the_outlier_is_the_last_point():
+    # The test above deliberately keeps its spike off the last index, so
+    # it passes no matter how a last-plotted outlier is handled. This is
+    # the case the old anchor-forcing design got wrong: the outlier IS
+    # the row's own last point -- the value the anchor union always
+    # forced back into the domain, silently collapsing "robust" to the
+    # same domain as "tight" whenever it mattered most. With the anchor
+    # gone, this case now gets the same legibility win.
+    raw = {"metric": ["A"], "lift": [[1.0, 1.05, 0.95, 1.02, 0.98, 300.0]]}
+    tight_table = CoefTable(pl.DataFrame(raw), rows="metric").sparkline(
+        "Trend", value="lift", ref=1.0
+    )
+    robust_table = CoefTable(pl.DataFrame(raw), rows="metric").sparkline(
+        "Trend", value="lift", ref=1.0, autoscale="robust"
+    )
+    tight_plot = nw.from_native(resolve(tight_table).frame)["Trend"].to_list()[0]
+    robust_plot = nw.from_native(resolve(robust_table).frame)["Trend"].to_list()[0]
+
+    def extent(svg):
+        ys = _polyline_ys(svg)[:5]  # every point except the spike itself
+        return max(ys) - min(ys)
+
+    assert extent(tight_plot) < 1.0
+    assert extent(robust_plot) > 10.0
+    assert tight_plot.count("<polygon") == 0
+    assert robust_plot.count("<polygon") == 1
+
+
+def test_autoscale_robust_multi_row_bucket_narrows_around_the_bulk_and_flags_the_outlier():
     raw = {
         "metric": ["Clean", "Spiking"],
         "lift": [[1.0, 1.05, 0.95, 1.02], [1.0, 1.05, 0.95, 300.0]],
     }
-    table = CoefTable(pl.DataFrame(raw), rows="metric").sparkline(
+    tight_table = CoefTable(pl.DataFrame(raw), rows="metric").sparkline(
+        "Trend", value="lift", ref=1.0, scale="table"
+    )
+    robust_table = CoefTable(pl.DataFrame(raw), rows="metric").sparkline(
         "Trend", value="lift", ref=1.0, scale="table", autoscale="robust"
     )
-    plots = nw.from_native(resolve(table).frame)["Trend"].to_list()
-    # Both rows share one scale="table" bucket. "Spiking"'s last point
-    # (300.0) is the sole reason the fence would exclude it, so the anchor
-    # union forces the SHARED domain open to keep it visible -- and
-    # because there is exactly one resolved domain per bucket, "Clean"
-    # inherits that same wide-open domain even though it has no outlier
-    # of its own to force anything.
-    assert "<polygon" not in plots[0]
-    assert "<polygon" not in plots[1]
-    assert _ref_line_y(plots[0]) == pytest.approx(_ref_line_y(plots[1]))
+    tight_plots = nw.from_native(resolve(tight_table).frame)["Trend"].to_list()
+    robust_plots = nw.from_native(resolve(robust_table).frame)["Trend"].to_list()
+
+    def extent(svg):
+        ys = _polyline_ys(svg)
+        return max(ys) - min(ys)
+
+    # Both rows share one scale="table" bucket, so under "tight" -- forced
+    # to fit "Spiking"'s 300.0 -- "Clean"'s own tightly-clustered points
+    # collapse to a sub-pixel line even though it has no outlier of its
+    # own.
+    assert extent(tight_plots[0]) < 1.0
+    # With the anchor-forcing gone, the shared robust fence discounts
+    # 300.0 and narrows around the bulk of BOTH rows' data -- "Clean" now
+    # visibly benefits from a domain it never had to fight to get.
+    assert extent(robust_plots[0]) > 10.0
+    # "Spiking"'s own last point is the excluded outlier: it clips to the
+    # narrower shared domain's edge and is flagged, same as the
+    # single-row case.
+    assert robust_plots[1].count("<polygon") == 1
+    # "Clean" has no outlier of its own, and the narrower domain still
+    # comfortably contains its whole series, so it raises no flag.
+    assert robust_plots[0].count("<polygon") == 0
+    # Still exactly one resolved domain for the bucket: both rows'
+    # reference lines land at the same pixel.
+    assert _ref_line_y(robust_plots[0]) == pytest.approx(_ref_line_y(robust_plots[1]))
 
 
 def test_autoscale_robust_multi_row_bucket_with_an_empty_sibling_still_resolves():
+    # The anchor-tracking loop this test used to guard against crashing
+    # on ("_last_point returns None for an empty series") is gone
+    # entirely -- there is nothing left in prepare() that inspects a
+    # row's last point at all. What remains worth covering: pooling an
+    # empty sibling into a shared bucket must still resolve cleanly
+    # under autoscale="robust".
     raw = {"metric": ["Empty", "Spiking"], "lift": [[], [1.0, 1.05, 0.95, 300.0]]}
     table = CoefTable(pl.DataFrame(raw), rows="metric").sparkline(
         "Trend", value="lift", ref=1.0, scale="table", autoscale="robust"
     )
     plots = nw.from_native(resolve(table).frame)["Trend"].to_list()
-    # The empty row has no last point to anchor -- and must not crash
-    # trying to find one -- so it renders blank as it always has; the
-    # sibling's own outlier last point still forces the shared domain
-    # open on its own.
+    # The empty row contributes nothing to the bucket and renders blank,
+    # as it always has.
     assert plots[0] == ""
-    assert "<polygon" not in plots[1]
+    # "Spiking" is still the bucket's sole outlier: it clips to the
+    # fitted domain's edge and flags, exactly as it would with no empty
+    # sibling present.
+    assert plots[1].count("<polygon") == 1
 
 
 def test_autoscale_robust_composes_with_max_domain():
@@ -634,6 +695,42 @@ def test_autoscale_robust_composes_with_max_domain():
     # as a second pass after the robust fit, not instead of it.
     assert robust_only.count("<polygon") == 1
     assert robust_clamped.count("<polygon") == 2
+
+
+def test_autoscale_robust_clip_does_not_change_the_rendered_colour():
+    # Domain choice must never change which colour a row gets -- only
+    # how much of the plot area is spent on which part of the series.
+    # cell() resolves colour from the row's raw last point (_last_point),
+    # never from state.domains[key] -- proven here, not just reasoned
+    # about: same data, same colour, under both "tight" (never clips)
+    # and "robust" (clips this exact point).
+    raw = {
+        "metric": ["A"],
+        "lift": [[1.0, 1.05, 0.95, 300.0]],
+        "lift_lb": [[0.9, 0.95, 0.85, 299.9]],
+        "lift_ub": [[1.1, 1.15, 1.05, 300.1]],
+    }
+    tight_table = CoefTable(pl.DataFrame(raw), rows="metric").sparkline(
+        "Trend", value="lift", ci=("lift_lb", "lift_ub"), ref=0.0
+    )
+    robust_table = CoefTable(pl.DataFrame(raw), rows="metric").sparkline(
+        "Trend", value="lift", ci=("lift_lb", "lift_ub"), ref=0.0, autoscale="robust"
+    )
+    tight_plot = nw.from_native(resolve(tight_table).frame)["Trend"].to_list()[0]
+    robust_plot = nw.from_native(resolve(robust_table).frame)["Trend"].to_list()[0]
+
+    # The last point's own interval (299.9, 300.1) sits far above
+    # ref=0.0, so the row resolves "favorable" -- identically under both
+    # domains.
+    assert DEFAULT.color("favorable") in tight_plot
+    assert DEFAULT.color("favorable") in robust_plot
+
+    # "tight" is, by construction, wide enough to contain every point --
+    # its one polygon is only the CI ribbon fill. "robust" fences the
+    # same last point out of the domain, so it clips and raises an
+    # additional clip-flag polygon -- proving the colour match above
+    # isn't just because nothing actually clipped under "robust".
+    assert robust_plot.count("<polygon") > tight_plot.count("<polygon")
 
 
 def test_show_axis_false_emits_no_footer_row():
