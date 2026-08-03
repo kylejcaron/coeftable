@@ -472,11 +472,12 @@ def test_sparkline_bar_distinguishes_a_clipped_point_from_a_genuine_gap():
 
 
 def test_sparkline_bar_a_long_clipped_run_still_raises_only_one_flag():
-    # Five consecutive points sit far above the domain. A flag per crossing
-    # (the rejected design) would still be one mark here; the real test is
-    # that flag count never scales with how MANY points are clipped, only
-    # with which DIRECTIONS are -- a noisy series oscillating in and out of
-    # a tight domain must not turn into a wall of markers.
+    # Five consecutive points sit far above the domain. The rejected
+    # per-crossing design would have marked both the entry and exit of this
+    # run (two marks); the real test is that flag count never scales with
+    # how MANY points are clipped, only with which DIRECTIONS are -- a
+    # noisy series oscillating in and out of a tight domain must not turn
+    # into a wall of markers.
     x = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
     y = [1.0, 300.0, 310.0, 305.0, 295.0, 302.0, 1.0]
     svg = sparkline_bar(
@@ -485,6 +486,47 @@ def test_sparkline_bar_a_long_clipped_run_still_raises_only_one_flag():
         [None] * 7,
         [None] * 7,
         x_domain=(0.0, 6.0),
+        domain=(0.0, 20.0),
+        ref=0.0,
+        color="#000",
+        fmt=Number(decimals=1),
+    )
+    flags = re.findall(r'<polygon points="[^"]+" fill="[^"]+"/>', svg)
+    assert len(flags) == 1
+
+
+def test_sparkline_bar_flag_survives_when_an_earlier_line_run_was_clipped():
+    # The clip in the FIRST run must still be flagged even though the LAST
+    # run scanned (after the gap) is entirely clean -- flags accumulate
+    # with OR across every run, not just the last one visited.
+    x = [0.0, 1.0, 2.0, 3.0, 4.0]
+    y = [300.0, float("nan"), 1.0, 1.0, 1.0]
+    svg = sparkline_bar(
+        x,
+        y,
+        [None] * 5,
+        [None] * 5,
+        x_domain=(0.0, 4.0),
+        domain=(0.0, 20.0),
+        ref=0.0,
+        color="#000",
+        fmt=Number(decimals=1),
+    )
+    flags = re.findall(r'<polygon points="[^"]+" fill="[^"]+"/>', svg)
+    assert len(flags) == 1
+
+
+def test_sparkline_bar_flag_survives_when_an_earlier_band_run_was_clipped():
+    x = [0.0, 1.0, 2.0, 3.0, 4.0]
+    y = [1.0, 1.0, 1.0, 1.0, 1.0]
+    lower = [0.5, None, 0.5, 0.5, 0.5]
+    upper = [300.0, None, 1.5, 1.5, 1.5]
+    svg = sparkline_bar(
+        x,
+        y,
+        lower,
+        upper,
+        x_domain=(0.0, 4.0),
         domain=(0.0, 20.0),
         ref=0.0,
         color="#000",
