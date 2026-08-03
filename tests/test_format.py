@@ -1,10 +1,12 @@
 import math
+from datetime import UTC, datetime
 
 import pytest
 
 from coeftable.format import (
     CIStyle,
     Currency,
+    DateAxis,
     Number,
     Percent,
     compact_number,
@@ -109,3 +111,24 @@ def test_absent_ci_renders_point_estimate_only():
     html = render_interval(2.0, None, None, fmt=Number(decimals=1), style=CIStyle(), theme=DEFAULT)
     assert "2.0" in html
     assert "\u221e" not in html
+
+
+def test_date_axis_renders_label_by_step_granularity():
+    value = datetime(2026, 4, 15, tzinfo=UTC).timestamp()
+    assert DateAxis(step="year")(value) == "2026"
+    assert DateAxis(step="quarter")(value) == "Q2"
+    assert DateAxis(step="month")(value) == "Apr"
+    assert DateAxis(step="day")(value) == "Apr 15"
+    assert DateAxis(step="week")(value) == "Apr 15"
+
+
+def test_date_axis_quarter_labels_follow_the_calendar_quarter():
+    jan = datetime(2026, 1, 1, tzinfo=UTC).timestamp()
+    oct_31 = datetime(2026, 10, 31, tzinfo=UTC).timestamp()
+    assert DateAxis(step="quarter")(jan) == "Q1"
+    assert DateAxis(step="quarter")(oct_31) == "Q4"
+
+
+def test_date_axis_default_step_is_month():
+    value = datetime(2026, 4, 15, tzinfo=UTC).timestamp()
+    assert DateAxis()(value) == "Apr"

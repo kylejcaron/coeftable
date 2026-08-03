@@ -5,11 +5,13 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from coeftable.theme import Theme
 
 type Format = Callable[[float], str]
+type TimeFormat = Callable[[float], str]
 type Layout = Literal["stacked", "inline", "value_only"]
 
 
@@ -203,6 +205,69 @@ class Currency(Number):
     """Format a float as currency, with the symbol inside the sign."""
 
     prefix: str = "$"
+
+
+type CalendarStep = Literal["day", "week", "month", "quarter", "year"]
+
+
+_MONTH_ABBR = (
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+)
+
+
+@dataclass(frozen=True)
+class DateAxis:
+    """Format an epoch float as a short calendar label.
+
+    The label's granularity follows `step`, matching whichever rung of
+    `calendar_ticks`'s ladder produced the tick being labelled: ``"year"``
+    renders ``2026``, ``"quarter"`` renders ``Q1``, ``"month"`` renders
+    ``Jan``, and ``"day"``/``"week"`` render ``Jan 5``.
+
+    `sparkline_axis` builds a copy of the supplied instance with `step` set
+    to whatever `calendar_ticks` chose for the domain being rendered, so the
+    default here only matters when `DateAxis` is called directly.
+
+    Parameters
+    ----------
+    step
+        Tick granularity to render at.
+    """
+
+    step: CalendarStep = "month"
+
+    def __call__(self, value: float) -> str:
+        """Format *value*.
+
+        Parameters
+        ----------
+        value
+            Epoch seconds (UTC).
+
+        Returns
+        -------
+        str
+            Short calendar label at this instance's `step` granularity.
+        """
+        dt = datetime.fromtimestamp(value, tz=UTC)
+        if self.step == "year":
+            return str(dt.year)
+        if self.step == "quarter":
+            return f"Q{(dt.month - 1) // 3 + 1}"
+        if self.step == "month":
+            return _MONTH_ABBR[dt.month - 1]
+        return f"{_MONTH_ABBR[dt.month - 1]} {dt.day}"
 
 
 @dataclass(frozen=True)

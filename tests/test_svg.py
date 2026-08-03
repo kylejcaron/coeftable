@@ -1,8 +1,16 @@
 import re
+from datetime import UTC, datetime
 from itertools import pairwise
 
-from coeftable.format import Number
-from coeftable.svg import forest_axis, forest_bar, nice_ticks, sparkline_bar
+from coeftable.format import DateAxis, Number
+from coeftable.svg import (
+    calendar_ticks,
+    forest_axis,
+    forest_bar,
+    nice_ticks,
+    sparkline_axis,
+    sparkline_bar,
+)
 from coeftable.theme import DEFAULT
 
 
@@ -323,8 +331,8 @@ def test_sparkline_bar_endpoint_reserve_is_label_length_independent():
     # format to very different lengths must still share the same first/last
     # data x-coordinates, proving the endpoint reserve never depends on the
     # formatted label. Direction two -- that `sparkline_axis` ticks coincide
-    # with these same projected x-coordinates -- is deferred to Task 4, since
-    # `sparkline_axis` does not exist yet.
+    # with these same projected x-coordinates -- is covered by
+    # test_sparkline_axis_ticks_align_with_sparkline_bar_points below.
     x = [0.0, 1.0, 2.0]
     y = [1.0, 1.2, 0.9]
     lower = [0.8, 1.0, 0.7]
@@ -362,3 +370,154 @@ def test_sparkline_bar_endpoint_reserve_is_label_length_independent():
     )
 
     assert endpoints(short) == endpoints(long)
+
+
+def test_sparkline_axis_ticks_align_with_sparkline_bar_points():
+    # The alignment invariant, direction two (see the comment in
+    # test_sparkline_bar_endpoint_reserve_is_label_length_independent above):
+    # for the same x_domain and show_endpoint setting, sparkline_axis's tick
+    # x-coordinates must coincide with sparkline_bar's projected data
+    # x-coordinates, or footer ticks drift out from under their points.
+    x = [0.0, 1.0, 2.0]
+    y = [1.0, 1.2, 0.9]
+    lower = [0.8, 1.0, 0.7]
+    upper = [1.2, 1.4, 1.1]
+
+    bar_svg = sparkline_bar(
+        x,
+        y,
+        lower,
+        upper,
+        x_domain=(0.0, 2.0),
+        domain=(0.0, 2.0),
+        ref=0.0,
+        color="#000",
+        theme=DEFAULT,
+        fmt=Number(decimals=1),
+    )
+    line = re.search(r'<polyline points="([^"]+)"', bar_svg)
+    assert line
+    bar_xs = [float(pair.split(",")[0]) for pair in line.group(1).split(" ")]
+
+    # Neither call overrides width/pad/show_endpoint/endpoint_width, so both
+    # project over the identical reduced inner width.
+    axis_svg = sparkline_axis(x_domain=(0.0, 2.0), fmt=Number(decimals=0), theme=DEFAULT)
+    tick_xs = [
+        float(v)
+        for v in re.findall(r'<line x1="([-\d.]+)" y1="4.00" x2="[-\d.]+" y2="7.00"', axis_svg)
+    ]
+
+    # nice_ticks(0.0, 2.0) includes both domain endpoints, which are also
+    # sparkline_bar's first and last data x-values here.
+    assert bar_xs[0] in tick_xs
+    assert bar_xs[-1] in tick_xs
+
+
+def test_sparkline_axis_numeric_domain_matches_forest_axis_tick_positions():
+    domain = (0.0, 10.0)
+    forest_svg = forest_axis(domain=domain, ref=0.0, fmt=Number(decimals=0), theme=DEFAULT)
+    # forest_axis has no endpoint reserve, so show_endpoint=False is needed
+    # for sparkline_axis to project over the same full width.
+    axis_svg = sparkline_axis(
+        x_domain=domain, fmt=Number(decimals=0), theme=DEFAULT, show_endpoint=False
+    )
+    tick_re = re.compile(r'<line x1="([-\d.]+)" y1="4.00" x2="[-\d.]+" y2="7.00"')
+    forest_ticks = tick_re.findall(forest_svg)
+    assert forest_ticks
+    assert forest_ticks == tick_re.findall(axis_svg)
+
+
+def test_sparkline_axis_renders_calendar_labels_for_temporal_domain():
+    low = datetime(2024, 1, 1, tzinfo=UTC).timestamp()
+    high = datetime(2025, 3, 1, tzinfo=UTC).timestamp()
+    svg = sparkline_axis(
+        x_domain=(low, high),
+        fmt=DateAxis(),
+        theme=DEFAULT,
+        temporal=True,
+        target_ticks=14,
+    )
+    assert svg.startswith("<svg")
+    assert svg.endswith("</svg>")
+    assert "Jan" in svg
+    assert "Feb" in svg
+
+
+def test_sparkline_axis_temporal_labels_adapt_to_a_coarser_step_than_fmt_default():
+    # sparkline_axis must override the label granularity to match whichever
+    # ladder rung calendar_ticks actually picked, not whatever `step` the
+    # caller happened to construct `fmt` with.
+    low = datetime(2020, 1, 1, tzinfo=UTC).timestamp()
+    high = datetime(2025, 1, 1, tzinfo=UTC).timestamp()
+    svg = sparkline_axis(
+        x_domain=(low, high),
+        fmt=DateAxis(step="month"),
+        theme=DEFAULT,
+        temporal=True,
+    )
+    assert "2020" in svg
+    assert "Jan" not in svg
+
+
+def test_calendar_ticks_14_month_span_lands_on_month_boundaries():
+    low = datetime(2024, 1, 1, tzinfo=UTC).timestamp()
+    high = datetime(2025, 3, 1, tzinfo=UTC).timestamp()
+    ticks = calendar_ticks(low, high, target=14)
+    assert len(ticks) > 4
+    assert all(datetime.fromtimestamp(t, tz=UTC).day == 1 for t in ticks)
+
+
+def test_calendar_ticks_5_year_span_lands_on_year_boundaries():
+    low = datetime(2020, 1, 1, tzinfo=UTC).timestamp()
+    high = datetime(2025, 1, 1, tzinfo=UTC).timestamp()
+    ticks = calendar_ticks(low, high)
+    dates = [datetime.fromtimestamp(t, tz=UTC) for t in ticks]
+    assert len(dates) > 1
+    assert all(d.month == 1 and d.day == 1 for d in dates)
+
+
+def test_calendar_ticks_sub_month_span_falls_back_to_day_step():
+    low = datetime(2024, 1, 1, tzinfo=UTC).timestamp()
+    high = datetime(2024, 1, 4, tzinfo=UTC).timestamp()
+    ticks = calendar_ticks(low, high)
+    assert ticks
+    gaps = [b - a for a, b in pairwise(ticks)]
+    assert all(gap == 86_400.0 for gap in gaps)
+
+
+def test_calendar_ticks_sub_week_span_falls_back_to_week_step():
+    low = datetime(2024, 1, 1, tzinfo=UTC).timestamp()
+    high = datetime(2024, 1, 10, tzinfo=UTC).timestamp()
+    ticks = calendar_ticks(low, high)
+    assert ticks
+    gaps = [b - a for a, b in pairwise(ticks)]
+    assert all(gap == 7 * 86_400.0 for gap in gaps)
+
+
+def test_calendar_ticks_handles_degenerate_domain():
+    low = datetime(2024, 6, 15, tzinfo=UTC).timestamp()
+    assert calendar_ticks(low, low) == [low]
+    assert calendar_ticks(low + 86_400.0, low) == []
+
+
+def test_calendar_ticks_skips_a_boundary_before_the_domain_starts():
+    # low falls in January (already on the year-tier alignment grid) but
+    # not on the 1st, so the year boundary at 2020-01-01 itself precedes
+    # low -- the first tick must be the next one, not that one.
+    low = datetime(2020, 1, 15, tzinfo=UTC).timestamp()
+    high = datetime(2025, 1, 15, tzinfo=UTC).timestamp()
+    ticks = calendar_ticks(low, high)
+    dates = [datetime.fromtimestamp(t, tz=UTC) for t in ticks]
+    assert dates[0] == datetime(2021, 1, 1, tzinfo=UTC)
+    assert all(d.month == 1 and d.day == 1 for d in dates)
+
+
+def test_sparkline_axis_temporal_domain_honours_a_custom_callable_fmt():
+    # A non-DateAxis callable is used exactly as given for temporal ticks
+    # too -- sparkline_axis only overrides the granularity of a DateAxis.
+    low = datetime(2020, 1, 1, tzinfo=UTC).timestamp()
+    high = datetime(2025, 1, 1, tzinfo=UTC).timestamp()
+    svg = sparkline_axis(x_domain=(low, high), fmt=lambda _: "X", theme=DEFAULT, temporal=True)
+    labels = re.findall(r"<text[^>]*>([^<]+)</text>", svg)
+    assert labels
+    assert all(label == "X" for label in labels)

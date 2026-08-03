@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import dataclasses
 import math
 from collections.abc import Sequence
+from datetime import UTC, datetime
 
-from coeftable.format import Format, is_missing
+from coeftable.format import CalendarStep, DateAxis, Format, TimeFormat, is_missing
 from coeftable.theme import Theme
 
 _TICK_STEPS = (1.0, 2.0, 2.5, 5.0, 10.0)
@@ -36,6 +38,101 @@ def nice_ticks(low: float, high: float, target: int = 4) -> list[float]:
     start = math.ceil(low / step) * step
     count = math.floor((high - start) / step) + 1
     return [round(start + i * step, 10) for i in range(max(count, 0))]
+
+
+_CALENDAR_STEPS: tuple[CalendarStep, ...] = ("day", "week", "month", "quarter", "year")
+_CALENDAR_STEP_SECONDS: dict[CalendarStep, float] = {
+    "day": 86_400.0,
+    "week": 7 * 86_400.0,
+    "month": 30.4375 * 86_400.0,
+    "quarter": 91.3125 * 86_400.0,
+    "year": 365.25 * 86_400.0,
+}
+
+
+def _select_calendar_step(span: float, target: int) -> CalendarStep:
+    """Pick the coarsest ladder rung whose average length still fits `target` ticks."""
+    raw = span / max(target, 1)
+    return next(
+        (step for step in _CALENDAR_STEPS if raw <= _CALENDAR_STEP_SECONDS[step]),
+        "year",
+    )
+
+
+def _uniform_ticks(low: float, high: float, step: float) -> list[float]:
+    """Evenly spaced ticks every `step` seconds -- the day/week case of `calendar_ticks`."""
+    start = math.ceil(low / step) * step
+    count = math.floor((high - start) / step) + 1
+    return [round(start + i * step, 6) for i in range(max(count, 0))]
+
+
+def _month_index(dt: datetime) -> int:
+    """Linear month count (`year * 12 + month0`), used as a step-aligned grid."""
+    return dt.year * 12 + (dt.month - 1)
+
+
+def _month_start(index: int) -> datetime:
+    """First-of-month UTC datetime for a `_month_index` value."""
+    year, month0 = divmod(index, 12)
+    return datetime(year, month0 + 1, 1, tzinfo=UTC)
+
+
+def _month_aligned_ticks(low: datetime, high: datetime, step_months: int) -> list[float]:
+    """Ticks every `step_months` months, spanning ``[low, high]``.
+
+    A month index is a multiple of `step_months` exactly at quarter starts
+    (Jan/Apr/Jul/Oct) when `step_months` is 3 and at year starts (Jan) when
+    it is 12, since 12 is divisible by both -- no separate quarter/year
+    alignment rule is needed beyond this one grid.
+    """
+    start_index = -(-_month_index(low) // step_months) * step_months
+    start = _month_start(start_index)
+    if start < low:
+        start_index += step_months
+        start = _month_start(start_index)
+    ticks: list[float] = []
+    index, dt = start_index, start
+    while dt <= high:
+        ticks.append(dt.timestamp())
+        index += step_months
+        dt = _month_start(index)
+    return ticks
+
+
+def calendar_ticks(low: float, high: float, target: int = 4) -> list[float]:
+    """Return epoch-second tick positions on real day/week/month/quarter/year boundaries.
+
+    Selects a step from a fixed ladder (day, week, month, quarter, year)
+    based on the span, then walks real calendar boundaries for that step.
+    Months run 28-31 days, so month/quarter/year ticks use calendar
+    arithmetic rather than a fixed number of seconds; `nice_ticks` is not
+    involved anywhere in this path.
+
+    Parameters
+    ----------
+    low, high
+        Domain bounds, epoch seconds (UTC).
+    target
+        Approximate number of ticks wanted.
+
+    Returns
+    -------
+    list of float
+        Tick positions, empty when the domain is invalid.
+    """
+    if not (math.isfinite(low) and math.isfinite(high)) or high < low:
+        return []
+    if high == low:
+        return [low]
+    step = _select_calendar_step(high - low, target)
+    if step == "day":
+        return _uniform_ticks(low, high, 86_400.0)
+    if step == "week":
+        return _uniform_ticks(low, high, 7 * 86_400.0)
+    step_months = {"month": 1, "quarter": 3, "year": 12}[step]
+    low_dt = datetime.fromtimestamp(low, tz=UTC)
+    high_dt = datetime.fromtimestamp(high, tz=UTC)
+    return _month_aligned_ticks(low_dt, high_dt, step_months)
 
 
 def _projector(domain: tuple[float, float], width: int, pad: int):
@@ -385,4 +482,79 @@ def sparkline_bar(
                 f'font-size="9" text-anchor="end">{label}</text>'
             )
 
+    return _svg(width, height, "".join(parts))
+
+
+def sparkline_axis(
+    *,
+    x_domain: tuple[float, float],
+    fmt: Format | TimeFormat,
+    theme: Theme,
+    temporal: bool = False,
+    width: int = 220,
+    height: int = 22,
+    pad: int = 3,
+    target_ticks: int = 4,
+    show_endpoint: bool = True,
+    endpoint_width: int = 44,
+) -> str:
+    """Render the shared x-axis footer for a column of sparkline rows.
+
+    Parameters
+    ----------
+    x_domain
+        Shared x-domain, table-wide -- see `sparkline_bar`'s `x_domain`.
+    fmt
+        Callable used to label each tick. When `temporal` is True and `fmt`
+        is a `DateAxis`, a copy with `step` set to whichever rung
+        `calendar_ticks` picked for this domain is used instead, so the
+        label granularity always matches the ticks being drawn. Any other
+        callable, temporal or not, is called exactly as given.
+    theme
+        Supplies the axis colour and label size.
+    temporal
+        Use `calendar_ticks` (real month/quarter/year boundaries) instead of
+        `nice_ticks` (decimal steps).
+    width, height, pad
+        Geometry in pixels.
+    target_ticks
+        Approximate number of ticks wanted.
+    show_endpoint, endpoint_width
+        Must be given the same values passed to `sparkline_bar` for the same
+        rows: both carve the same fixed reserve out of `width` so ticks
+        project over the identical inner width and land under their points.
+
+    Returns
+    -------
+    str
+        A complete ``<svg>`` element.
+    """
+    low, high = x_domain
+    plot_width = width - endpoint_width if show_endpoint else width
+    project = _projector(x_domain, plot_width, pad)
+    baseline = 4.0
+    parts = [
+        f'<line x1="{pad}" y1="{baseline:.2f}" x2="{plot_width - pad}" y2="{baseline:.2f}" '
+        f'stroke="{theme.axis}" stroke-width="0.75"/>'
+    ]
+    if temporal:
+        ticks = calendar_ticks(low, high, target_ticks)
+        if isinstance(fmt, DateAxis):
+            step = _select_calendar_step(high - low, target_ticks)
+            label = dataclasses.replace(fmt, step=step)
+        else:
+            label = fmt
+    else:
+        ticks = nice_ticks(low, high, target_ticks)
+        label = fmt
+    for tick in ticks:
+        tick_x = project(tick)
+        parts.append(
+            f'<line x1="{tick_x:.2f}" y1="{baseline:.2f}" x2="{tick_x:.2f}" '
+            f'y2="{baseline + 3:.2f}" stroke="{theme.axis}" stroke-width="0.75"/>'
+        )
+        parts.append(
+            f'<text x="{tick_x:.2f}" y="{height - 2:.2f}" fill="{theme.axis}" '
+            f'font-size="9" text-anchor="middle">{label(tick)}</text>'
+        )
     return _svg(width, height, "".join(parts))
