@@ -99,15 +99,28 @@ def test_forest_axis_renders_tick_labels():
     assert svg.startswith("<svg")
 
 
-def test_forest_axis_anchors_first_and_last_tick_labels_outward():
-    # A centred label at a tick sitting on the domain edge has half its
-    # text extend past x=0 (or the right edge) and get clipped by the SVG
-    # canvas. The first/last tick must anchor outward instead.
-    svg = forest_axis(domain=(0.0, 3.0), ref=0.0, fmt=Number(decimals=0), theme=DEFAULT)
-    labels = re.findall(r'text-anchor="([^"]+)">', svg)
-    assert labels[0] == "start"
-    assert labels[-1] == "end"
-    assert all(anchor == "middle" for anchor in labels[1:-1])
+def test_forest_axis_anchors_a_tick_label_only_when_it_would_clip():
+    # A wide label at the right edge overflows the canvas if centred, so it
+    # anchors "end"; a one-character label at the left edge fits centred and
+    # must stay "middle" -- anchoring purely by tick index would wrongly
+    # shift it off its own tick mark.
+    svg = forest_axis(domain=(0.0, 3000.0), ref=0.0, fmt=Number(decimals=0), theme=DEFAULT)
+    labels = re.findall(r'text-anchor="([^"]+)">([^<]*)</text>', svg)
+    assert labels
+    assert labels[0] == ("middle", "0")
+    assert labels[-1][0] == "end"
+
+
+def test_sparkline_axis_anchors_a_clipping_temporal_tick_label():
+    # The originally observed bug: a month label on the first tick sits at
+    # x=pad and, centred, loses its leading character off-canvas ("Jan" ->
+    # "an"). Covers the sparkline_axis call site and its temporal branch.
+    low = datetime(2024, 1, 1, tzinfo=UTC).timestamp()
+    high = datetime(2024, 3, 1, tzinfo=UTC).timestamp()
+    svg = sparkline_axis(x_domain=(low, high), fmt=DateAxis(), theme=DEFAULT, temporal=True)
+    labels = re.findall(r'text-anchor="([^"]+)">([^<]*)</text>', svg)
+    assert labels
+    assert labels[0] == ("start", "Jan")
 
 
 def test_sparkline_bar_is_well_formed_svg():

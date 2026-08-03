@@ -156,17 +156,20 @@ def _svg(width: int, height: int, body: str) -> str:
     )
 
 
-def _tick_anchor(index: int, count: int) -> str:
-    """Anchor the first/last tick label outward so it can't clip past the axis edge.
+def _tick_anchor(tick_x: float, label: str, width: int, font_size: float = 9.0) -> str:
+    """Anchor a tick label inward only when centring it would clip the canvas.
 
-    A centred label at the very first or last tick has half its text extend
-    past the domain boundary, off the SVG canvas. Anchoring the first tick
-    to its left edge and the last tick to its right edge keeps every label
-    inside the drawable area regardless of its length.
+    A centred label whose half-width extends past `0` or `width` is cut off
+    by the SVG boundary. Anchoring by tick *index* would over-correct: tick
+    generators start at `ceil(low / step) * step`, so the first tick can sit
+    a long way inside the left edge and needs no correction at all. Gate on
+    the projected position and the label's own estimated width instead, using
+    the same character-width approximation as `_clip_label`.
     """
-    if count > 1 and index == 0:
+    half = len(label) * font_size * 0.6 / 2
+    if tick_x - half < 0:
         return "start"
-    if count > 1 and index == count - 1:
+    if tick_x + half > width:
         return "end"
     return "middle"
 
@@ -378,16 +381,16 @@ def forest_axis(
             f'<line x1="{ref_x:.2f}" y1="0" x2="{ref_x:.2f}" y2="{baseline:.2f}" '
             f'stroke="{theme.axis}" stroke-width="1" stroke-dasharray="2,2"/>'
         )
-    ticks = nice_ticks(low, high, target_ticks)
-    for i, tick in enumerate(ticks):
+    for tick in nice_ticks(low, high, target_ticks):
         tick_x = project(tick)
+        text = fmt(tick)
         parts.append(
             f'<line x1="{tick_x:.2f}" y1="{baseline:.2f}" x2="{tick_x:.2f}" '
             f'y2="{baseline + 3:.2f}" stroke="{theme.axis}" stroke-width="0.75"/>'
         )
         parts.append(
             f'<text x="{tick_x:.2f}" y="{height - 2:.2f}" fill="{theme.axis}" '
-            f'font-size="9" text-anchor="{_tick_anchor(i, len(ticks))}">{fmt(tick)}</text>'
+            f'font-size="9" text-anchor="{_tick_anchor(tick_x, text, width)}">{text}</text>'
         )
     return _svg(width, height, "".join(parts))
 
@@ -557,14 +560,15 @@ def sparkline_axis(
     else:
         ticks = nice_ticks(low, high, target_ticks)
         label = fmt
-    for i, tick in enumerate(ticks):
+    for tick in ticks:
         tick_x = project(tick)
+        text = label(tick)
         parts.append(
             f'<line x1="{tick_x:.2f}" y1="{baseline:.2f}" x2="{tick_x:.2f}" '
             f'y2="{baseline + 3:.2f}" stroke="{theme.axis}" stroke-width="0.75"/>'
         )
         parts.append(
             f'<text x="{tick_x:.2f}" y="{height - 2:.2f}" fill="{theme.axis}" '
-            f'font-size="9" text-anchor="{_tick_anchor(i, len(ticks))}">{label(tick)}</text>'
+            f'font-size="9" text-anchor="{_tick_anchor(tick_x, text, width)}">{text}</text>'
         )
     return _svg(width, height, "".join(parts))
