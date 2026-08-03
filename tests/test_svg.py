@@ -274,6 +274,30 @@ def test_sparkline_bar_clips_overlong_endpoint_label():
     assert label.group(1) != "-12,345.6789%"
 
 
+def test_sparkline_bar_endpoint_label_anchors_on_last_valid_point_after_trailing_gap():
+    x = [0.0, 1.0, 2.0]
+    y = [1.0, 1.2, None]
+    lower = [0.8, 1.0, None]
+    upper = [1.2, 1.4, None]
+    svg = sparkline_bar(
+        x,
+        y,
+        lower,
+        upper,
+        x_domain=(0.0, 2.0),
+        domain=(0.0, 2.0),
+        ref=0.0,
+        color="#000",
+        fmt=Number(decimals=1),
+    )
+    line = re.search(r'<polyline points="([^"]+)"', svg)
+    assert line
+    last_point_y = float(line.group(1).split(" ")[-1].split(",")[1])
+    label = re.search(r'<text x="[^"]+" y="([^"]+)"', svg)
+    assert label
+    assert float(label.group(1)) == round(last_point_y + 3, 2)
+
+
 def test_sparkline_bar_projects_true_x_not_index():
     # x jumps from 2 to 20 on the last point -- an index-based (not
     # x-value-based) projection would space every gap identically.

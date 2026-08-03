@@ -301,7 +301,7 @@ def test_empty_series_renders_a_blank_cell():
 
 def test_trailing_gap_colours_from_the_last_valid_point_not_the_gap():
     # A raw index -1 lookup would find the missing point and blank the
-    # cell; the endpoint dot sparkline_bar actually draws is the last
+    # cell; the endpoint sparkline_bar draws terminates at the last
     # *valid* point, so colour resolution must match that, not the gap.
     raw = {
         "metric": ["A"],
