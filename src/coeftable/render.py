@@ -103,15 +103,15 @@ def to_gt(table: CoefTable) -> GT:
             ],
             locations=loc.row_groups(),
         )
-    if resolved.forest_columns:
-        # The bar SVG's own height fills the row's content box; the
+    if resolved.plot_columns:
+        # The SVG's own height fills the row's content box; the
         # remaining gap around it is this cell's vertical padding, which
         # is otherwise sized for the taller estimate/CI text next to it.
-        # Shrinking it here lets the bar (and its reference line) reach
+        # Shrinking it here lets the plot (and its reference line) reach
         # closer to the row's true top/bottom edge.
         gt = gt.tab_style(
             style=style.css("padding-top: 2px; padding-bottom: 2px;"),
-            locations=loc.body(columns=resolved.forest_columns),
+            locations=loc.body(columns=resolved.plot_columns),
         )
 
     side_border_style = "none" if theme.border_style == "minimal" else "solid"

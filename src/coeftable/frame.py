@@ -17,11 +17,12 @@ from coeftable.spec import (
     Forest,
     Prepared,
     Scan,
+    Sparkline,
     SpecError,
     validate_columns,
 )
-from coeftable.spec import _forest_height as _forest_height
 from coeftable.spec import _pad_domain as _pad_domain
+from coeftable.spec import _plot_height as _plot_height
 
 SPLIT_JOINER = "\u2009|\u2009"
 
@@ -46,9 +47,10 @@ class Resolved:
         Zero-based row indices for banding, dividers and axis rows.
     markdown_columns
         Output columns whose contents are HTML.
-    forest_columns
-        Output columns rendering `Forest` bars, so the renderer can trim
-        their cell padding to let the bar fill the row.
+    plot_columns
+        Output columns rendering a `Forest` bar or `Sparkline` line plot,
+        so the renderer can trim their cell padding to let the SVG fill
+        the row.
     """
 
     frame: Any
@@ -60,7 +62,7 @@ class Resolved:
     divider_rows: list[int] = field(default_factory=list)
     axis_rows: list[int] = field(default_factory=list)
     markdown_columns: list[str] = field(default_factory=list)
-    forest_columns: list[str] = field(default_factory=list)
+    plot_columns: list[str] = field(default_factory=list)
 
 
 def _required_columns(table: CoefTable) -> list[str]:
@@ -129,8 +131,12 @@ def resolve(table: CoefTable) -> Resolved:
         frame=frame,
         columns=table.columns,
         row_keys=row_keys,
+        nest_keys=nest_keys,
         group_keys=group_keys,
         split_keys=split_keys,
+        rows=table.rows,
+        nest=table.nest,
+        split_columns=table.split_columns,
     )
     prepared: list[Prepared] = [column.prepare(scan) for column in table.columns]
 
@@ -149,7 +155,7 @@ def resolve(table: CoefTable) -> Resolved:
     display_columns: list[str] = []
     labels: dict[str, str] = {}
     spanners: dict[str, list[str]] = {}
-    forest_columns: list[str] = []
+    plot_columns: list[str] = []
     for split in grid.splits:
         for column in table.columns:
             name = output_name(column, split)
@@ -157,8 +163,8 @@ def resolve(table: CoefTable) -> Resolved:
             labels[name] = column.label
             if split is not None:
                 spanners.setdefault(str(split), []).append(name)
-            if isinstance(column, Forest):
-                forest_columns.append(name)
+            if isinstance(column, (Forest, Sparkline)):
+                plot_columns.append(name)
 
     # Cell pass: one call to `column.cell` per (row, split, column).
     cell_values: dict[str, list[str]] = {name: [] for name in display_columns}
@@ -235,5 +241,5 @@ def resolve(table: CoefTable) -> Resolved:
         divider_rows=assembled.divider_rows,
         axis_rows=assembled.axis_rows,
         markdown_columns=markdown,
-        forest_columns=forest_columns,
+        plot_columns=plot_columns,
     )
