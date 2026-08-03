@@ -116,9 +116,13 @@ Candidate strategies, none yet chosen — evaluate and pick one:
 
 Evaluate each against:
 - **Short series.** A 3-point series has no meaningful `q05`.
-- **Outlier as the last point.** `role_for` resolves the row's colour from the
-  last valid point, so a domain excluding that exact point colours the row from
-  a value the reader cannot see. This is the sharpest constraint on the design.
+- **Outlier as the last point.** Verified false alarm: `role_for` resolves the
+  row's colour from the last valid point's raw value directly, never from the
+  plotted domain, so excluding that point from the domain does not miscolour
+  the row — it clips at the domain edge and is flagged via the existing
+  clip-indicator mechanism (Task 1) instead. Not a design constraint; still
+  worth an explicit test so a future change doesn't accidentally couple the
+  two.
 - All-identical values (degenerate spread, zero IQR).
 - Whether `ref` must still be forced into the domain, as `_pad_domain` does now.
 
