@@ -12,6 +12,11 @@ from coeftable.theme import Theme
 
 _TICK_STEPS = (1.0, 2.0, 2.5, 5.0, 10.0)
 
+# Mean glyph width as a fraction of font size, for the sans-serif stack these
+# SVGs render in. Approximate by design: it only needs to be good enough to
+# decide whether a label would overrun a boundary, never to lay text out.
+_CHAR_WIDTH_RATIO = 0.6
+
 
 def nice_ticks(low: float, high: float, target: int = 4) -> list[float]:
     """Return round tick positions spanning ``[low, high]``.
@@ -166,7 +171,7 @@ def _tick_anchor(tick_x: float, label: str, width: int, font_size: float = 9.0) 
     the projected position and the label's own estimated width instead, using
     the same character-width approximation as `_clip_label`.
     """
-    half = len(label) * font_size * 0.6 / 2
+    half = len(label) * font_size * _CHAR_WIDTH_RATIO / 2
     if tick_x - half < 0:
         return "start"
     if tick_x + half > width:
@@ -230,11 +235,11 @@ def _band_runs(
 def _clip_label(text: str, max_width: float, font_size: float) -> str:
     """Truncate `text` with an ellipsis so it fits `max_width` px.
 
-    Approximates each character as `0.6 * font_size` px wide -- accurate
-    enough to stop an overlong endpoint label from overrunning its reserved
-    strip. The strip itself never widens to fit the label.
+    Approximates each character as `_CHAR_WIDTH_RATIO * font_size` px wide --
+    accurate enough to stop an overlong endpoint label from overrunning its
+    reserved strip. The strip itself never widens to fit the label.
     """
-    budget = max(int(max_width / (font_size * 0.6)), 1)
+    budget = max(int(max_width / (font_size * _CHAR_WIDTH_RATIO)), 1)
     if len(text) <= budget:
         return text
     if budget == 1:
@@ -560,6 +565,12 @@ def sparkline_axis(
     else:
         ticks = nice_ticks(low, high, target_ticks)
         label = fmt
+    # The anchor boundary is `width`, not `plot_width`: what we are avoiding is
+    # the canvas cutting a label off, and the canvas is the full `width`. The
+    # endpoint reserve past `plot_width` is empty on a footer row -- the
+    # endpoint label only ever appears on data rows -- so a last tick label
+    # reaching into it neither clips nor collides, and keeping it centred
+    # leaves it aligned on its own tick mark.
     for tick in ticks:
         tick_x = project(tick)
         text = label(tick)
