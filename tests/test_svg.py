@@ -99,6 +99,17 @@ def test_forest_axis_renders_tick_labels():
     assert svg.startswith("<svg")
 
 
+def test_forest_axis_anchors_first_and_last_tick_labels_outward():
+    # A centred label at a tick sitting on the domain edge has half its
+    # text extend past x=0 (or the right edge) and get clipped by the SVG
+    # canvas. The first/last tick must anchor outward instead.
+    svg = forest_axis(domain=(0.0, 3.0), ref=0.0, fmt=Number(decimals=0), theme=DEFAULT)
+    labels = re.findall(r'text-anchor="([^"]+)">', svg)
+    assert labels[0] == "start"
+    assert labels[-1] == "end"
+    assert all(anchor == "middle" for anchor in labels[1:-1])
+
+
 def test_sparkline_bar_is_well_formed_svg():
     x = [0.0, 1.0, 2.0]
     y = [1.0, 1.2, 0.9]

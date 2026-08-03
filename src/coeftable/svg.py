@@ -156,6 +156,21 @@ def _svg(width: int, height: int, body: str) -> str:
     )
 
 
+def _tick_anchor(index: int, count: int) -> str:
+    """Anchor the first/last tick label outward so it can't clip past the axis edge.
+
+    A centred label at the very first or last tick has half its text extend
+    past the domain boundary, off the SVG canvas. Anchoring the first tick
+    to its left edge and the last tick to its right edge keeps every label
+    inside the drawable area regardless of its length.
+    """
+    if count > 1 and index == 0:
+        return "start"
+    if count > 1 and index == count - 1:
+        return "end"
+    return "middle"
+
+
 def _line_runs(
     x: Sequence[float | None], y: Sequence[float | None]
 ) -> list[list[tuple[float, float]]]:
@@ -363,7 +378,8 @@ def forest_axis(
             f'<line x1="{ref_x:.2f}" y1="0" x2="{ref_x:.2f}" y2="{baseline:.2f}" '
             f'stroke="{theme.axis}" stroke-width="1" stroke-dasharray="2,2"/>'
         )
-    for tick in nice_ticks(low, high, target_ticks):
+    ticks = nice_ticks(low, high, target_ticks)
+    for i, tick in enumerate(ticks):
         tick_x = project(tick)
         parts.append(
             f'<line x1="{tick_x:.2f}" y1="{baseline:.2f}" x2="{tick_x:.2f}" '
@@ -371,7 +387,7 @@ def forest_axis(
         )
         parts.append(
             f'<text x="{tick_x:.2f}" y="{height - 2:.2f}" fill="{theme.axis}" '
-            f'font-size="9" text-anchor="middle">{fmt(tick)}</text>'
+            f'font-size="9" text-anchor="{_tick_anchor(i, len(ticks))}">{fmt(tick)}</text>'
         )
     return _svg(width, height, "".join(parts))
 
@@ -541,7 +557,7 @@ def sparkline_axis(
     else:
         ticks = nice_ticks(low, high, target_ticks)
         label = fmt
-    for tick in ticks:
+    for i, tick in enumerate(ticks):
         tick_x = project(tick)
         parts.append(
             f'<line x1="{tick_x:.2f}" y1="{baseline:.2f}" x2="{tick_x:.2f}" '
@@ -549,6 +565,6 @@ def sparkline_axis(
         )
         parts.append(
             f'<text x="{tick_x:.2f}" y="{height - 2:.2f}" fill="{theme.axis}" '
-            f'font-size="9" text-anchor="middle">{label(tick)}</text>'
+            f'font-size="9" text-anchor="{_tick_anchor(i, len(ticks))}">{label(tick)}</text>'
         )
     return _svg(width, height, "".join(parts))
