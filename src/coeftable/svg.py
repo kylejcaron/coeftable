@@ -51,7 +51,7 @@ _CALENDAR_STEP_SECONDS: dict[CalendarStep, float] = {
 
 
 def _select_calendar_step(span: float, target: int) -> CalendarStep:
-    """Pick the coarsest ladder rung whose average length still fits `target` ticks."""
+    """Pick the finest ladder rung whose average length still fits `target` ticks."""
     raw = span / max(target, 1)
     return next(
         (step for step in _CALENDAR_STEPS if raw <= _CALENDAR_STEP_SECONDS[step]),

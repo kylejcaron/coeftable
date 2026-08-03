@@ -487,11 +487,20 @@ def test_calendar_ticks_sub_month_span_falls_back_to_day_step():
 
 def test_calendar_ticks_sub_week_span_falls_back_to_week_step():
     low = datetime(2024, 1, 1, tzinfo=UTC).timestamp()
-    high = datetime(2024, 1, 10, tzinfo=UTC).timestamp()
+    high = datetime(2024, 1, 22, tzinfo=UTC).timestamp()
     ticks = calendar_ticks(low, high)
-    assert ticks
+    assert len(ticks) > 1
     gaps = [b - a for a, b in pairwise(ticks)]
     assert all(gap == 7 * 86_400.0 for gap in gaps)
+
+
+def test_calendar_ticks_year_span_lands_on_quarter_boundaries():
+    low = datetime(2024, 1, 1, tzinfo=UTC).timestamp()
+    high = datetime(2025, 1, 1, tzinfo=UTC).timestamp()
+    ticks = calendar_ticks(low, high, target=4)
+    dates = [datetime.fromtimestamp(t, tz=UTC) for t in ticks]
+    assert len(dates) > 1
+    assert all(d.month in (1, 4, 7, 10) and d.day == 1 for d in dates)
 
 
 def test_calendar_ticks_handles_degenerate_domain():
