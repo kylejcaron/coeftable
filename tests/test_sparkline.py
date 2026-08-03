@@ -281,6 +281,16 @@ def test_companion_frame_missing_column_raises_column_not_found_error():
         resolve(table)
 
 
+def test_companion_frame_missing_layout_key_raises_column_not_found_error():
+    raw = {"metric": ["Revenue"]}
+    companion = pd.DataFrame({"wrong_key": ["Revenue", "Revenue"], "lift": [1.0, 2.0]})
+    table = CoefTable(pl.DataFrame(raw), rows="metric").sparkline(
+        "Trend", value="lift", data=companion
+    )
+    with pytest.raises(ColumnNotFoundError, match="metric"):
+        resolve(table)
+
+
 def test_empty_series_renders_a_blank_cell():
     raw = {"metric": ["A", "B"], "lift": [[1.0, 2.0], []]}
     table = CoefTable(pl.DataFrame(raw), rows="metric").sparkline("Trend", value="lift")

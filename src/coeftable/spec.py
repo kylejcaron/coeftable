@@ -599,7 +599,14 @@ class Sparkline:
             )
         else:
             companion = nw.from_native(self.data, eager_only=True)
-            needed = [self.value, *(self.ci or ()), *((self.x,) if self.x else ())]
+            needed = [
+                self.value,
+                *(self.ci or ()),
+                *((self.x,) if self.x else ()),
+                *((scan.rows,) if scan.rows else ()),
+                *((scan.nest,) if scan.nest else ()),
+                *((scan.split_columns,) if scan.split_columns else ()),
+            ]
             missing = [n for n in needed if n not in companion.columns]
             if missing:
                 raise ColumnNotFoundError(
