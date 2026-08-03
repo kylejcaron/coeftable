@@ -497,9 +497,10 @@ def test_calendar_ticks_sub_week_span_falls_back_to_week_step():
 def test_calendar_ticks_year_span_lands_on_quarter_boundaries():
     low = datetime(2024, 1, 1, tzinfo=UTC).timestamp()
     high = datetime(2025, 1, 1, tzinfo=UTC).timestamp()
-    ticks = calendar_ticks(low, high, target=4)
+    ticks = calendar_ticks(low, high, target=5)
     dates = [datetime.fromtimestamp(t, tz=UTC) for t in ticks]
-    assert len(dates) > 1
+    assert len(dates) >= 4
+    assert any(d.month in (4, 7, 10) for d in dates)
     assert all(d.month in (1, 4, 7, 10) and d.day == 1 for d in dates)
 
 

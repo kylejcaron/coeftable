@@ -11,6 +11,7 @@ import narwhals as nw
 
 from coeftable.format import (
     CIStyle,
+    DateAxis,
     Format,
     Number,
     TimeFormat,
@@ -597,6 +598,14 @@ class Sparkline:
                 scan.frame, scan.row_keys, value=self.value, ci=self.ci, x=self.x
             )
         else:
+            companion = nw.from_native(self.data, eager_only=True)
+            needed = [self.value, *(self.ci or ()), *((self.x,) if self.x else ())]
+            missing = [n for n in needed if n not in companion.columns]
+            if missing:
+                raise ColumnNotFoundError(
+                    f"Sparkline {self.label!r}: columns {missing} are not in `data`. "
+                    f"Available columns: {list(companion.columns)}."
+                )
             identities = list(zip(scan.row_keys, scan.nest_keys, scan.split_keys, strict=True))
             by_identity = resolve_companion_series(
                 self.data,
@@ -675,7 +684,7 @@ class Sparkline:
         state: _SparklineState = ctx.prepared.payload
         return sparkline_axis(
             x_domain=state.x_domain,
-            fmt=self.axis_fmt or self.fmt,
+            fmt=self.axis_fmt or (DateAxis() if state.x_temporal else self.fmt),
             theme=ctx.theme,
             temporal=state.x_temporal,
             width=self.width,

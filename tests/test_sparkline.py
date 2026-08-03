@@ -8,7 +8,7 @@ import pytest
 
 from coeftable.format import CIStyle, DateAxis
 from coeftable.frame import resolve
-from coeftable.spec import CoefTable, Sparkline, SpecError, validate_columns
+from coeftable.spec import CoefTable, ColumnNotFoundError, Sparkline, SpecError, validate_columns
 from coeftable.theme import DEFAULT
 
 # The motivating experiment table: lift % over dates, ref=0, nested variants
@@ -271,6 +271,16 @@ def test_companion_frame_missing_identity_renders_blank_cell():
     assert plots[1] == ""
 
 
+def test_companion_frame_missing_column_raises_column_not_found_error():
+    raw = {"metric": ["Revenue"]}
+    companion = pd.DataFrame({"metric": ["Revenue", "Revenue"], "lift": [1.0, 2.0]})
+    table = CoefTable(pl.DataFrame(raw), rows="metric").sparkline(
+        "Trend", value="typo", data=companion
+    )
+    with pytest.raises(ColumnNotFoundError, match="typo"):
+        resolve(table)
+
+
 def test_empty_series_renders_a_blank_cell():
     raw = {"metric": ["A", "B"], "lift": [[1.0, 2.0], []]}
     table = CoefTable(pl.DataFrame(raw), rows="metric").sparkline("Trend", value="lift")
@@ -336,6 +346,16 @@ def test_temporal_x_produces_calendar_axis_labels():
     out = resolve(table)
     footer = nw.from_native(out.frame)["Trend"].to_list()[out.axis_rows[0]]
     assert any(month in footer for month in ("Jan", "Feb", "Mar"))
+
+
+def test_temporal_x_defaults_to_calendar_axis_labels_without_explicit_axis_fmt():
+    dates = [dt.date(2024, 1, 1), dt.date(2024, 2, 1), dt.date(2024, 3, 1)]
+    raw = {"metric": ["A"], "lift": [[1.0, 2.0, 3.0]], "date": [dates]}
+    table = CoefTable(pl.DataFrame(raw), rows="metric").sparkline("Trend", value="lift", x="date")
+    out = resolve(table)
+    footer = nw.from_native(out.frame)["Trend"].to_list()[out.axis_rows[0]]
+    assert any(month in footer for month in ("Jan", "Feb", "Mar"))
+    assert "1704" not in footer
 
 
 def test_sparkline_ci_must_be_a_pair():
