@@ -357,21 +357,23 @@ def sparkline_bar(
 
     parts: list[str] = []
 
-    for run in _band_runs(x, y, lower, upper):
+    band_runs = _band_runs(x, y, lower, upper)
+    for run in band_runs:
         top = " ".join(f"{project_x(xi):.2f},{project_y(ui):.2f}" for xi, _li, ui in run)
         bottom = " ".join(
             f"{project_x(xi):.2f},{project_y(li):.2f}" for xi, li, _ui in reversed(run)
         )
         parts.append(f'<polygon points="{top} {bottom}" fill="{color}" fill-opacity="0.15"/>')
 
-    if low <= ref <= high:
+    line_runs = _line_runs(x, y)
+
+    if (line_runs or band_runs) and low <= ref <= high:
         ref_y = project_y(ref)
         parts.append(
             f'<line x1="{pad}" y1="{ref_y:.2f}" x2="{right_edge}" y2="{ref_y:.2f}" '
             f'stroke="{theme.axis}" stroke-width="1" stroke-dasharray="2,2"/>'
         )
 
-    line_runs = _line_runs(x, y)
     for run in line_runs:
         pts = " ".join(f"{project_x(xi):.2f},{project_y(yi):.2f}" for xi, yi in run)
         parts.append(f'<polyline points="{pts}" fill="none" stroke="{color}" stroke-width="1.5"/>')

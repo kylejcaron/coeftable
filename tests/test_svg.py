@@ -226,7 +226,7 @@ def test_sparkline_bar_all_missing_series_is_valid_and_empty():
         lower,
         upper,
         x_domain=(0.0, 2.0),
-        domain=(5.0, 6.0),
+        domain=(-1.0, 1.0),
         ref=0.0,
         color="#000",
         theme=DEFAULT,
@@ -234,6 +234,7 @@ def test_sparkline_bar_all_missing_series_is_valid_and_empty():
     )
     assert svg.startswith("<svg")
     assert svg.endswith("</svg>")
+    assert "<line" not in svg
     assert "<polyline" not in svg
     assert "<polygon" not in svg
     assert "<circle" not in svg
