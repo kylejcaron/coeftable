@@ -2,13 +2,14 @@
 
 from importlib.metadata import PackageNotFoundError, version
 
-from coeftable.format import CIStyle, Currency, Number, Percent
+from coeftable.format import CIStyle, Currency, DateAxis, Number, Percent
 from coeftable.spec import (
     CoefTable,
     ColumnNotFoundError,
     Estimate,
     Forest,
     Passthrough,
+    Sparkline,
     SpecError,
 )
 from coeftable.theme import Theme, role_for
@@ -23,11 +24,13 @@ __all__ = [
     "CoefTable",
     "ColumnNotFoundError",
     "Currency",
+    "DateAxis",
     "Estimate",
     "Forest",
     "Number",
     "Passthrough",
     "Percent",
+    "Sparkline",
     "SpecError",
     "Theme",
     "__version__",

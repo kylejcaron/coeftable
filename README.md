@@ -71,6 +71,106 @@ experiment = pl.DataFrame(
 )
 ```
 
+## Trend over time
+
+Add a `.sparkline(...)` column to plot a metric's trajectory next to its
+point estimate: an inline SVG line with a shaded credible interval, a dashed
+reference line, and an endpoint label. Below, `ref=0.0` draws the reference
+line that Latency's series crosses as its credible interval narrows over
+three weeks of data:
+
+There are two front doors for the series data, the same list-columns vs.
+companion-frame choice used elsewhere in coeftable:
+
+**List columns on the main frame** — `value` / `ci` / `x` name columns
+whose cells each hold one list of points per row:
+
+```python
+import datetime as dt
+import polars as pl
+import coeftable as ct
+
+dates = [dt.date(2024, 1, 1), dt.date(2024, 1, 8), dt.date(2024, 1, 15)]
+
+trend = pl.DataFrame(
+    {
+        "metric": ["Revenue", "Latency"],
+        "lift": [3.4, 0.5],
+        "lift_lb": [1.2, -1.0],
+        "lift_ub": [5.7, 2.0],
+        "history": [
+            [1.5, 2.4, 3.4],
+            [-1.0, 0.2, 1.5],
+        ],
+        "history_lb": [
+            [0.3, 1.4, 2.6],
+            [-2.5, -0.6, 1.0],
+        ],
+        "history_ub": [
+            [2.7, 3.4, 4.2],
+            [0.5, 1.0, 2.0],
+        ],
+        "date": [dates, dates],
+    }
+)
+
+(
+    ct.CoefTable(trend, rows="metric")
+    .estimate("Lift %", "lift", ci=("lift_lb", "lift_ub"), fmt=ct.Percent(signed=True))
+    .sparkline(
+        "Trend",
+        value="history",
+        ci=("history_lb", "history_ub"),
+        x="date",
+        ref=0.0,
+        axis_fmt=ct.DateAxis(step="week"),
+    )
+)
+```
+
+**A long companion frame** — pass `data=` a separate frame with one row per
+point instead, and `value` / `ci` / `x` name *scalar* columns on it.
+coeftable groups the companion frame by the table's `rows` (+ `nest`,
++ `split_columns`) keys and collapses each group into the same series
+shape (reusing the `trend` frame and `dates` list above):
+
+```python
+import pandas as pd
+
+history = pd.DataFrame(
+    {
+        "metric": ["Revenue", "Revenue", "Revenue", "Latency", "Latency", "Latency"],
+        "date": dates + dates,
+        "lift": [1.5, 2.4, 3.4, -1.0, 0.2, 1.5],
+        "lift_lb": [0.3, 1.4, 2.6, -2.5, -0.6, 1.0],
+        "lift_ub": [2.7, 3.4, 4.2, 0.5, 1.0, 2.0],
+    }
+)
+
+(
+    ct.CoefTable(trend, rows="metric")
+    .estimate("Lift %", "lift", ci=("lift_lb", "lift_ub"), fmt=ct.Percent(signed=True))
+    .sparkline(
+        "Trend",
+        value="lift",
+        ci=("lift_lb", "lift_ub"),
+        x="date",
+        data=history,
+        ref=0.0,
+        axis_fmt=ct.DateAxis(step="week"),
+    )
+)
+```
+
+Both render the same column. Reach for list columns when a series is
+already collapsed onto its row; reach for the companion frame when it's
+still one row per observation, e.g. straight out of a long-format model
+output.
+
+Want a plain trend line with no uncertainty band — no `ci`, no ribbon?
+great_tables' own `.gt().fmt_nanoplot(...)` covers that directly.
+`.sparkline(...)` exists specifically for the estimate-with-interval case.
+
 ## Comparing methods
 
 Use `split_columns` to compare multiple methods side by side. Each value in the
@@ -150,3 +250,11 @@ a `parameter` column.
 - `groups` — an optional column whose values produce section headers.
 - `split_columns` — an optional column whose values produce repeated column
   groups side by side, useful for comparing methods.
+
+**Series columns bend this rule.** A point estimate is one number (plus
+bounds), so a triple of scalar columns holds it. A `.sparkline(...)` series
+is N points, not one, so its `value` / `ci` columns hold a *list* per row
+instead — or, via the companion-frame door, live on a separate long frame
+with one row per point. Either way a row of the table is still one row; the
+series column just carries more data per row than an estimate column does.
+See [Trend over time](#trend-over-time) for both shapes.
