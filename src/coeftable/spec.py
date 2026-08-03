@@ -561,6 +561,11 @@ class Sparkline:
     axis_fmt
         Callable labelling axis ticks; defaults to `fmt`, or `DateAxis()` when
         `x` is temporal.
+    show_clip_indicators
+        Flag, per direction, whenever the series is clipped to `domain`
+        (manual or auto-computed). The line and ribbon are always pinned to
+        the domain edge regardless of this setting -- turning it off removes
+        only the indicator, never re-introduces an off-canvas point.
     """
 
     label: str
@@ -578,6 +583,7 @@ class Sparkline:
     endpoint_width: int = 44
     fmt: Format = _DEFAULT_FMT
     axis_fmt: Format | TimeFormat | None = None
+    show_clip_indicators: bool = True
 
     def sources(self) -> Iterable[str]:
         """Frame columns this column reads, or none when `data` supplies them."""
@@ -684,6 +690,7 @@ class Sparkline:
             height=state.height,
             show_endpoint=self.show_endpoint,
             endpoint_width=self.endpoint_width,
+            show_clip_indicators=self.show_clip_indicators,
         )
 
     def footer(self, ctx: Footer) -> str | None:
@@ -970,6 +977,7 @@ class CoefTable:
         endpoint_width: int = 44,
         fmt: Format = _DEFAULT_FMT,
         axis_fmt: Format | TimeFormat | None = None,
+        show_clip_indicators: bool = True,
     ) -> CoefTable:
         """Append a sparkline column plotting a series with uncertainty.
 
@@ -1012,6 +1020,11 @@ class CoefTable:
         axis_fmt
             Callable labelling axis ticks; defaults to `fmt`, or `DateAxis()`
             when `x` is temporal.
+        show_clip_indicators
+            Flag, per direction, whenever the series is clipped to the
+            (manual or auto-computed) y-domain. Lines/ribbons are always
+            pinned to the domain edge regardless -- this only controls the
+            indicator.
 
         Returns
         -------
@@ -1035,6 +1048,7 @@ class CoefTable:
                 endpoint_width=endpoint_width,
                 fmt=fmt,
                 axis_fmt=axis_fmt,
+                show_clip_indicators=show_clip_indicators,
             )
         )
 

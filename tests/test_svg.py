@@ -382,7 +382,7 @@ def test_sparkline_bar_endpoint_reserve_is_label_length_independent():
     assert endpoints(short) == endpoints(long)
 
 
-def test_sparkline_bar_caps_a_point_above_the_domain():
+def test_sparkline_bar_flags_clipping_above_the_domain():
     # The original bug: y=300 against domain (0, 20) on a 30px canvas emitted
     # a literal y="-333.00", relying on the SVG viewBox to hide it.
     x = [0.0, 1.0, 2.0]
@@ -398,15 +398,15 @@ def test_sparkline_bar_caps_a_point_above_the_domain():
         color="#000",
         fmt=Number(decimals=1),
     )
-    caps = re.findall(r'<polygon points="[^"]+" fill="[^"]+"/>', svg)
-    assert len(caps) == 1
+    flags = re.findall(r'<polygon points="[^"]+" fill="[^"]+"/>', svg)
+    assert len(flags) == 1
     assert 'y="-333.00"' not in svg
     coords = re.findall(r'points="([^"]+)"', svg)
     ys = [float(pair.split(",")[1]) for pts in coords for pair in pts.split(" ")]
     assert all(0.0 <= y_px <= 30.0 for y_px in ys)
 
 
-def test_sparkline_bar_caps_a_point_below_the_domain():
+def test_sparkline_bar_flags_clipping_below_the_domain():
     x = [0.0, 1.0, 2.0]
     y = [1.0, -300.0, 1.0]
     svg = sparkline_bar(
@@ -420,16 +420,16 @@ def test_sparkline_bar_caps_a_point_below_the_domain():
         color="#000",
         fmt=Number(decimals=1),
     )
-    caps = re.findall(r'<polygon points="([^"]+)" fill="[^"]+"/>', svg)
-    assert len(caps) == 1
+    flags = re.findall(r'<polygon points="([^"]+)" fill="[^"]+"/>', svg)
+    assert len(flags) == 1
     line = re.search(r'<polyline points="([^"]+)"', svg)
     assert line
     clamped_y = float(line.group(1).split(" ")[1].split(",")[1])
-    cap_tip_y = float(caps[0].split(" ")[0].split(",")[1])
-    assert cap_tip_y > clamped_y  # the cap points further down (larger pixel y) than the line
+    flag_ys = [float(v.split(",")[1]) for v in flags[0].split(" ")]
+    assert max(flag_ys) > clamped_y  # the low flag's tip sits below (larger pixel y) than the line
 
 
-def test_sparkline_bar_series_inside_domain_has_no_clip_caps():
+def test_sparkline_bar_series_inside_domain_has_no_clip_flags():
     x = [0.0, 1.0, 2.0, 3.0]
     y = [1.0, 1.2, 0.9, 1.1]
     lower = [0.5, 0.7, 0.4, 0.6]
@@ -446,13 +446,13 @@ def test_sparkline_bar_series_inside_domain_has_no_clip_caps():
         fmt=Number(decimals=1),
     )
     assert re.findall(r'<polygon points="[^"]+" fill="[^"]+"/>', svg) == []
-    assert svg.count("<polygon") == 1  # only the ribbon fill, no clip caps
+    assert svg.count("<polygon") == 1  # only the ribbon fill, no clip flags
 
 
 def test_sparkline_bar_distinguishes_a_clipped_point_from_a_genuine_gap():
     # index 1 is a genuine gap (NaN); index 3 has data, just off-scale. A gap
-    # splits the polyline into a new run; a clip does not -- it only adds a
-    # cap -- so the two must be tellable apart from the SVG output itself.
+    # splits the polyline into a new run; a clip does not -- it only raises
+    # the row-level flag -- so the two must be tellable apart from output.
     x = [0.0, 1.0, 2.0, 3.0, 4.0]
     y = [1.0, float("nan"), 1.0, 300.0, 1.0]
     svg = sparkline_bar(
@@ -467,14 +467,16 @@ def test_sparkline_bar_distinguishes_a_clipped_point_from_a_genuine_gap():
         fmt=Number(decimals=1),
     )
     assert svg.count("<polyline") == 2  # the gap, and only the gap, splits the line
-    caps = re.findall(r'<polygon points="[^"]+" fill="[^"]+"/>', svg)
-    assert len(caps) == 1  # the clip, and only the clip, adds a cap
+    flags = re.findall(r'<polygon points="[^"]+" fill="[^"]+"/>', svg)
+    assert len(flags) == 1  # the clip, and only the clip, raises a flag
 
 
-def test_sparkline_bar_caps_a_long_clipped_run_only_at_its_boundaries():
-    # Five consecutive points sit far above the domain. One cap per point
-    # would wall off the whole stretch; capping only where the series
-    # leaves and re-enters the domain keeps it to two.
+def test_sparkline_bar_a_long_clipped_run_still_raises_only_one_flag():
+    # Five consecutive points sit far above the domain. A flag per crossing
+    # (the rejected design) would still be one mark here; the real test is
+    # that flag count never scales with how MANY points are clipped, only
+    # with which DIRECTIONS are -- a noisy series oscillating in and out of
+    # a tight domain must not turn into a wall of markers.
     x = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
     y = [1.0, 300.0, 310.0, 305.0, 295.0, 302.0, 1.0]
     svg = sparkline_bar(
@@ -488,11 +490,11 @@ def test_sparkline_bar_caps_a_long_clipped_run_only_at_its_boundaries():
         color="#000",
         fmt=Number(decimals=1),
     )
-    caps = re.findall(r'<polygon points="[^"]+" fill="[^"]+"/>', svg)
-    assert len(caps) == 2
+    flags = re.findall(r'<polygon points="[^"]+" fill="[^"]+"/>', svg)
+    assert len(flags) == 1
 
 
-def test_sparkline_bar_caps_a_series_entirely_outside_the_domain():
+def test_sparkline_bar_series_entirely_outside_the_domain_still_renders():
     x = [0.0, 1.0, 2.0]
     y = [300.0, 310.0, 295.0]
     svg = sparkline_bar(
@@ -507,8 +509,8 @@ def test_sparkline_bar_caps_a_series_entirely_outside_the_domain():
         fmt=Number(decimals=1),
     )
     assert "<polyline" in svg  # still drawn, pinned to the edge -- not treated as a gap
-    caps = re.findall(r'<polygon points="[^"]+" fill="[^"]+"/>', svg)
-    assert len(caps) == 2  # bracketed at both ends even though nothing here is in-domain
+    flags = re.findall(r'<polygon points="[^"]+" fill="[^"]+"/>', svg)
+    assert len(flags) == 1  # one direction clipped, one flag -- even though nothing is in-domain
     coords = re.findall(r'points="([^"]+)"', svg)
     xs = [float(pair.split(",")[0]) for pts in coords for pair in pts.split(" ")]
     ys = [float(pair.split(",")[1]) for pts in coords for pair in pts.split(" ")]
@@ -516,9 +518,27 @@ def test_sparkline_bar_caps_a_series_entirely_outside_the_domain():
     assert all(0.0 <= y_px <= 30.0 for y_px in ys)
 
 
+def test_sparkline_bar_flags_both_directions_when_the_series_clips_both():
+    x = [0.0, 1.0, 2.0]
+    y = [300.0, 1.0, -300.0]
+    svg = sparkline_bar(
+        x,
+        y,
+        [None, None, None],
+        [None, None, None],
+        x_domain=(0.0, 2.0),
+        domain=(0.0, 20.0),
+        ref=0.0,
+        color="#000",
+        fmt=Number(decimals=1),
+    )
+    flags = re.findall(r'<polygon points="[^"]+" fill="[^"]+"/>', svg)
+    assert len(flags) == 2
+
+
 def test_sparkline_bar_ribbon_clips_lower_and_upper_independently():
     # Only the middle point's upper bound is out of domain; lower never
-    # leaves it. The ribbon should cap just the upper edge and keep the
+    # leaves it. The ribbon should pin just the upper edge and keep the
     # lower edge at its true, unclamped position throughout.
     x = [0.0, 1.0, 2.0]
     y = [1.0, 1.0, 1.0]
@@ -535,15 +555,38 @@ def test_sparkline_bar_ribbon_clips_lower_and_upper_independently():
         color="#000",
         fmt=Number(decimals=1),
     )
-    assert svg.count("<polygon") == 2  # one ribbon fill plus one clip cap
-    caps = re.findall(r'<polygon points="[^"]+" fill="[^"]+"/>', svg)
-    assert len(caps) == 1
+    assert svg.count("<polygon") == 2  # one ribbon fill plus one clip flag
+    flags = re.findall(r'<polygon points="[^"]+" fill="[^"]+"/>', svg)
+    assert len(flags) == 1
     band = re.search(r'<polygon points="([^"]+)" fill="[^"]+" fill-opacity="0.15"/>', svg)
     assert band
     # last three vertices are the reversed lower edge -- all three must share
     # one y, proving `lower` never moved even though `upper` was clipped
     lower_edge = band.group(1).split(" ")[3:]
     assert len({point.split(",")[1] for point in lower_edge}) == 1
+
+
+def test_sparkline_bar_show_clip_indicators_false_suppresses_flags_only():
+    # Turning the indicator off must never reintroduce the off-canvas
+    # coordinate bug -- clamping stays mandatory regardless of this flag.
+    x = [0.0, 1.0, 2.0]
+    y = [1.0, 300.0, 1.0]
+    svg = sparkline_bar(
+        x,
+        y,
+        [None, None, None],
+        [None, None, None],
+        x_domain=(0.0, 2.0),
+        domain=(0.0, 20.0),
+        ref=0.0,
+        color="#000",
+        fmt=Number(decimals=1),
+        show_clip_indicators=False,
+    )
+    assert re.findall(r'<polygon points="[^"]+" fill="[^"]+"/>', svg) == []
+    coords = re.findall(r'points="([^"]+)"', svg)
+    ys = [float(pair.split(",")[1]) for pts in coords for pair in pts.split(" ")]
+    assert all(0.0 <= y_px <= 30.0 for y_px in ys)
 
 
 def test_sparkline_axis_ticks_align_with_sparkline_bar_points():

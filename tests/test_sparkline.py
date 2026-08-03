@@ -347,6 +347,29 @@ def test_show_axis_false_emits_no_footer_row():
     assert out.axis_rows == []
 
 
+def test_clip_indicators_default_on_for_a_domain_clipped_series():
+    raw = {"metric": ["A"], "lift": [[1.0, 300.0, 1.0]]}
+    table = CoefTable(pl.DataFrame(raw), rows="metric").sparkline(
+        "Trend", value="lift", domain=(0.0, 20.0)
+    )
+    out = resolve(table)
+    plots = nw.from_native(out.frame)["Trend"].to_list()
+    data_cell = next(p for i, p in enumerate(plots) if i not in out.axis_rows)
+    assert data_cell.count("<polygon") == 1
+
+
+def test_clip_indicators_false_suppresses_the_flag():
+    raw = {"metric": ["A"], "lift": [[1.0, 300.0, 1.0]]}
+    table = CoefTable(pl.DataFrame(raw), rows="metric").sparkline(
+        "Trend", value="lift", domain=(0.0, 20.0), show_clip_indicators=False
+    )
+    out = resolve(table)
+    plots = nw.from_native(out.frame)["Trend"].to_list()
+    data_cell = next(p for i, p in enumerate(plots) if i not in out.axis_rows)
+    assert "<polygon" not in data_cell
+    assert "<polyline" in data_cell
+
+
 def test_show_endpoint_defaults_to_false():
     raw = {"metric": ["A"], "lift": [[1.0, 2.0]]}
     table = CoefTable(pl.DataFrame(raw), rows="metric").sparkline("Trend", value="lift")

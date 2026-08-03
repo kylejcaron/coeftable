@@ -6,7 +6,6 @@ import dataclasses
 import math
 from collections.abc import Sequence
 from datetime import UTC, datetime
-from typing import Literal
 
 from coeftable.format import CalendarStep, DateAxis, Format, TimeFormat, is_missing
 from coeftable.theme import Theme
@@ -238,37 +237,6 @@ def _clamp(value: float, low: float, high: float) -> float:
     return min(high, max(low, value))
 
 
-type _ClipDirection = Literal["high", "low"]
-
-
-def _clip_boundaries(flags: Sequence[bool]) -> list[int]:
-    """Return the indices bounding each maximal run of `True` in `flags`.
-
-    A clipped point is not a gap: `_line_runs`/`_band_runs` already split on
-    missing values before this ever runs, so a single call only ever scans
-    one already-gap-free run. Within it, a stretch of consecutive clipped
-    points is marked at just its first and last index -- the two points
-    where the series crosses the domain boundary -- so a long clipped run
-    gets one cap at each end rather than a cap at every point. A single
-    clipped point yields that one index once.
-    """
-    marks: list[int] = []
-    n = len(flags)
-    i = 0
-    while i < n:
-        if not flags[i]:
-            i += 1
-            continue
-        j = i
-        while j + 1 < n and flags[j + 1]:
-            j += 1
-        marks.append(i)
-        if j != i:
-            marks.append(j)
-        i = j + 1
-    return marks
-
-
 def _clip_label(text: str, max_width: float, font_size: float) -> str:
     """Truncate `text` with an ellipsis so it fits `max_width` px.
 
@@ -453,6 +421,7 @@ def sparkline_bar(
     pad: int = 3,
     show_endpoint: bool = True,
     endpoint_width: int = 44,
+    show_clip_indicators: bool = True,
 ) -> str:
     """Render one series as an inline SVG line plot with an uncertainty ribbon.
 
@@ -464,14 +433,23 @@ def sparkline_bar(
     still returns a complete, empty ``<svg>`` rather than raising.
 
     A point outside `domain` is not a gap -- the data exists, it is merely
-    off-scale. The line and ribbon are drawn pinned to the domain edge there
-    instead of at their true, off-canvas coordinate, and a small triangular
-    cap -- `forest_bar`'s device for a clipped interval bound, adapted to a
-    series -- marks each place the data crosses the edge. A run of many
-    consecutive clipped points gets one cap where it leaves the domain and
-    one where it re-enters, not a cap per point; a lone clipped point gets
-    one cap. `lower` and `upper` clip independently, so a bound that stays
-    inside `domain` keeps its true position even while the other is capped.
+    off-scale. The line and ribbon are always drawn pinned to the domain
+    edge there instead of at their true, off-canvas coordinate, regardless
+    of `show_clip_indicators`: nothing this function draws ever escapes the
+    canvas. `lower` and `upper` clip independently, so a bound that stays
+    inside `domain` keeps its true position even while the other is pinned.
+
+    When `show_clip_indicators` is set, a small triangle flags each
+    direction the series was clipped in -- one paired with the y-axis top
+    for "clipped above", one for "clipped below" -- both anchored at the
+    row's left edge so they read together as a compact status pair rather
+    than requiring a glance at opposite corners. This is a row-level flag,
+    not a per-point marker: it fires once per direction no matter how many
+    points are clipped, so a noisy series oscillating in and out of a tight
+    domain still gets at most two small marks, not a marker at every
+    crossing. It does not say *where* the clipping happened, only that it
+    did and in which direction; both bounds of the ribbon clipping in
+    opposite directions at the same point still raises both flags.
 
     Parameters
     ----------
@@ -486,8 +464,8 @@ def sparkline_bar(
     ref
         Reference value for the horizontal dashed line.
     color
-        Line, ribbon, endpoint and reference-line colour, resolved from the
-        last point's interval by the caller.
+        Line, ribbon, endpoint, reference-line and clip-flag colour,
+        resolved from the last point's interval by the caller.
     fmt
         Formats the endpoint value label.
     width, height, pad
@@ -500,6 +478,11 @@ def sparkline_bar(
         be given the same `width`, `pad`, `show_endpoint` and
         `endpoint_width` so its ticks project over the identical inner width
         and land under their points.
+    show_clip_indicators
+        Draw the clipped-direction flags described above. The line and
+        ribbon are always clamped to `domain` regardless of this flag --
+        turning it off only removes the indicator, never re-introduces an
+        off-canvas coordinate.
 
     Returns
     -------
@@ -515,29 +498,12 @@ def sparkline_bar(
     def project_y(value: float) -> float:
         return height - project_up(value)
 
-    cap_size = pad * 1.8
     top_edge = project_y(high)
     bottom_edge = project_y(low)
 
-    def clip_cap(x_px: float, direction: _ClipDirection) -> str:
-        if direction == "high":
-            tip_y = top_edge - pad / 2
-            base_y = tip_y + cap_size
-        else:
-            tip_y = bottom_edge + pad / 2
-            base_y = tip_y - cap_size
-        # The apex sits at the point's true x, always inside [0, width] via
-        # project_x; the two base corners can still overrun near either
-        # edge, so clamp them independently rather than let the cap itself
-        # become the next thing the viewBox silently crops.
-        left_x = max(x_px - cap_size, 0.0)
-        right_x = min(x_px + cap_size, width)
-        return (
-            f'<polygon points="{x_px:.2f},{tip_y:.2f} {left_x:.2f},{base_y:.2f} '
-            f'{right_x:.2f},{base_y:.2f}" fill="{color}"/>'
-        )
-
     parts: list[str] = []
+    clips_high = False
+    clips_low = False
 
     band_runs = _band_runs(x, y, lower, upper)
     for run in band_runs:
@@ -549,10 +515,8 @@ def sparkline_bar(
             for xi, li, _ui in reversed(run)
         )
         parts.append(f'<polygon points="{top} {bottom}" fill="{color}" fill-opacity="0.15"/>')
-        for i in _clip_boundaries([ui > high for _xi, _li, ui in run]):
-            parts.append(clip_cap(project_x(run[i][0]), "high"))
-        for i in _clip_boundaries([li < low for _xi, li, _ui in run]):
-            parts.append(clip_cap(project_x(run[i][0]), "low"))
+        clips_high = clips_high or any(ui > high for _xi, _li, ui in run)
+        clips_low = clips_low or any(li < low for _xi, li, _ui in run)
 
     line_runs = _line_runs(x, y)
 
@@ -568,10 +532,8 @@ def sparkline_bar(
             f"{project_x(xi):.2f},{project_y(_clamp(yi, low, high)):.2f}" for xi, yi in run
         )
         parts.append(f'<polyline points="{pts}" fill="none" stroke="{color}" stroke-width="1.5"/>')
-        for i in _clip_boundaries([yi > high for _xi, yi in run]):
-            parts.append(clip_cap(project_x(run[i][0]), "high"))
-        for i in _clip_boundaries([yi < low for _xi, yi in run]):
-            parts.append(clip_cap(project_x(run[i][0]), "low"))
+        clips_high = clips_high or any(yi > high for _xi, yi in run)
+        clips_low = clips_low or any(yi < low for _xi, yi in run)
 
     if line_runs and show_endpoint:
         _, ey = line_runs[-1][-1]
@@ -581,6 +543,21 @@ def sparkline_bar(
             f'<text x="{right_edge}" y="{ey_px + 3:.2f}" fill="{color}" '
             f'font-size="9" text-anchor="end">{label}</text>'
         )
+
+    if show_clip_indicators:
+        flag_w, flag_h = pad * 2.0, pad * 0.83
+        if clips_high:
+            parts.append(
+                f'<polygon points="{pad:.2f},{top_edge + 1:.2f} {pad + flag_w:.2f},'
+                f'{top_edge + 1:.2f} {pad + flag_w / 2:.2f},{top_edge - flag_h:.2f}" '
+                f'fill="{color}"/>'
+            )
+        if clips_low:
+            parts.append(
+                f'<polygon points="{pad:.2f},{bottom_edge - 1:.2f} {pad + flag_w:.2f},'
+                f'{bottom_edge - 1:.2f} {pad + flag_w / 2:.2f},{bottom_edge + flag_h:.2f}" '
+                f'fill="{color}"/>'
+            )
 
     return _svg(width, height, "".join(parts))
 
