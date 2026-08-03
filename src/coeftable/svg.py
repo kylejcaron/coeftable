@@ -386,7 +386,6 @@ def sparkline_bar(
     domain: tuple[float, float],
     ref: float,
     color: str,
-    theme: Theme,
     fmt: Format,
     width: int = 220,
     height: int = 30,
@@ -416,10 +415,8 @@ def sparkline_bar(
     ref
         Reference value for the horizontal dashed line.
     color
-        Line, ribbon and endpoint colour, resolved from the last point's
-        interval by the caller.
-    theme
-        Supplies the reference-line colour.
+        Line, ribbon, endpoint and reference-line colour, resolved from the
+        last point's interval by the caller.
     fmt
         Formats the endpoint value label.
     width, height, pad
@@ -464,7 +461,7 @@ def sparkline_bar(
         ref_y = project_y(ref)
         parts.append(
             f'<line x1="{pad}" y1="{ref_y:.2f}" x2="{right_edge}" y2="{ref_y:.2f}" '
-            f'stroke="{theme.axis}" stroke-width="1" stroke-dasharray="2,2"/>'
+            f'stroke="{color}" stroke-width="1" stroke-dasharray="2,2"/>'
         )
 
     for run in line_runs:

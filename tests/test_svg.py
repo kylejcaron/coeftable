@@ -113,7 +113,6 @@ def test_sparkline_bar_is_well_formed_svg():
         domain=(0.0, 2.0),
         ref=0.0,
         color="#55A868",
-        theme=DEFAULT,
         fmt=Number(decimals=1),
     )
     assert svg.startswith("<svg")
@@ -138,7 +137,6 @@ def test_sparkline_bar_ribbon_point_count_matches_series_length():
         domain=(0.0, 2.0),
         ref=0.0,
         color="#4C72B0",
-        theme=DEFAULT,
         fmt=Number(decimals=1),
     )
     match = re.search(r'<polygon points="([^"]+)"', svg)
@@ -161,7 +159,6 @@ def test_sparkline_bar_gap_splits_ribbon_and_line_into_separate_runs():
         domain=(0.0, 2.0),
         ref=0.0,
         color="#4C72B0",
-        theme=DEFAULT,
         fmt=Number(decimals=1),
     )
     assert svg.count("<polygon") == 2
@@ -182,7 +179,6 @@ def test_sparkline_bar_draws_reference_line_only_when_inside_domain():
         domain=(0.0, 2.0),
         ref=0.5,
         color="#000",
-        theme=DEFAULT,
         fmt=Number(decimals=1),
     )
     outside = sparkline_bar(
@@ -194,7 +190,6 @@ def test_sparkline_bar_draws_reference_line_only_when_inside_domain():
         domain=(1.0, 2.0),
         ref=0.5,
         color="#000",
-        theme=DEFAULT,
         fmt=Number(decimals=1),
     )
     assert "stroke-dasharray" in inside
@@ -215,7 +210,6 @@ def test_sparkline_bar_hides_endpoint_label_when_disabled():
         domain=(0.0, 2.0),
         ref=0.0,
         color="#000",
-        theme=DEFAULT,
         fmt=Number(decimals=1),
         show_endpoint=False,
     )
@@ -237,7 +231,6 @@ def test_sparkline_bar_all_missing_series_is_valid_and_empty():
         domain=(-1.0, 1.0),
         ref=0.0,
         color="#000",
-        theme=DEFAULT,
         fmt=Number(decimals=1),
     )
     assert svg.startswith("<svg")
@@ -263,7 +256,6 @@ def test_sparkline_bar_clips_overlong_endpoint_label():
         domain=(0.0, 2.0),
         ref=0.0,
         color="#000",
-        theme=DEFAULT,
         fmt=lambda _: "-12,345.6789%",
         endpoint_width=20,
     )
@@ -287,7 +279,6 @@ def test_sparkline_bar_endpoint_dot_lands_on_last_valid_point_after_trailing_gap
         domain=(0.0, 2.0),
         ref=0.0,
         color="#000",
-        theme=DEFAULT,
         fmt=Number(decimals=1),
     )
     dot = re.search(r'<circle cx="([^"]+)" cy="([^"]+)"', svg)
@@ -314,7 +305,6 @@ def test_sparkline_bar_projects_true_x_not_index():
         domain=(0.0, 2.0),
         ref=0.0,
         color="#000",
-        theme=DEFAULT,
         fmt=Number(decimals=1),
         show_endpoint=False,
     )
@@ -353,7 +343,6 @@ def test_sparkline_bar_endpoint_reserve_is_label_length_independent():
         domain=(0.0, 2.0),
         ref=0.0,
         color="#000",
-        theme=DEFAULT,
         fmt=lambda _: "1%",
     )
     long = sparkline_bar(
@@ -365,7 +354,6 @@ def test_sparkline_bar_endpoint_reserve_is_label_length_independent():
         domain=(0.0, 2.0),
         ref=0.0,
         color="#000",
-        theme=DEFAULT,
         fmt=lambda _: "-12,345%",
     )
 
@@ -392,7 +380,6 @@ def test_sparkline_axis_ticks_align_with_sparkline_bar_points():
         domain=(0.0, 2.0),
         ref=0.0,
         color="#000",
-        theme=DEFAULT,
         fmt=Number(decimals=1),
     )
     line = re.search(r'<polyline points="([^"]+)"', bar_svg)

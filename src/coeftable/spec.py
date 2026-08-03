@@ -679,7 +679,6 @@ class Sparkline:
             domain=state.domains[key],
             ref=self.ref,
             color=ctx.theme.color(role),
-            theme=ctx.theme,
             fmt=self.fmt,
             width=self.width,
             height=state.height,
