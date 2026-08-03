@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Callable, Iterable, Mapping
+import statistics
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
@@ -28,6 +29,7 @@ if TYPE_CHECKING:
     from coeftable.series import Series
 
 type Scale = Literal["table", "row_group", "split_column", "row"]
+type Autoscale = Literal["tight", "robust"]
 
 # Module-level singletons: frozen and shared, so they are safe as argument
 # defaults where ruff B008 forbids a constructor call.
@@ -265,6 +267,32 @@ def _pad_domain(
     return (low, high)
 
 
+def _robust_domain(
+    values: list[float], ref: float, anchors: Sequence[float] = ()
+) -> tuple[float, float]:
+    """Pad an IQR/Tukey-fenced domain to `values`, discounting outliers.
+
+    Falls back to `_pad_domain`'s plain min/max fit entirely -- not a
+    partial fence -- when quartiles are not meaningful: fewer than 4
+    pooled values, or a zero IQR (e.g. all-identical values).
+
+    `anchors` -- each contributing row's last-plotted value and CI bounds
+    (`_last_point`) -- are unioned back into the result even where the
+    fence would otherwise exclude one. `role_for` colours a row from its
+    last point, so a domain that hides it would mislead the reader more
+    than the tight fit this option exists to improve on.
+    """
+    if len(values) < 4:
+        return _pad_domain(values, ref)
+    q1, _, q3 = statistics.quantiles(values, n=4, method="inclusive")
+    iqr = q3 - q1
+    if iqr == 0:
+        return _pad_domain(values, ref)
+    fence_low, fence_high = q1 - 1.5 * iqr, q3 + 1.5 * iqr
+    inliers = [v for v in values if fence_low <= v <= fence_high]
+    return _pad_domain([*inliers, *anchors], ref)
+
+
 def _clamp_domain(
     domain: tuple[float, float], ref: float, max_domain: float
 ) -> tuple[float, float]:
@@ -285,16 +313,23 @@ def _bucket_domain(
     *,
     override: tuple[float, float] | None,
     max_domain: float | None,
+    autoscale: Autoscale = "tight",
+    anchors: Sequence[float] = (),
 ) -> tuple[float, float]:
     """Resolve one domain bucket for `Sparkline.prepare`.
 
-    `override` wins outright; otherwise the domain is padded to fit
-    `values` and, when `max_domain` is set, clamped to `ref - max_domain,
-    ref + max_domain`.
+    `override` wins outright; otherwise the domain is fit to `values` --
+    tightly (`_pad_domain`) or, when `autoscale="robust"`, with an
+    IQR/Tukey fence that discounts outliers while still keeping every
+    value in `anchors` visible (`_robust_domain`) -- and, when
+    `max_domain` is set, clamped to `ref - max_domain, ref + max_domain`.
     """
     if override is not None:
         return override
-    domain = _pad_domain(values, ref)
+    if autoscale == "robust":
+        domain = _robust_domain(values, ref, anchors)
+    else:
+        domain = _pad_domain(values, ref)
     return _clamp_domain(domain, ref, max_domain) if max_domain is not None else domain
 
 
@@ -581,6 +616,18 @@ class Sparkline:
         renders unchanged. Applies per `scale` bucket, composing with it
         rather than overriding it. Ignored when `domain` is set --
         `domain` is an absolute override and always wins.
+    autoscale
+        Strategy for the auto-computed domain when `domain` is not set.
+        `"tight"` (default) fits tightly to the exact min/max of the
+        bucket's pooled values -- unchanged from before this option
+        existed. `"robust"` fits an IQR/Tukey fence instead, discounting
+        outliers that would otherwise flatten the rest of the series,
+        while still keeping every contributing row's last-plotted value
+        and CI bounds visible -- that is the exact point `role_for`
+        colours the row from, so a fence that hid it would mislead more
+        than it helps. Composes with `max_domain`: the robust fit runs
+        first, then the ceiling clamps it exactly as it clamps a tight
+        fit.
     width
         Plot width in pixels.
     height
@@ -617,6 +664,7 @@ class Sparkline:
     scale: Scale = "row"
     domain: tuple[float, float] | None = None
     max_domain: float | None = None
+    autoscale: Autoscale = "tight"
     width: int = 220
     height: int | None = None
     show_axis: bool = True
@@ -675,17 +723,29 @@ class Sparkline:
             series_list = [by_identity[identity] for identity in identities]
 
         buckets: dict[Any, list[float]] = {}
+        anchors: dict[Any, list[float]] = {}
         x_values: list[float] = []
         x_temporal = False
         for i in range(len(scan.row_keys)):
             series = series_list[i]
             key = _domain_key(self, scan.row_keys[i], scan.group_keys[i], scan.split_keys[i])
             buckets.setdefault(key, []).extend(_finite([*series.y, *series.lower, *series.upper]))
+            if self.autoscale == "robust":
+                last = _last_point(series)
+                if last is not None:
+                    anchors.setdefault(key, []).extend(_finite(list(last)))
             x_values.extend(_finite(series.x))
             x_temporal = x_temporal or series.x_temporal
 
         domains = {
-            key: _bucket_domain(vals, self.ref, override=self.domain, max_domain=self.max_domain)
+            key: _bucket_domain(
+                vals,
+                self.ref,
+                override=self.domain,
+                max_domain=self.max_domain,
+                autoscale=self.autoscale,
+                anchors=anchors.get(key, ()),
+            )
             for key, vals in buckets.items()
         }
         x_domain = (min(x_values), max(x_values)) if x_values else (0.0, 1.0)
@@ -1013,6 +1073,7 @@ class CoefTable:
         scale: Scale = "row",
         domain: tuple[float, float] | None = None,
         max_domain: float | None = None,
+        autoscale: Autoscale = "tight",
         width: int = 220,
         height: int | None = None,
         show_axis: bool = True,
@@ -1053,6 +1114,15 @@ class CoefTable:
             e.g. `max_domain=20` clamps to `(ref - 20, ref + 20)`. Only
             narrows -- a row whose natural domain already fits inside the
             ceiling is unaffected. Ignored when `domain` is set.
+        autoscale
+            Strategy for the auto-computed domain when `domain` is not set.
+            `"tight"` (default) fits tightly to the pooled values, same as
+            before this option existed. `"robust"` fits an IQR/Tukey fence
+            instead, discounting outliers that would otherwise flatten the
+            rest of the series, while still keeping every row's
+            last-plotted value and CI bounds visible. Composes with
+            `max_domain`: the robust fit runs first, then the ceiling
+            clamps it.
         width
             Plot width in pixels.
         height
@@ -1090,6 +1160,7 @@ class CoefTable:
                 scale=scale,
                 domain=domain,
                 max_domain=max_domain,
+                autoscale=autoscale,
                 width=width,
                 height=height,
                 show_axis=show_axis,

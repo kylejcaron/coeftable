@@ -16,6 +16,7 @@ from coeftable.spec import (
     _bucket_domain,
     _clamp_domain,
     _pad_domain,
+    _robust_domain,
     validate_columns,
 )
 from coeftable.theme import DEFAULT
@@ -85,6 +86,29 @@ def _ref_line_y(svg: str) -> float:
     match = re.search(r'<line x1="(-?[\d.]+)" y1="(-?[\d.]+)"[^>]*stroke-dasharray="2,2"', svg)
     assert match is not None, f"no reference line in {svg!r}"
     return float(match.group(2))
+
+
+def _polyline_ys(svg: str) -> list[float]:
+    """Extract the polyline's y-pixels, in point order, from a rendered SVG."""
+    match = re.search(r'<polyline points="([^"]+)"', svg)
+    assert match is not None, f"no polyline in {svg!r}"
+    return [float(pair.split(",")[1]) for pair in match.group(1).split(" ")]
+
+
+# A baseline hovering around 1.0x with one point spiking to 300x during a
+# since-recovered incident -- index 3 of 6, not the last point. The
+# motivating case for autoscale="robust": tightly fit, the single spike
+# forces a domain wide enough that the other five points collapse to a
+# sub-pixel line.
+_SPIKE_LIFT = [1.0, 1.05, 0.95, 300.0, 1.02, 0.98]
+_SPIKE_NON_OUTLIER_INDICES = [0, 1, 2, 4, 5]
+
+
+def spike_table(**kwargs):
+    raw = {"metric": ["A"], "lift": [_SPIKE_LIFT]}
+    return CoefTable(pl.DataFrame(raw), rows="metric").sparkline(
+        "Trend", value="lift", ref=1.0, **kwargs
+    )
 
 
 def test_motivating_table_renders_end_to_end(data):
@@ -468,6 +492,148 @@ def test_max_domain_composes_with_scale_table_instead_of_overriding_it():
     assert _ref_line_y(plain[0]) == pytest.approx(_ref_line_y(plain[1]))
     assert _ref_line_y(clamped[0]) == pytest.approx(_ref_line_y(clamped[1]))
     assert abs(_ref_line_y(plain[0]) - _ref_line_y(clamped[0])) > 0.5
+
+
+def test_robust_domain_short_series_falls_back_to_pad_domain():
+    values = [1.0, 2.0, 1.5]  # fewer than 4 pooled values -- no meaningful quartiles
+    assert _robust_domain(values, 0.0) == _pad_domain(values, 0.0)
+
+
+def test_robust_domain_degenerate_spread_falls_back_to_pad_domain():
+    values = [2.0, 2.0, 2.0, 2.0, 2.0]  # zero IQR, e.g. all-identical values
+    assert _robust_domain(values, 0.0) == _pad_domain(values, 0.0)
+
+
+def test_robust_domain_excludes_a_spike_the_fence_flags_as_an_outlier():
+    tight = _pad_domain(_SPIKE_LIFT, 1.0)
+    robust = _robust_domain(_SPIKE_LIFT, 1.0)
+    # _pad_domain, forced to contain every value, stretches to fit the
+    # spike; the fence discounts it entirely, so it lands outside the
+    # robust domain, which stays two orders of magnitude tighter.
+    assert not (robust[0] <= 300.0 <= robust[1])
+    assert (robust[1] - robust[0]) < (tight[1] - tight[0]) / 100
+
+
+def test_robust_domain_keeps_an_anchor_visible_even_when_the_fence_would_exclude_it():
+    without_anchor = _robust_domain(_SPIKE_LIFT, 1.0)
+    with_anchor = _robust_domain(_SPIKE_LIFT, 1.0, anchors=[300.0])
+    assert not (without_anchor[0] <= 300.0 <= without_anchor[1])
+    assert with_anchor[0] <= 300.0 <= with_anchor[1]
+
+
+def test_robust_domain_forces_ref_into_the_domain():
+    values = [10.0, 10.5, 9.5, 10.2, 9.8, 10.1]
+    low, high = _robust_domain(values, 0.0)
+    assert low <= 0.0 <= high
+
+
+def test_bucket_domain_tight_is_the_default_and_matches_pad_domain():
+    plain = _bucket_domain(_SPIKE_LIFT, 1.0, override=None, max_domain=None)
+    assert plain == _pad_domain(_SPIKE_LIFT, 1.0)
+
+
+def test_bucket_domain_robust_then_max_domain_clamps_further():
+    robust_only = _bucket_domain(
+        _SPIKE_LIFT, 1.0, override=None, max_domain=None, autoscale="robust"
+    )
+    robust_clamped = _bucket_domain(
+        _SPIKE_LIFT, 1.0, override=None, max_domain=0.03, autoscale="robust"
+    )
+    assert robust_clamped != robust_only
+    assert robust_clamped == _clamp_domain(robust_only, 1.0, 0.03)
+
+
+def test_autoscale_default_is_tight_and_unchanged():
+    # No autoscale= at all must render byte-for-byte identically to
+    # explicitly requesting "tight" -- the default did not change meaning.
+    default = nw.from_native(resolve(spike_table()).frame)["Trend"].to_list()
+    tight = nw.from_native(resolve(spike_table(autoscale="tight")).frame)["Trend"].to_list()
+    assert default == tight
+
+
+def test_autoscale_robust_keeps_the_bulk_of_a_spiking_series_legible():
+    tight_plot = nw.from_native(resolve(spike_table()).frame)["Trend"].to_list()[0]
+    robust_out = resolve(spike_table(autoscale="robust"))
+    robust_plot = nw.from_native(robust_out.frame)["Trend"].to_list()[0]
+
+    def extent(svg):
+        ys = _polyline_ys(svg)
+        picked = [ys[i] for i in _SPIKE_NON_OUTLIER_INDICES]
+        return max(picked) - min(picked)
+
+    # Default (tight): the domain stretches to fit the spike (~350 units),
+    # so the other five points collapse to a sub-pixel line.
+    assert extent(tight_plot) < 1.0
+    # autoscale="robust": the fence discounts the spike, so those same
+    # five points now span most of the plot's 24px usable height.
+    assert extent(robust_plot) > 10.0
+
+    # The spike is still drawn -- clamped to the domain edge -- and
+    # flagged as clipped under the robust fit; not under tight, which is
+    # by construction wide enough to contain every point unclipped.
+    assert tight_plot.count("<polygon") == 0
+    assert robust_plot.count("<polygon") == 1
+
+
+def test_autoscale_robust_single_row_last_point_is_the_outlier_stays_visible():
+    raw = {"metric": ["A"], "lift": [[1.0, 1.05, 0.95, 300.0]]}
+    table = CoefTable(pl.DataFrame(raw), rows="metric").sparkline(
+        "Trend", value="lift", ref=1.0, autoscale="robust"
+    )
+    plot = nw.from_native(resolve(table).frame)["Trend"].to_list()[0]
+    # The IQR fence alone excludes 300.0 -- but it is also this row's last
+    # point, the exact value role_for colours the row from, so the anchor
+    # union must force it back into the domain. No clip flag proves it
+    # was not clamped.
+    assert "<polygon" not in plot
+
+
+def test_autoscale_robust_multi_row_bucket_keeps_every_rows_last_point_visible():
+    raw = {
+        "metric": ["Clean", "Spiking"],
+        "lift": [[1.0, 1.05, 0.95, 1.02], [1.0, 1.05, 0.95, 300.0]],
+    }
+    table = CoefTable(pl.DataFrame(raw), rows="metric").sparkline(
+        "Trend", value="lift", ref=1.0, scale="table", autoscale="robust"
+    )
+    plots = nw.from_native(resolve(table).frame)["Trend"].to_list()
+    # Both rows share one scale="table" bucket. "Spiking"'s last point
+    # (300.0) is the sole reason the fence would exclude it, so the anchor
+    # union forces the SHARED domain open to keep it visible -- and
+    # because there is exactly one resolved domain per bucket, "Clean"
+    # inherits that same wide-open domain even though it has no outlier
+    # of its own to force anything.
+    assert "<polygon" not in plots[0]
+    assert "<polygon" not in plots[1]
+    assert _ref_line_y(plots[0]) == pytest.approx(_ref_line_y(plots[1]))
+
+
+def test_autoscale_robust_multi_row_bucket_with_an_empty_sibling_still_resolves():
+    raw = {"metric": ["Empty", "Spiking"], "lift": [[], [1.0, 1.05, 0.95, 300.0]]}
+    table = CoefTable(pl.DataFrame(raw), rows="metric").sparkline(
+        "Trend", value="lift", ref=1.0, scale="table", autoscale="robust"
+    )
+    plots = nw.from_native(resolve(table).frame)["Trend"].to_list()
+    # The empty row has no last point to anchor -- and must not crash
+    # trying to find one -- so it renders blank as it always has; the
+    # sibling's own outlier last point still forces the shared domain
+    # open on its own.
+    assert plots[0] == ""
+    assert "<polygon" not in plots[1]
+
+
+def test_autoscale_robust_composes_with_max_domain():
+    robust_only = nw.from_native(resolve(spike_table(autoscale="robust")).frame)[
+        "Trend"
+    ].to_list()[0]
+    robust_clamped_table = spike_table(autoscale="robust", max_domain=0.03)
+    robust_clamped = nw.from_native(resolve(robust_clamped_table).frame)["Trend"].to_list()[0]
+    # The robust fit alone already excludes the spike (one clip flag). A
+    # tighter max_domain ceiling then narrows that further still, clipping
+    # two of the surviving inlier points too -- proving the ceiling runs
+    # as a second pass after the robust fit, not instead of it.
+    assert robust_only.count("<polygon") == 1
+    assert robust_clamped.count("<polygon") == 2
 
 
 def test_show_axis_false_emits_no_footer_row():
