@@ -73,12 +73,10 @@ def _line_runs(
             current = []
 
     for xi, yi in zip(x, y, strict=True):
-        if xi is None or yi is None:
+        if is_missing(xi) or is_missing(yi):
             _flush()
             continue
-        if math.isnan(xi) or math.isnan(yi):
-            _flush()
-            continue
+        assert xi is not None and yi is not None  # noqa: S101 - is_missing narrows NaN, not None
         current.append((xi, yi))
     _flush()
     return runs
@@ -105,12 +103,10 @@ def _band_runs(
             current = []
 
     for xi, yi, li, ui in zip(x, y, lower, upper, strict=True):
-        if xi is None or yi is None or li is None or ui is None:
+        if is_missing(xi) or is_missing(yi) or is_missing(li) or is_missing(ui):
             _flush()
             continue
-        if math.isnan(xi) or math.isnan(yi) or math.isnan(li) or math.isnan(ui):
-            _flush()
-            continue
+        assert xi is not None and li is not None and ui is not None  # noqa: S101
         current.append((xi, li, ui))
     _flush()
     return runs
