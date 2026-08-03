@@ -42,8 +42,8 @@ def test_forest_column_gets_reduced_vertical_padding():
 
 
 def test_default_forest_bar_svg_uses_the_stacked_layout_height():
-    # Integration guard: unit tests on _forest_height() and forest_bar()
-    # pass height explicitly and can't catch the height=_forest_height(...)
+    # Integration guard: unit tests on _plot_height() and forest_bar()
+    # pass height explicitly and can't catch the height=_plot_height(...)
     # argument being dropped at its call site in frame.py -- that would
     # silently regress every real table back to an 18px SVG with a short
     # reference line, the exact bug this fix addresses.
