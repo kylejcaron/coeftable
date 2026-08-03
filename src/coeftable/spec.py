@@ -299,11 +299,11 @@ def _clamp_domain(
     """Narrow `domain` to fit inside `ref - max_domain, ref + max_domain`; never widens it.
 
     Requires `ref` inside `domain` -- guaranteed by `_bucket_domain`'s one
-    call site, which only ever clamps a `_pad_domain` result (already
-    forced to contain `ref`). `max_domain >= 0` is a documented but
-    unenforced precondition: nothing validates the sign of `Sparkline`'s
-    `max_domain` field, and a negative value inverts the result (`low >
-    high`) rather than raising.
+    call site, which only ever clamps a `_pad_domain` or `_robust_domain`
+    result (both always forced to contain `ref`). `max_domain >= 0` is a
+    documented but unenforced precondition: nothing validates the sign of
+    `Sparkline`'s `max_domain` field, and a negative value inverts the
+    result (`low > high`) rather than raising.
     """
     low, high = domain
     return (max(low, ref - max_domain), min(high, ref + max_domain))
