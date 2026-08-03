@@ -167,6 +167,12 @@ already collapsed onto its row; reach for the companion frame when it's
 still one row per observation, e.g. straight out of a long-format model
 output.
 
+Since `x` is always shared table-wide (dates must line up across rows), a
+series with fewer points than its neighbours visibly occupies only part of
+its cell's width rather than stretching to fill it — this is intentional,
+not a bug: `x` position reflects where a point falls in the shared domain,
+never the row's own extent.
+
 Want a plain trend line with no uncertainty band — no `ci`, no ribbon?
 great_tables' own `.gt().fmt_nanoplot(...)` covers that directly.
 `.sparkline(...)` exists specifically for the estimate-with-interval case.

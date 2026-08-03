@@ -559,7 +559,8 @@ class Sparkline:
     fmt
         Callable formatting the endpoint value label.
     axis_fmt
-        Callable labelling axis ticks; defaults to `fmt`.
+        Callable labelling axis ticks; defaults to `fmt`, or `DateAxis()` when
+        `x` is temporal.
     """
 
     label: str
@@ -1010,7 +1011,8 @@ class CoefTable:
         fmt
             Callable formatting the endpoint value label.
         axis_fmt
-            Callable labelling axis ticks; defaults to `fmt`.
+            Callable labelling axis ticks; defaults to `fmt`, or `DateAxis()`
+            when `x` is temporal.
 
         Returns
         -------
