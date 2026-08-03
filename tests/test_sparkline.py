@@ -347,6 +347,15 @@ def test_show_axis_false_emits_no_footer_row():
     assert out.axis_rows == []
 
 
+def test_show_endpoint_defaults_to_false():
+    raw = {"metric": ["A"], "lift": [[1.0, 2.0]]}
+    table = CoefTable(pl.DataFrame(raw), rows="metric").sparkline("Trend", value="lift")
+    out = resolve(table)
+    plots = nw.from_native(out.frame)["Trend"].to_list()
+    data_cell = next(p for i, p in enumerate(plots) if i not in out.axis_rows)
+    assert "<text" not in data_cell
+
+
 def test_temporal_x_produces_calendar_axis_labels():
     dates = [dt.date(2024, 1, 1), dt.date(2024, 2, 1), dt.date(2024, 3, 1)]
     raw = {"metric": ["A"], "lift": [[1.0, 2.0, 3.0]], "date": [dates]}

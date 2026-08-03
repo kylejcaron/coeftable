@@ -574,7 +574,7 @@ class Sparkline:
     width: int = 220
     height: int | None = None
     show_axis: bool = True
-    show_endpoint: bool = True
+    show_endpoint: bool = False
     endpoint_width: int = 44
     fmt: Format = _DEFAULT_FMT
     axis_fmt: Format | TimeFormat | None = None
@@ -966,7 +966,7 @@ class CoefTable:
         width: int = 220,
         height: int | None = None,
         show_axis: bool = True,
-        show_endpoint: bool = True,
+        show_endpoint: bool = False,
         endpoint_width: int = 44,
         fmt: Format = _DEFAULT_FMT,
         axis_fmt: Format | TimeFormat | None = None,
