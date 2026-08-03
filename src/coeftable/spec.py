@@ -265,6 +265,33 @@ def _pad_domain(
     return (low, high)
 
 
+def _clamp_domain(
+    domain: tuple[float, float], ref: float, max_domain: float
+) -> tuple[float, float]:
+    """Narrow `domain` to fit inside `ref - max_domain, ref + max_domain`; never widens it."""
+    low, high = domain
+    return (max(low, ref - max_domain), min(high, ref + max_domain))
+
+
+def _bucket_domain(
+    values: list[float],
+    ref: float,
+    *,
+    override: tuple[float, float] | None,
+    max_domain: float | None,
+) -> tuple[float, float]:
+    """Resolve one domain bucket for `Sparkline.prepare`.
+
+    `override` wins outright; otherwise the domain is padded to fit
+    `values` and, when `max_domain` is set, clamped to `ref - max_domain,
+    ref + max_domain`.
+    """
+    if override is not None:
+        return override
+    domain = _pad_domain(values, ref)
+    return _clamp_domain(domain, ref, max_domain) if max_domain is not None else domain
+
+
 # Content height (px) a plotted column needs to fill its row for each CI
 # layout, measured against the theme's default font sizes. Approximate but
 # close enough that a reference line spans the row instead of a short
@@ -541,6 +568,13 @@ class Sparkline:
         y-domain table-wide would flatten every small-magnitude one.
     domain
         Explicit y-domain, overriding `scale`.
+    max_domain
+        Half-width ceiling around `ref` for the auto-computed domain --
+        `max_domain=20` clamps to `(ref - 20, ref + 20)`. Only narrows: a
+        bucket whose natural domain already fits inside the ceiling
+        renders unchanged. Applies per `scale` bucket, composing with it
+        rather than overriding it. Ignored when `domain` is set --
+        `domain` is an absolute override and always wins.
     width
         Plot width in pixels.
     height
@@ -576,6 +610,7 @@ class Sparkline:
     ref: float = 0.0
     scale: Scale = "row"
     domain: tuple[float, float] | None = None
+    max_domain: float | None = None
     width: int = 220
     height: int | None = None
     show_axis: bool = True
@@ -644,7 +679,8 @@ class Sparkline:
             x_temporal = x_temporal or series.x_temporal
 
         domains = {
-            key: self.domain or _pad_domain(vals, self.ref) for key, vals in buckets.items()
+            key: _bucket_domain(vals, self.ref, override=self.domain, max_domain=self.max_domain)
+            for key, vals in buckets.items()
         }
         x_domain = (min(x_values), max(x_values)) if x_values else (0.0, 1.0)
 
@@ -970,6 +1006,7 @@ class CoefTable:
         ref: float = 0.0,
         scale: Scale = "row",
         domain: tuple[float, float] | None = None,
+        max_domain: float | None = None,
         width: int = 220,
         height: int | None = None,
         show_axis: bool = True,
@@ -1005,6 +1042,11 @@ class CoefTable:
             Which set of rows share a y-domain.
         domain
             Explicit y-domain, overriding `scale`.
+        max_domain
+            Half-width ceiling around `ref` for the auto-computed domain,
+            e.g. `max_domain=20` clamps to `(ref - 20, ref + 20)`. Only
+            narrows -- a row whose natural domain already fits inside the
+            ceiling is unaffected. Ignored when `domain` is set.
         width
             Plot width in pixels.
         height
@@ -1041,6 +1083,7 @@ class CoefTable:
                 ref=ref,
                 scale=scale,
                 domain=domain,
+                max_domain=max_domain,
                 width=width,
                 height=height,
                 show_axis=show_axis,
