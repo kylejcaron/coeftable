@@ -6,6 +6,7 @@ import dataclasses
 import math
 from collections.abc import Sequence
 from datetime import UTC, datetime
+from typing import Literal
 
 from coeftable.format import CalendarStep, DateAxis, Format, TimeFormat, is_missing
 from coeftable.theme import Theme
@@ -232,6 +233,42 @@ def _band_runs(
     return runs
 
 
+def _clamp(value: float, low: float, high: float) -> float:
+    """Pin *value* inside `[low, high]` -- the shared primitive behind every clip in this file."""
+    return min(high, max(low, value))
+
+
+type _ClipDirection = Literal["high", "low"]
+
+
+def _clip_boundaries(flags: Sequence[bool]) -> list[int]:
+    """Return the indices bounding each maximal run of `True` in `flags`.
+
+    A clipped point is not a gap: `_line_runs`/`_band_runs` already split on
+    missing values before this ever runs, so a single call only ever scans
+    one already-gap-free run. Within it, a stretch of consecutive clipped
+    points is marked at just its first and last index -- the two points
+    where the series crosses the domain boundary -- so a long clipped run
+    gets one cap at each end rather than a cap at every point. A single
+    clipped point yields that one index once.
+    """
+    marks: list[int] = []
+    n = len(flags)
+    i = 0
+    while i < n:
+        if not flags[i]:
+            i += 1
+            continue
+        j = i
+        while j + 1 < n and flags[j + 1]:
+            j += 1
+        marks.append(i)
+        if j != i:
+            marks.append(j)
+        i = j + 1
+    return marks
+
+
 def _clip_label(text: str, max_width: float, font_size: float) -> str:
     """Truncate `text` with an ellipsis so it fits `max_width` px.
 
@@ -426,6 +463,16 @@ def sparkline_bar(
     missing) simply draws no ribbon. A series with no valid point at all
     still returns a complete, empty ``<svg>`` rather than raising.
 
+    A point outside `domain` is not a gap -- the data exists, it is merely
+    off-scale. The line and ribbon are drawn pinned to the domain edge there
+    instead of at their true, off-canvas coordinate, and a small triangular
+    cap -- `forest_bar`'s device for a clipped interval bound, adapted to a
+    series -- marks each place the data crosses the edge. A run of many
+    consecutive clipped points gets one cap where it leaves the domain and
+    one where it re-enters, not a cap per point; a lone clipped point gets
+    one cap. `lower` and `upper` clip independently, so a bound that stays
+    inside `domain` keeps its true position even while the other is capped.
+
     Parameters
     ----------
     x, y
@@ -468,15 +515,44 @@ def sparkline_bar(
     def project_y(value: float) -> float:
         return height - project_up(value)
 
+    cap_size = pad * 1.8
+    top_edge = project_y(high)
+    bottom_edge = project_y(low)
+
+    def clip_cap(x_px: float, direction: _ClipDirection) -> str:
+        if direction == "high":
+            tip_y = top_edge - pad / 2
+            base_y = tip_y + cap_size
+        else:
+            tip_y = bottom_edge + pad / 2
+            base_y = tip_y - cap_size
+        # The apex sits at the point's true x, always inside [0, width] via
+        # project_x; the two base corners can still overrun near either
+        # edge, so clamp them independently rather than let the cap itself
+        # become the next thing the viewBox silently crops.
+        left_x = max(x_px - cap_size, 0.0)
+        right_x = min(x_px + cap_size, width)
+        return (
+            f'<polygon points="{x_px:.2f},{tip_y:.2f} {left_x:.2f},{base_y:.2f} '
+            f'{right_x:.2f},{base_y:.2f}" fill="{color}"/>'
+        )
+
     parts: list[str] = []
 
     band_runs = _band_runs(x, y, lower, upper)
     for run in band_runs:
-        top = " ".join(f"{project_x(xi):.2f},{project_y(ui):.2f}" for xi, _li, ui in run)
+        top = " ".join(
+            f"{project_x(xi):.2f},{project_y(_clamp(ui, low, high)):.2f}" for xi, _li, ui in run
+        )
         bottom = " ".join(
-            f"{project_x(xi):.2f},{project_y(li):.2f}" for xi, li, _ui in reversed(run)
+            f"{project_x(xi):.2f},{project_y(_clamp(li, low, high)):.2f}"
+            for xi, li, _ui in reversed(run)
         )
         parts.append(f'<polygon points="{top} {bottom}" fill="{color}" fill-opacity="0.15"/>')
+        for i in _clip_boundaries([ui > high for _xi, _li, ui in run]):
+            parts.append(clip_cap(project_x(run[i][0]), "high"))
+        for i in _clip_boundaries([li < low for _xi, li, _ui in run]):
+            parts.append(clip_cap(project_x(run[i][0]), "low"))
 
     line_runs = _line_runs(x, y)
 
@@ -488,12 +564,18 @@ def sparkline_bar(
         )
 
     for run in line_runs:
-        pts = " ".join(f"{project_x(xi):.2f},{project_y(yi):.2f}" for xi, yi in run)
+        pts = " ".join(
+            f"{project_x(xi):.2f},{project_y(_clamp(yi, low, high)):.2f}" for xi, yi in run
+        )
         parts.append(f'<polyline points="{pts}" fill="none" stroke="{color}" stroke-width="1.5"/>')
+        for i in _clip_boundaries([yi > high for _xi, yi in run]):
+            parts.append(clip_cap(project_x(run[i][0]), "high"))
+        for i in _clip_boundaries([yi < low for _xi, yi in run]):
+            parts.append(clip_cap(project_x(run[i][0]), "low"))
 
     if line_runs and show_endpoint:
         _, ey = line_runs[-1][-1]
-        ey_px = project_y(ey)
+        ey_px = project_y(_clamp(ey, low, high))
         label = _clip_label(fmt(ey), max(endpoint_width - 4, 4), 9.0)
         parts.append(
             f'<text x="{right_edge}" y="{ey_px + 3:.2f}" fill="{color}" '
