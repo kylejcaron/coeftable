@@ -54,14 +54,14 @@ _CALENDAR_STEP_SECONDS: dict[CalendarStep, float] = {
     "year": 365.25 * 86_400.0,
 }
 
-
-def _select_calendar_step(span: float, target: int) -> CalendarStep:
-    """Pick the finest ladder rung whose average length still fits `target` ticks."""
-    raw = span / max(target, 1)
-    return next(
-        (step for step in _CALENDAR_STEPS if raw <= _CALENDAR_STEP_SECONDS[step]),
-        "year",
-    )
+# Minimum tick count a ladder rung must actually produce over the domain
+# before `_select_calendar_step` will settle on it. The rung's *average*
+# step length can fit `target` neatly while still producing almost no
+# ticks -- a 29-day span divided by target=4 lands on "month" by average
+# length, but a 29-day window contains exactly one month boundary. Below
+# this floor the axis reads as empty, so selection steps to the next
+# finer rung instead.
+_CALENDAR_TICK_FLOOR = 3
 
 
 def _uniform_ticks(low: float, high: float, step: float) -> list[float]:
@@ -104,6 +104,41 @@ def _month_aligned_ticks(low: datetime, high: datetime, step_months: int) -> lis
     return ticks
 
 
+def _calendar_step_ticks(low: float, high: float, step: CalendarStep) -> list[float]:
+    """Tick positions for one ladder rung, real calendar boundaries only."""
+    if step == "day":
+        return _uniform_ticks(low, high, 86_400.0)
+    if step == "week":
+        return _uniform_ticks(low, high, 7 * 86_400.0)
+    step_months = {"month": 1, "quarter": 3, "year": 12}[step]
+    low_dt = datetime.fromtimestamp(low, tz=UTC)
+    high_dt = datetime.fromtimestamp(high, tz=UTC)
+    return _month_aligned_ticks(low_dt, high_dt, step_months)
+
+
+def _select_calendar_step(low: float, high: float, target: int) -> CalendarStep:
+    """Pick a ladder rung close to `target` ticks without underflowing the floor.
+
+    Starts from the finest rung whose *average* length still fits `target`
+    ticks -- the original heuristic -- then steps to progressively finer
+    rungs while the rung's *actual* tick count over ``[low, high]`` is
+    below `_CALENDAR_TICK_FLOOR`. Average length alone ignores where the
+    domain actually falls against real calendar boundaries, so it can pick
+    a rung that only crosses one boundary in the whole span.
+    """
+    raw = (high - low) / max(target, 1)
+    index = next(
+        (i for i, step in enumerate(_CALENDAR_STEPS) if raw <= _CALENDAR_STEP_SECONDS[step]),
+        len(_CALENDAR_STEPS) - 1,
+    )
+    while (
+        index > 0
+        and len(_calendar_step_ticks(low, high, _CALENDAR_STEPS[index])) < _CALENDAR_TICK_FLOOR
+    ):
+        index -= 1
+    return _CALENDAR_STEPS[index]
+
+
 def calendar_ticks(low: float, high: float, target: int = 4) -> list[float]:
     """Return epoch-second tick positions on real day/week/month/quarter/year boundaries.
 
@@ -129,15 +164,8 @@ def calendar_ticks(low: float, high: float, target: int = 4) -> list[float]:
         return []
     if high == low:
         return [low]
-    step = _select_calendar_step(high - low, target)
-    if step == "day":
-        return _uniform_ticks(low, high, 86_400.0)
-    if step == "week":
-        return _uniform_ticks(low, high, 7 * 86_400.0)
-    step_months = {"month": 1, "quarter": 3, "year": 12}[step]
-    low_dt = datetime.fromtimestamp(low, tz=UTC)
-    high_dt = datetime.fromtimestamp(high, tz=UTC)
-    return _month_aligned_ticks(low_dt, high_dt, step_months)
+    step = _select_calendar_step(low, high, target)
+    return _calendar_step_ticks(low, high, step)
 
 
 def _projector(domain: tuple[float, float], width: int, pad: int):
@@ -617,7 +645,7 @@ def sparkline_axis(
     if temporal:
         ticks = calendar_ticks(low, high, target_ticks)
         if isinstance(fmt, DateAxis):
-            step = _select_calendar_step(high - low, target_ticks)
+            step = _select_calendar_step(low, high, target_ticks)
             label = dataclasses.replace(fmt, step=step)
         else:
             label = fmt

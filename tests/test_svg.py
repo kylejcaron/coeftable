@@ -4,6 +4,7 @@ from itertools import pairwise
 
 from coeftable.format import DateAxis, Number
 from coeftable.svg import (
+    _CALENDAR_TICK_FLOOR,
     calendar_ticks,
     forest_axis,
     forest_bar,
@@ -778,6 +779,47 @@ def test_calendar_ticks_skips_a_boundary_before_the_domain_starts():
     dates = [datetime.fromtimestamp(t, tz=UTC) for t in ticks]
     assert dates[0] == datetime(2021, 1, 1, tzinfo=UTC)
     assert all(d.month == 1 and d.day == 1 for d in dates)
+
+
+def test_calendar_ticks_meets_the_density_floor_across_ladder_boundaries():
+    # Average rung length vs. target picks week for the 6-10 day range and
+    # month for the 29-31 day range, but those rungs can cross as few as
+    # one real boundary over such a short span -- average length says
+    # nothing about how many boundaries actually fall inside the domain.
+    # Every span straddling a ladder boundary must still clear the floor.
+    low = datetime(2024, 1, 1, tzinfo=UTC).timestamp()
+    for days in (3, 6, 7, 10, 25, 28, 29, 31, 60, 90, 200, 400, 1000):
+        high = low + days * 86_400.0
+        ticks = calendar_ticks(low, high)
+        assert len(ticks) >= _CALENDAR_TICK_FLOOR, f"{days}d span: only {len(ticks)} ticks"
+        dates = [datetime.fromtimestamp(t, tz=UTC) for t in ticks]
+        assert all(d.hour == 0 and d.minute == 0 and d.second == 0 for d in dates), (
+            f"{days}d span: a tick landed off a real calendar-day boundary"
+        )
+
+
+def test_calendar_ticks_recovers_density_for_a_6_to_7_day_span():
+    # Originally reported: a week-long window picked the week rung, which
+    # crosses at most one boundary in 6-7 days and rendered a single tick.
+    low = datetime(2024, 1, 1, tzinfo=UTC).timestamp()
+    for days in (6, 7):
+        high = low + days * 86_400.0
+        ticks = calendar_ticks(low, high)
+        assert len(ticks) >= _CALENDAR_TICK_FLOOR
+        gaps = [b - a for a, b in pairwise(ticks)]
+        assert all(gap == 86_400.0 for gap in gaps)
+
+
+def test_calendar_ticks_recovers_density_for_a_29_day_span():
+    # Originally reported: 2024-01-01 to 2024-01-30 picked the month rung
+    # by average length (raw 7.25d vs. a 30.4375d month) and rendered a
+    # single tick, even though the week rung was available and fits four.
+    low = datetime(2024, 1, 1, tzinfo=UTC).timestamp()
+    high = datetime(2024, 1, 30, tzinfo=UTC).timestamp()
+    ticks = calendar_ticks(low, high)
+    assert len(ticks) >= _CALENDAR_TICK_FLOOR
+    gaps = [b - a for a, b in pairwise(ticks)]
+    assert all(gap == 7 * 86_400.0 for gap in gaps)
 
 
 def test_sparkline_axis_temporal_domain_honours_a_custom_callable_fmt():
