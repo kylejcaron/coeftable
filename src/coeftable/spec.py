@@ -21,7 +21,7 @@ from coeftable.format import (
     render_interval,
 )
 from coeftable.svg import forest_axis, forest_bar, sparkline_axis, sparkline_bar
-from coeftable.theme import DEFAULT, ColorRule, Direction, Theme, role_for
+from coeftable.theme import DEFAULT, ColorRule, Direction, Role, Theme, role_for
 
 if TYPE_CHECKING:
     from great_tables import GT
@@ -255,6 +255,15 @@ def _domain_key(column: Forest | Sparkline, row_key: Any, group: Any, split: Any
             )
 
 
+def _resolve_role(
+    ctx: Cell, value: float | None, low: float | None, high: float | None, ref: float
+) -> Role:
+    """Resolve a cell's colour role: `ctx.color_rule` when set, else `role_for`."""
+    if ctx.color_rule is not None:
+        return ctx.color_rule(value, low, high, ref)
+    return role_for(low, high, ref, ctx.direction)
+
+
 def _pad_domain(
     values: list[float], ref: float, *, symmetric: bool = False
 ) -> tuple[float, float]:
@@ -479,11 +488,7 @@ class Forest:
             return ""
         key = _domain_key(self, ctx.row_key, ctx.group, ctx.split)
         domain = state.domains[key]
-        role = (
-            ctx.color_rule(value, low, high, self.ref)
-            if ctx.color_rule is not None
-            else role_for(low, high, self.ref, ctx.direction)
-        )
+        role = _resolve_role(ctx, value, low, high, self.ref)
         return forest_bar(
             value,
             low,
@@ -790,11 +795,7 @@ class Sparkline:
             return ""
         value, low, high = last
         key = _domain_key(self, ctx.row_key, ctx.group, ctx.split)
-        role = (
-            ctx.color_rule(value, low, high, self.ref)
-            if ctx.color_rule is not None
-            else role_for(low, high, self.ref, ctx.direction)
-        )
+        role = _resolve_role(ctx, value, low, high, self.ref)
         return sparkline_bar(
             series.x,
             series.y,
