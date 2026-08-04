@@ -73,15 +73,34 @@ centred on a single point. When several consecutive points all clip, the
 spans naturally merge into one continuous bracket rather than a cluster of
 overlapping ticks.
 
-**Trigger: ribbon-aware, not point-only.** The clip check must use the
-ribbon bound (`lower`/`upper`) when a CI is present, falling back to the
-point value when there is none. Point-only checking has a real, verified
-failure mode: a ribbon can be clamped to a sliver of its true width while
-its point estimate stays comfortably inside the domain, and a point-only
-check would show *zero* indication of it — the row looks confidently
-narrow when the true uncertainty was far wider. Verified concretely: one
-synthetic row had 7 separate ribbon-only clip events that a point-only
-check would have missed entirely, showing only 1.
+**Trigger: ribbon-aware (this part already worked).** The shipped
+pre-redesign mechanism already set its clip flag from *both* the ribbon
+bound (`lower`/`upper`) and the point value — checked directly against
+`08ce866`'s `svg.py`, lines 546-547 (ribbon) and 563-564 (point). A ribbon
+clamped to a sliver of its true width while the point estimate stays
+comfortably inside the domain already raised a flag before this redesign.
+What's genuinely new is *not* the trigger's ribbon-awareness — it's
+preserving that correctness while reworking everything downstream of it
+(the mark's shape and position, and the geometry it's drawn against). Get
+this wrong during the rewrite (e.g. narrowing back to a point-only check
+while restructuring the surrounding code) and the redesign silently
+regresses a real, already-shipped guarantee.
+
+**`show_clip_indicators=False` interaction with the ghost trace.**
+Decided explicitly (this was underspecified in an earlier draft of this
+plan): the flag controls the cap bracket only. Proper boundary clipping
+(change 1) and the ghost trace (change 2) are unconditional — they run
+regardless of the flag. This preserves the existing shipped guarantee that
+nothing the *real* (opaque) layer draws ever escapes the row's canvas
+bounds (the flag never re-introduces an off-canvas coordinate); the ghost
+trace is a separate, always-faded, informational layer that also never
+escapes the canvas (verified in a real browser, not just by inspecting
+coordinates: raw out-of-domain ghost coordinates can be enormous, e.g.
+y=-59985 in one constructed case, and the row still rendered cleanly
+confined to its own cell with zero bleed into surrounding content, because
+the outermost `<svg>` clips to its own viewport by default). Covered by a
+dedicated test asserting flag-off output has zero cap elements while the
+ghost layer and clipped real layer are both still present.
 
 **Position: mark the true crossing, not the real data point.** The double
 line's *x* extent is derived from the properly-clipped geometry (change 1),
