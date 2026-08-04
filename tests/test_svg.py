@@ -116,7 +116,7 @@ def test_forest_axis_anchors_a_tick_label_only_when_it_would_clip():
 
 def test_sparkline_axis_anchors_a_clipping_temporal_tick_label():
     # The originally observed bug: a month label on the first tick sits at
-    # x=pad and, centred, loses its leading character off-canvas ("Jan" ->
+    # x=inset and, centred, loses its leading character off-canvas ("Jan" ->
     # "an"). Covers the sparkline_axis call site and its temporal branch.
     low = datetime(2024, 1, 1, tzinfo=UTC).timestamp()
     high = datetime(2024, 3, 1, tzinfo=UTC).timestamp()
@@ -408,7 +408,7 @@ def _ghost_polylines(svg: str) -> list[str]:
 
 def test_sparkline_bar_clips_a_segment_at_the_exact_boundary_crossing():
     # Segment (0, 0) -> (1, 10) crosses domain high=5 at t = (5-0)/(10-0) =
-    # 0.5, i.e. domain x=0.5. With x_domain=(0, 1), width=100, pad=0 the
+    # 0.5, i.e. domain x=0.5. With x_domain=(0, 1), width=100, inset=0 the
     # projector is the identity times 100, so the crossing lands at pixel
     # x=50.00 exactly -- hand-computed, not read back from the
     # implementation under test.
@@ -426,7 +426,7 @@ def test_sparkline_bar_clips_a_segment_at_the_exact_boundary_crossing():
         fmt=Number(decimals=1),
         width=100,
         height=30,
-        pad=0,
+        inset=0,
         show_endpoint=False,
     )
     assert _real_polylines(svg) == ["0.00,30.00 50.00,0.00"]
@@ -462,7 +462,7 @@ def test_sparkline_bar_zigzag_clip_stays_one_polyline_per_in_bounds_run():
         fmt=Number(decimals=1),
         width=400,
         height=30,
-        pad=0,
+        inset=0,
         show_endpoint=False,
     )
     real = _real_polylines(svg)
@@ -496,7 +496,7 @@ def test_sparkline_bar_ghost_trace_and_real_line_connects_without_a_kink():
         fmt=Number(decimals=1),
         width=200,
         height=30,
-        pad=0,
+        inset=0,
         show_endpoint=False,
     )
     assert _ghost_polylines(svg) == ["0.00,30.00 100.00,-30.00 200.00,30.00"]
@@ -678,7 +678,7 @@ def test_sparkline_bar_isolated_clipped_point_no_segment_raises_a_cap_on_low_edg
         float(v)
         for v in re.findall(r'<line x1="[\d.-]+" y1="(-?[\d.]+)"[^>]*stroke-opacity="0.45"', svg)
     )
-    assert cap_ys == [26.5, 27.5]  # bottom edge (pad=3, height=30 default)
+    assert cap_ys == [26.5, 27.5]  # bottom edge (inset=3, height=30 default)
 
 
 def test_sparkline_bar_isolated_clipped_ribbon_bound_no_segment_raises_a_cap_on_low_edge():
@@ -746,7 +746,7 @@ def test_sparkline_bar_flags_both_directions_when_the_series_clips_both():
     )
     assert _cap_edge_count(svg) == 2
     # The two brackets sit at the domain's two distinct edges (top and
-    # bottom, pad=3 default height=30), not both piled on the same one.
+    # bottom, inset=3 default height=30), not both piled on the same one.
     cap_ys = sorted(
         float(v)
         for v in re.findall(r'<line x1="[\d.-]+" y1="(-?[\d.]+)"[^>]*stroke-opacity="0.45"', svg)
@@ -775,7 +775,7 @@ def test_sparkline_bar_ribbon_only_clip_raises_a_cap_even_when_the_point_stays_i
         fmt=Number(decimals=1),
         width=200,
         height=30,
-        pad=0,
+        inset=0,
         show_endpoint=False,
     )
     # The line itself never clips -- one plain polyline, no ghost line, no
@@ -810,7 +810,7 @@ def test_sparkline_bar_span_merging_coalesces_overlapping_line_and_ribbon_spans(
         fmt=Number(decimals=1),
         width=400,
         height=30,
-        pad=0,
+        inset=0,
         show_endpoint=False,
     )
     assert _cap_edge_count(svg) == 1
@@ -942,7 +942,7 @@ def test_sparkline_bar_domain_override_produces_a_correctly_positioned_cap():
     # level in test_sparkline.py, since sparkline_bar itself only ever
     # sees the final resolved tuple). Here: an explicit domain= must still
     # produce a cap sitting exactly at that domain's own projected high
-    # edge -- pad px from the canvas top, since a value equal to `high`
+    # edge -- inset px from the canvas top, since a value equal to `high`
     # always projects there regardless of the rest of the domain.
     x = [0.0, 1.0, 2.0]
     y = [1.0, 300.0, 1.0]
@@ -957,13 +957,13 @@ def test_sparkline_bar_domain_override_produces_a_correctly_positioned_cap():
         color="#000",
         fmt=Number(decimals=1),
         height=30,
-        pad=3,
+        inset=3,
     )
     cap_ys = sorted(
         float(v)
         for v in re.findall(r'<line x1="[\d.-]+" y1="(-?[\d.]+)"[^>]*stroke-opacity="0.45"', svg)
     )
-    assert cap_ys == [2.5, 3.5]  # pad=3, offset +/- 0.5
+    assert cap_ys == [2.5, 3.5]  # inset=3, offset +/- 0.5
 
 
 def test_sparkline_axis_ticks_align_with_sparkline_bar_points():
@@ -992,7 +992,7 @@ def test_sparkline_axis_ticks_align_with_sparkline_bar_points():
     assert line
     bar_xs = [float(pair.split(",")[0]) for pair in line.group(1).split(" ")]
 
-    # Neither call overrides width/pad/show_endpoint/endpoint_width, so both
+    # Neither call overrides width/inset/show_endpoint/endpoint_width, so both
     # project over the identical reduced inner width.
     axis_svg = sparkline_axis(x_domain=(0.0, 2.0), fmt=Number(decimals=0), theme=DEFAULT)
     tick_xs = [

@@ -169,15 +169,15 @@ def calendar_ticks(low: float, high: float, target: int = 4) -> list[float]:
     return _calendar_step_ticks(low, high, step)
 
 
-def _projector(domain: tuple[float, float], width: int, pad: int):
+def _projector(domain: tuple[float, float], width: int, inset: int):
     low, high = domain
     span = high - low
     if span <= 0:
         span = 1.0
-    inner = width - 2 * pad
+    inner = width - 2 * inset
 
     def project(value: float) -> float:
-        return pad + (value - low) / span * inner
+        return inset + (value - low) / span * inner
 
     return project
 
@@ -475,7 +475,7 @@ def forest_bar(
     width: int = 220,
     height: int = 18,
     bar_height: int = 9,
-    pad: int = 3,
+    inset: int = 3,
 ) -> str:
     """Render one interval as an inline SVG bar.
 
@@ -498,7 +498,7 @@ def forest_bar(
         Bar colour, resolved from a semantic role by the caller.
     theme
         Supplies axis and surface colours.
-    width, height, bar_height, pad
+    width, height, bar_height, inset
         Geometry in pixels.
 
     Returns
@@ -507,7 +507,7 @@ def forest_bar(
         A complete ``<svg>`` element.
     """
     low, high = domain
-    project = _projector(domain, width, pad)
+    project = _projector(domain, width, inset)
     low_value = low if lower is None or is_missing(lower) else lower
     high_value = high if upper is None or is_missing(upper) else upper
     clipped_low = is_missing(lower) or low_value < low
@@ -541,13 +541,13 @@ def forest_bar(
 
     cap = bar_height * 0.6
     if clipped_high:
-        tip = width - pad / 2
+        tip = width - inset / 2
         parts.append(
             f'<polygon points="{tip:.2f},{middle:.2f} {tip - cap:.2f},{middle - cap:.2f} '
             f'{tip - cap:.2f},{middle + cap:.2f}" fill="{color}"/>'
         )
     if clipped_low:
-        tip = pad / 2
+        tip = inset / 2
         parts.append(
             f'<polygon points="{tip:.2f},{middle:.2f} {tip + cap:.2f},{middle - cap:.2f} '
             f'{tip + cap:.2f},{middle + cap:.2f}" fill="{color}"/>'
@@ -564,7 +564,7 @@ def forest_axis(
     theme: Theme,
     width: int = 220,
     height: int = 22,
-    pad: int = 3,
+    inset: int = 3,
     target_ticks: int = 4,
 ) -> str:
     """Render the shared x-axis for a set of forest bars.
@@ -579,7 +579,7 @@ def forest_axis(
         Callable used to label each tick.
     theme
         Supplies the axis colour and label size.
-    width, height, pad
+    width, height, inset
         Geometry in pixels.
     target_ticks
         Approximate number of ticks wanted.
@@ -590,10 +590,10 @@ def forest_axis(
         A complete ``<svg>`` element.
     """
     low, high = domain
-    project = _projector(domain, width, pad)
+    project = _projector(domain, width, inset)
     baseline = 4.0
     parts = [
-        f'<line x1="{pad}" y1="{baseline:.2f}" x2="{width - pad}" y2="{baseline:.2f}" '
+        f'<line x1="{inset}" y1="{baseline:.2f}" x2="{width - inset}" y2="{baseline:.2f}" '
         f'stroke="{theme.axis}" stroke-width="0.75"/>'
     ]
     if low <= ref <= high:
@@ -629,7 +629,7 @@ def sparkline_bar(
     fmt: Format,
     width: int = 220,
     height: int = 30,
-    pad: int = 3,
+    inset: int = 3,
     show_endpoint: bool = True,
     endpoint_width: int = 44,
     show_clip_indicators: bool = True,
@@ -687,14 +687,14 @@ def sparkline_bar(
         colour, resolved from the last point's interval by the caller.
     fmt
         Formats the endpoint value label.
-    width, height, pad
+    width, height, inset
         Geometry in pixels.
     show_endpoint
         Draw the endpoint value label.
     endpoint_width
         Fixed pixel reserve carved out of `width` for the endpoint label,
         independent of the formatted label's length. `sparkline_axis` must
-        be given the same `width`, `pad`, `show_endpoint` and
+        be given the same `width`, `inset`, `show_endpoint` and
         `endpoint_width` so its ticks project over the identical inner width
         and land under their points.
     show_clip_indicators
@@ -709,10 +709,10 @@ def sparkline_bar(
         A complete ``<svg>`` element.
     """
     low, high = domain
-    right_edge = width - pad
+    right_edge = width - inset
     plot_width = width - endpoint_width if show_endpoint else width
-    project_x = _projector(x_domain, plot_width, pad)
-    project_up = _projector(domain, height, pad)
+    project_x = _projector(x_domain, plot_width, inset)
+    project_up = _projector(domain, height, inset)
 
     def project_y(value: float) -> float:
         return height - project_up(value)
@@ -758,7 +758,7 @@ def sparkline_bar(
     if (line_runs or band_runs) and low <= ref <= high:
         ref_y = project_y(ref)
         parts.append(
-            f'<line x1="{pad}" y1="{ref_y:.2f}" x2="{right_edge}" y2="{ref_y:.2f}" '
+            f'<line x1="{inset}" y1="{ref_y:.2f}" x2="{right_edge}" y2="{ref_y:.2f}" '
             f'stroke="{color}" stroke-width="1" stroke-dasharray="2,2"/>'
         )
 
@@ -822,7 +822,7 @@ def sparkline_axis(
     temporal: bool = False,
     width: int = 220,
     height: int = 22,
-    pad: int = 3,
+    inset: int = 3,
     target_ticks: int = 4,
     show_endpoint: bool = True,
     endpoint_width: int = 44,
@@ -844,7 +844,7 @@ def sparkline_axis(
     temporal
         Use `calendar_ticks` (real month/quarter/year boundaries) instead of
         `nice_ticks` (decimal steps).
-    width, height, pad
+    width, height, inset
         Geometry in pixels.
     target_ticks
         Approximate number of ticks wanted.
@@ -860,10 +860,10 @@ def sparkline_axis(
     """
     low, high = x_domain
     plot_width = width - endpoint_width if show_endpoint else width
-    project = _projector(x_domain, plot_width, pad)
+    project = _projector(x_domain, plot_width, inset)
     baseline = 4.0
     parts = [
-        f'<line x1="{pad}" y1="{baseline:.2f}" x2="{plot_width - pad}" y2="{baseline:.2f}" '
+        f'<line x1="{inset}" y1="{baseline:.2f}" x2="{plot_width - inset}" y2="{baseline:.2f}" '
         f'stroke="{theme.axis}" stroke-width="0.75"/>'
     ]
     if temporal:
