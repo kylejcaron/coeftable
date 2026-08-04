@@ -333,7 +333,7 @@ def render_interval(
         return point
     open_bracket = "(" if lower is None else style.brackets[0]
     close_bracket = ")" if upper is None else style.brackets[1]
-    low_text = f"-{style.unbounded}" if lower is None else fmt(lower)
+    low_text = f"\u2212{style.unbounded}" if lower is None else fmt(lower)
     high_text = style.unbounded if upper is None else fmt(upper)
     interval = f"{open_bracket}{low_text}{style.separator}{high_text}{close_bracket}"
     if style.layout == "inline":

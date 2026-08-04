@@ -132,10 +132,24 @@ trend = pl.DataFrame(
 point instead, and `value` / `ci` / `x` name *scalar* columns on it.
 coeftable groups the companion frame by the table's `rows` (+ `nest`,
 + `split_columns`) keys and collapses each group into the same series
-shape (reusing the `trend` frame and `dates` list above):
+shape:
 
 ```python
+import datetime as dt
 import pandas as pd
+import polars as pl
+import coeftable as ct
+
+dates = [dt.date(2024, 1, 1), dt.date(2024, 1, 8), dt.date(2024, 1, 15)]
+
+trend = pl.DataFrame(
+    {
+        "metric": ["Revenue", "Latency"],
+        "lift": [3.4, 0.5],
+        "lift_lb": [1.2, -1.0],
+        "lift_ub": [5.7, 2.0],
+    }
+)
 
 history = pd.DataFrame(
     {

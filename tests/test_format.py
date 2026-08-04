@@ -97,7 +97,7 @@ def test_unbounded_upper_uses_asymmetric_bracket():
 
 def test_unbounded_lower_uses_asymmetric_bracket():
     html = render_interval(2.0, None, 3.0, fmt=Number(decimals=1), style=CIStyle(), theme=DEFAULT)
-    assert "(-\u221e, 3.0]" in html
+    assert "(\u2212\u221e, 3.0]" in html
 
 
 def test_missing_value_renders_theme_na_text():
