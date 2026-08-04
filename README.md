@@ -38,6 +38,31 @@ leave it as the last expression in a cell, no extra call needed. Outside a noteb
 object: `table.gt().as_raw_html()` for an HTML string, `table.gt().save("t.png")` for an
 image, `table.gt().tab_options(...)` to keep styling with great_tables' own API.
 
+## Data shape
+
+coeftable expects a dataframe where every row is a single comparison. The
+resolution logic maps pairs of upper / lower bound columns to each estimate, so
+your data should be **wide in triples** — one point-estimate column and (when
+applicable) its lower and upper bound columns — rather than in long format with
+a `parameter` column.
+
+**Dimensions:**
+- `rows` — the label for each row in the table (e.g. a metric name).
+- `nest` — an optional secondary label stacked below each row.
+- `groups` — an optional column whose values produce section headers.
+- `split_columns` — an optional column whose values produce repeated column
+  groups side by side, useful for comparing methods.
+
+**Series columns bend this rule.** A point estimate is one number (plus
+bounds), so a triple of scalar columns holds it. A `.sparkline(...)` series
+is N points, not one -- most naturally via the companion-frame door, a
+separate long frame with one row per point, joined by the table's row/nest/
+split keys. Or, when the series is already collapsed onto its row, its
+`value` / `ci` columns can instead hold a *list* per row directly. Either
+way a row of the table is still one row; the series column just carries
+more data per row than an estimate column does. See
+[Trend over time](#trend-over-time) for both shapes.
+
 ## Experiment table
 
 Build a complete experiment results table with multiple estimates, a forest
@@ -294,28 +319,3 @@ trend = pl.DataFrame(
     .sparkline("Override", value="lift", ref=1.0, ylim=(0.9, 1.1))
 )
 ```
-
-## Data shape
-
-coeftable expects a dataframe where every row is a single comparison. The
-resolution logic maps pairs of upper / lower bound columns to each estimate, so
-your data should be **wide in triples** — one point-estimate column and (when
-applicable) its lower and upper bound columns — rather than in long format with
-a `parameter` column.
-
-**Dimensions:**
-- `rows` — the label for each row in the table (e.g. a metric name).
-- `nest` — an optional secondary label stacked below each row.
-- `groups` — an optional column whose values produce section headers.
-- `split_columns` — an optional column whose values produce repeated column
-  groups side by side, useful for comparing methods.
-
-**Series columns bend this rule.** A point estimate is one number (plus
-bounds), so a triple of scalar columns holds it. A `.sparkline(...)` series
-is N points, not one -- most naturally via the companion-frame door, a
-separate long frame with one row per point, joined by the table's row/nest/
-split keys. Or, when the series is already collapsed onto its row, its
-`value` / `ci` columns can instead hold a *list* per row directly. Either
-way a row of the table is still one row; the series column just carries
-more data per row than an estimate column does. See
-[Trend over time](#trend-over-time) for both shapes.
