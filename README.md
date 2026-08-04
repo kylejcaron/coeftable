@@ -71,6 +71,71 @@ experiment = pl.DataFrame(
 )
 ```
 
+## Comparing methods
+
+Use `split_columns` to compare multiple methods side by side. Each value in the
+split column produces its own set of estimate / forest columns:
+
+```python
+import polars as pl
+import coeftable as ct
+
+methods = pl.DataFrame(
+    {
+        "metric": ["Revenue", "Revenue", "Latency", "Latency"],
+        "method": ["A", "B", "A", "B"],
+        "est": [3.4, 3.1, 0.5, 0.6],
+        "lb": [1.2, 1.0, -1.0, -0.8],
+        "ub": [5.7, 5.2, 2.0, 2.1],
+    }
+)
+
+(
+    ct.CoefTable(
+        methods, rows="metric", split_columns="method", estimate="est", ci=("lb", "ub")
+    )
+    .header("Cohort Revenue by Method")
+)
+```
+
+## Theming
+
+Four built-in themes are available from `coeftable.theme`:
+
+```python
+from coeftable.theme import BLUE, COLORBLIND, DEFAULT, MONO, TEXTUAL
+
+DEFAULT       # Alias for TEXTUAL -- what CoefTable uses if you don't set a theme
+TEXTUAL       # Minimal, publication-style: muted colours, light chrome
+BLUE          # The original blue-grey palette
+COLORBLIND    # Colourblind-safe palette
+MONO          # Grayscale for mono journals
+```
+
+Apply one with `.with_theme(...)`:
+
+```python
+table.with_theme(BLUE)
+```
+
+Customise a theme with `dataclasses.replace`:
+
+```python
+from dataclasses import replace
+
+my_theme = replace(BLUE, favorable="#0072B2")
+```
+
+Use `with_direction` to mark rows where lower values are favourable (reusing
+the `df` frame from [Quick start](#quick-start)):
+
+```python
+table = (
+    ct.CoefTable(df, rows="metric", estimate="est", ci=("lb", "ub"))
+    .with_direction({"Latency": "lower_is_better"})
+)
+```
+
 ## Trend over time
 
 ![Rendered experiment results table with a 30-day trend column showing favorable, unfavorable, and inconclusive series with narrowing uncertainty bands](docs/images/trend-example.png)
@@ -227,71 +292,6 @@ trend = pl.DataFrame(
     # ylim=(lo, hi) is an absolute override, replacing scale/autoscale/
     # max_ylim entirely.
     .sparkline("Override", value="lift", ref=1.0, ylim=(0.9, 1.1))
-)
-```
-
-## Comparing methods
-
-Use `split_columns` to compare multiple methods side by side. Each value in the
-split column produces its own set of estimate / forest columns:
-
-```python
-import polars as pl
-import coeftable as ct
-
-methods = pl.DataFrame(
-    {
-        "metric": ["Revenue", "Revenue", "Latency", "Latency"],
-        "method": ["A", "B", "A", "B"],
-        "est": [3.4, 3.1, 0.5, 0.6],
-        "lb": [1.2, 1.0, -1.0, -0.8],
-        "ub": [5.7, 5.2, 2.0, 2.1],
-    }
-)
-
-(
-    ct.CoefTable(
-        methods, rows="metric", split_columns="method", estimate="est", ci=("lb", "ub")
-    )
-    .header("Cohort Revenue by Method")
-)
-```
-
-## Theming
-
-Four built-in themes are available from `coeftable.theme`:
-
-```python
-from coeftable.theme import BLUE, COLORBLIND, DEFAULT, MONO, TEXTUAL
-
-DEFAULT       # Alias for TEXTUAL -- what CoefTable uses if you don't set a theme
-TEXTUAL       # Minimal, publication-style: muted colours, light chrome
-BLUE          # The original blue-grey palette
-COLORBLIND    # Colourblind-safe palette
-MONO          # Grayscale for mono journals
-```
-
-Apply one with `.with_theme(...)`:
-
-```python
-table.with_theme(BLUE)
-```
-
-Customise a theme with `dataclasses.replace`:
-
-```python
-from dataclasses import replace
-
-my_theme = replace(BLUE, favorable="#0072B2")
-```
-
-Use `with_direction` to mark rows where lower values are favourable (reusing
-the `df` frame from [Quick start](#quick-start)):
-
-```python
-table = (
-    ct.CoefTable(df, rows="metric", estimate="est", ci=("lb", "ub"))
-    .with_direction({"Latency": "lower_is_better"})
 )
 ```
 
