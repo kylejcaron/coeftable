@@ -116,17 +116,16 @@ def test_absent_ci_renders_point_estimate_only():
 def test_date_axis_renders_label_by_step_granularity():
     value = datetime(2026, 4, 15, tzinfo=UTC).timestamp()
     assert DateAxis(step="year")(value) == "2026"
-    assert DateAxis(step="quarter")(value) == "Q2"
     assert DateAxis(step="month")(value) == "Apr"
     assert DateAxis(step="day")(value) == "Apr 15"
-    assert DateAxis(step="week")(value) == "Apr 15"
 
 
-def test_date_axis_quarter_labels_follow_the_calendar_quarter():
-    jan = datetime(2026, 1, 1, tzinfo=UTC).timestamp()
-    oct_31 = datetime(2026, 10, 31, tzinfo=UTC).timestamp()
-    assert DateAxis(step="quarter")(jan) == "Q1"
-    assert DateAxis(step="quarter")(oct_31) == "Q4"
+def test_date_axis_show_year_appends_year_to_month_and_day_labels():
+    value = datetime(2026, 4, 15, tzinfo=UTC).timestamp()
+    assert DateAxis(step="month", show_year=True)(value) == "Apr 2026"
+    assert DateAxis(step="day", show_year=True)(value) == "Apr 15, 2026"
+    # Year labels are already unambiguous -- show_year is a no-op there.
+    assert DateAxis(step="year", show_year=True)(value) == "2026"
 
 
 def test_date_axis_default_step_is_month():

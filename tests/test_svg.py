@@ -1087,7 +1087,7 @@ def test_calendar_ticks_sub_week_span_falls_back_to_week_step():
     assert all(gap == 7 * 86_400.0 for gap in gaps)
 
 
-def test_calendar_ticks_year_span_lands_on_quarter_boundaries():
+def test_calendar_ticks_year_span_lands_on_every_third_month_boundary():
     low = datetime(2024, 1, 1, tzinfo=UTC).timestamp()
     high = datetime(2025, 1, 1, tzinfo=UTC).timestamp()
     ticks = calendar_ticks(low, high, target=5)

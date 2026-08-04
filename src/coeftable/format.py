@@ -207,7 +207,7 @@ class Currency(Number):
     prefix: str = "$"
 
 
-type CalendarStep = Literal["day", "week", "month", "quarter", "year"]
+type CalendarStep = Literal["day", "month", "year"]
 
 
 _MONTH_ABBR = (
@@ -230,22 +230,31 @@ _MONTH_ABBR = (
 class DateAxis:
     """Format an epoch float as a short calendar label.
 
-    The label's granularity follows `step`, matching whichever rung of
-    `calendar_ticks`'s ladder produced the tick being labelled: ``"year"``
-    renders ``2026``, ``"quarter"`` renders ``Q1``, ``"month"`` renders
-    ``Jan``, and ``"day"``/``"week"`` render ``Jan 5``.
+    The label's granularity follows `step`, matching whichever rung
+    `calendar_ticks` chose for the domain: ``"year"`` renders ``2026``,
+    ``"month"`` renders ``Jan``, and ``"day"`` renders ``Jan 5``. There is
+    no quarter granularity -- a quarterly axis is simply month ticks every
+    three months, still labelled ``Jan``/``Apr``/``Jul``/``Oct``.
 
-    `sparkline_axis` builds a copy of the supplied instance with `step` set
-    to whatever `calendar_ticks` chose for the domain being rendered, so the
-    default here only matters when `DateAxis` is called directly.
+    When `show_year` is set -- which `sparkline_axis` does whenever the tick
+    set spans more than one calendar year -- month and day labels append the
+    year (``Jan 2026`` / ``Jan 5, 2026``) so ticks stay unambiguous across a
+    year boundary. Within a single year the bare month/day reads cleanly.
+
+    `sparkline_axis` builds a copy of the supplied instance with `step` and
+    `show_year` set for the domain being rendered, so the defaults here only
+    matter when `DateAxis` is called directly.
 
     Parameters
     ----------
     step
         Tick granularity to render at.
+    show_year
+        Append the calendar year to month and day labels.
     """
 
     step: CalendarStep = "month"
+    show_year: bool = False
 
     def __call__(self, value: float) -> str:
         """Format *value*.
@@ -263,11 +272,11 @@ class DateAxis:
         dt = datetime.fromtimestamp(value, tz=UTC)
         if self.step == "year":
             return str(dt.year)
-        if self.step == "quarter":
-            return f"Q{(dt.month - 1) // 3 + 1}"
         if self.step == "month":
-            return _MONTH_ABBR[dt.month - 1]
-        return f"{_MONTH_ABBR[dt.month - 1]} {dt.day}"
+            month = _MONTH_ABBR[dt.month - 1]
+            return f"{month} {dt.year}" if self.show_year else month
+        day = f"{_MONTH_ABBR[dt.month - 1]} {dt.day}"
+        return f"{day}, {dt.year}" if self.show_year else day
 
 
 @dataclass(frozen=True)
