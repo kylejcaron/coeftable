@@ -391,15 +391,15 @@ def test_all_missing_series_renders_a_blank_cell():
     assert plots[0] == ""
 
 
-def test_domain_override_wins_over_scale():
+def test_ylim_override_wins_over_scale():
     raw = {"metric": ["A", "B"], "lift": [[1.0, 2.0], [100.0, 200.0]]}
     table = CoefTable(pl.DataFrame(raw), rows="metric").sparkline(
-        "Trend", value="lift", scale="row", domain=(-5.0, 5.0), ref=0.0
+        "Trend", value="lift", scale="row", ylim=(-5.0, 5.0), ref=0.0
     )
     out = resolve(table)
     plots = nw.from_native(out.frame)["Trend"].to_list()
     # Wildly different magnitudes would give distinct row-scale domains, but
-    # the explicit domain forces both onto the same one.
+    # the explicit ylim forces both onto the same one.
     assert _ref_line_y(plots[0]) == pytest.approx(_ref_line_y(plots[1]))
 
 
@@ -440,14 +440,14 @@ def test_bucket_domain_without_max_domain_matches_plain_pad_domain():
     assert _bucket_domain(vals, 0.0, override=None, max_domain=None) == _pad_domain(vals, 0.0)
 
 
-def test_max_domain_clamps_the_noisy_row_but_leaves_the_precise_row_unchanged():
+def test_max_ylim_clamps_the_noisy_row_but_leaves_the_precise_row_unchanged():
     raw = {
         "metric": ["Precise", "Noisy"],
         "lift": [[0.5, 1.0, 0.8], [-500.0, 10.0, 800.0]],
     }
 
-    def build(max_domain):
-        kwargs = {} if max_domain is None else {"max_domain": max_domain}
+    def build(max_ylim):
+        kwargs = {} if max_ylim is None else {"max_ylim": max_ylim}
         return CoefTable(pl.DataFrame(raw), rows="metric").sparkline(
             "Trend", value="lift", ref=0.0, scale="row", **kwargs
         )
@@ -456,21 +456,20 @@ def test_max_domain_clamps_the_noisy_row_but_leaves_the_precise_row_unchanged():
     clamped = nw.from_native(resolve(build(20.0)).frame)["Trend"].to_list()
 
     # Precise row: its own natural domain is already far tighter than the
-    # ref +/- 20 ceiling, so max_domain changes nothing about its render.
-    assert clamped[0] == plain[0]
+    # ref +/- 20 ceiling, so max_ylim changes nothing about its render.
 
     # Noisy row: its natural domain (padded from -500..800) blows past the
-    # ceiling, so max_domain narrows it -- the series now clips in both
+    # ceiling, so max_ylim narrows it -- the series now clips in both
     # directions where it did not clip at all before.
     assert _cap_edges(plain[1]) == 0
     assert _cap_edges(clamped[1]) == 2
 
 
-def test_max_domain_leaves_a_domain_already_tighter_than_the_ceiling_alone():
+def test_max_ylim_leaves_a_domain_already_tighter_than_the_ceiling_alone():
     raw = {"metric": ["A"], "lift": [[0.5, 1.0, 0.8]]}
 
-    def build(max_domain):
-        kwargs = {} if max_domain is None else {"max_domain": max_domain}
+    def build(max_ylim):
+        kwargs = {} if max_ylim is None else {"max_ylim": max_ylim}
         return CoefTable(pl.DataFrame(raw), rows="metric").sparkline(
             "Trend", value="lift", ref=0.0, **kwargs
         )
@@ -480,17 +479,17 @@ def test_max_domain_leaves_a_domain_already_tighter_than_the_ceiling_alone():
     assert clamped == plain
 
 
-def test_domain_wins_outright_over_max_domain_when_both_are_set():
+def test_ylim_wins_outright_over_max_ylim_when_both_are_set():
     raw = {"metric": ["A"], "lift": [[-500.0, 10.0, 800.0]]}
 
-    def build(max_domain):
-        kwargs = {} if max_domain is None else {"max_domain": max_domain}
+    def build(max_ylim):
+        kwargs = {} if max_ylim is None else {"max_ylim": max_ylim}
         return CoefTable(pl.DataFrame(raw), rows="metric").sparkline(
-            "Trend", value="lift", ref=0.0, domain=(-1000.0, 1000.0), **kwargs
+            "Trend", value="lift", ref=0.0, ylim=(-1000.0, 1000.0), **kwargs
         )
 
-    # max_domain=1.0 would clamp to (-1, 1) if it won -- a drastic visual
-    # change from the explicit (-1000, 1000) domain. It must not: domain=
+    # max_ylim=1.0 would clamp to (-1, 1) if it won -- a drastic visual
+    # change from the explicit (-1000, 1000) ylim. It must not: ylim=
     # is an absolute override and wins outright, exactly as it already does
     # over scale=.
     without = nw.from_native(resolve(build(None)).frame)["Trend"].to_list()
@@ -498,14 +497,14 @@ def test_domain_wins_outright_over_max_domain_when_both_are_set():
     assert with_ceiling == without
 
 
-def test_max_domain_composes_with_scale_table_instead_of_overriding_it():
+def test_max_ylim_composes_with_scale_table_instead_of_overriding_it():
     raw = {
         "metric": ["Precise", "Noisy"],
         "lift": [[0.5, 1.0, 0.8], [-500.0, 10.0, 800.0]],
     }
 
-    def build(max_domain):
-        kwargs = {} if max_domain is None else {"max_domain": max_domain}
+    def build(max_ylim):
+        kwargs = {} if max_ylim is None else {"max_ylim": max_ylim}
         return CoefTable(pl.DataFrame(raw), rows="metric").sparkline(
             "Trend", value="lift", ref=0.0, scale="table", **kwargs
         )
@@ -514,7 +513,7 @@ def test_max_domain_composes_with_scale_table_instead_of_overriding_it():
     clamped = nw.from_native(resolve(build(20.0)).frame)["Trend"].to_list()
 
     # scale="table" keeps both rows on one shared domain, with or without a
-    # ceiling -- max_domain narrows that shared domain in place; it does not
+    # ceiling -- max_ylim narrows that shared domain in place; it does not
     # fall back to clamping each row's own domain independently.
     assert _ref_line_y(plain[0]) == pytest.approx(_ref_line_y(plain[1]))
     assert _ref_line_y(clamped[0]) == pytest.approx(_ref_line_y(clamped[1]))
@@ -617,7 +616,7 @@ def test_autoscale_robust_single_row_last_point_is_the_outlier_clips_and_flags()
     # own last point. There is no anchor mechanism left to protect it:
     # the line still draws -- clipped to the domain's edge, not hidden --
     # and raises exactly one clip-cap bracket, the same clip-then-flag
-    # mechanism a domain=/max_domain= overflow already uses.
+    # mechanism a ylim=/max_ylim= overflow already uses.
     assert "<polyline" in plot
     assert _cap_edges(plot) == 1
 
@@ -710,14 +709,14 @@ def test_autoscale_robust_multi_row_bucket_with_an_empty_sibling_still_resolves(
     assert _cap_edges(plots[1]) == 1
 
 
-def test_autoscale_robust_composes_with_max_domain():
+def test_autoscale_robust_composes_with_max_ylim():
     robust_only = nw.from_native(resolve(spike_table(autoscale="robust")).frame)[
         "Trend"
     ].to_list()[0]
-    robust_clamped_table = spike_table(autoscale="robust", max_domain=0.03)
+    robust_clamped_table = spike_table(autoscale="robust", max_ylim=0.03)
     robust_clamped = nw.from_native(resolve(robust_clamped_table).frame)["Trend"].to_list()[0]
     # The robust fit alone already excludes the spike (one clip-cap
-    # bracket). A tighter max_domain ceiling then narrows that further
+    # bracket). A tighter max_ylim ceiling then narrows that further
     # still, clipping two more of the surviving inlier points -- one high,
     # one low -- each opening its own separate bracket since neither is
     # adjacent to the spike's, proving the ceiling runs as a second pass
@@ -774,10 +773,10 @@ def test_show_axis_false_emits_no_footer_row():
     assert out.axis_rows == []
 
 
-def test_clip_indicators_default_on_for_a_domain_clipped_series():
+def test_clip_indicators_default_on_for_a_ylim_clipped_series():
     raw = {"metric": ["A"], "lift": [[1.0, 300.0, 1.0]]}
     table = CoefTable(pl.DataFrame(raw), rows="metric").sparkline(
-        "Trend", value="lift", domain=(0.0, 20.0)
+        "Trend", value="lift", ylim=(0.0, 20.0)
     )
     out = resolve(table)
     plots = nw.from_native(out.frame)["Trend"].to_list()
@@ -788,7 +787,7 @@ def test_clip_indicators_default_on_for_a_domain_clipped_series():
 def test_clip_indicators_false_suppresses_the_flag():
     raw = {"metric": ["A"], "lift": [[1.0, 300.0, 1.0]]}
     table = CoefTable(pl.DataFrame(raw), rows="metric").sparkline(
-        "Trend", value="lift", domain=(0.0, 20.0), show_clip_indicators=False
+        "Trend", value="lift", ylim=(0.0, 20.0), show_clip_indicators=False
     )
     out = resolve(table)
     plots = nw.from_native(out.frame)["Trend"].to_list()

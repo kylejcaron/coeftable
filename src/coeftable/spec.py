@@ -291,7 +291,7 @@ def _robust_domain(values: list[float], ref: float) -> tuple[float, float]:
     A value the fence discounts is not specially protected, even when it
     is a row's own last-plotted point: `sparkline_bar` clips it to the
     resulting domain edge and flags it via `show_clip_indicators`, the
-    same mechanism a `domain=`/`max_domain=` overflow already uses. That
+    same mechanism a `ylim=`/`max_ylim=` overflow already uses. That
     is safe because colour resolution (`role_for`, in `Sparkline.cell`)
     always reads a row's true last point directly, never the domain it
     ends up plotted against.
@@ -420,10 +420,10 @@ class Forest:
         Reference value for the dashed line and for role resolution.
     scale
         Which set of bars share an x-domain.
-    domain
-        Explicit domain, overriding `scale`.
+    ylim
+        Explicit y-axis limits, overriding `scale`.
     symmetric
-        When `domain` is not set, symmetrize the auto-computed domain
+        When `ylim` is not set, symmetrize the auto-computed domain
         around `ref` instead of fitting tightly to the data.
     width
         Bar width in pixels.
@@ -442,7 +442,7 @@ class Forest:
     of: str
     ref: float = 0.0
     scale: Scale = "table"
-    domain: tuple[float, float] | None = None
+    ylim: tuple[float, float] | None = None
     symmetric: bool = False
     width: int = 220
     height: int | None = None
@@ -466,7 +466,7 @@ class Forest:
             key = _domain_key(self, scan.row_keys[i], scan.group_keys[i], scan.split_keys[i])
             buckets.setdefault(key, []).extend(_finite([value[i], low[i], high[i]]))
         domains = {
-            key: self.domain or _pad_domain(vals, self.ref, symmetric=self.symmetric)
+            key: self.ylim or _pad_domain(vals, self.ref, symmetric=self.symmetric)
             for key, vals in buckets.items()
         }
 
@@ -618,17 +618,17 @@ class Sparkline:
         opposite of `Forest`'s `"table"` default -- sparkline rows are
         typically different metrics in different units, so sharing a
         y-domain table-wide would flatten every small-magnitude one.
-    domain
-        Explicit y-domain, overriding `scale`.
-    max_domain
+    ylim
+        Explicit y-axis limits, overriding `scale`.
+    max_ylim
         Half-width ceiling around `ref` for the auto-computed domain --
-        `max_domain=20` clamps to `(ref - 20, ref + 20)`. Only narrows: a
+        `max_ylim=20` clamps to `(ref - 20, ref + 20)`. Only narrows: a
         bucket whose natural domain already fits inside the ceiling
         renders unchanged. Applies per `scale` bucket, composing with it
-        rather than overriding it. Ignored when `domain` is set --
-        `domain` is an absolute override and always wins.
+        rather than overriding it. Ignored when `ylim` is set --
+        `ylim` is an absolute override and always wins.
     autoscale
-        Strategy for the auto-computed domain when `domain` is not set.
+        Strategy for the auto-computed domain when `ylim` is not set.
         `"tight"` (default) fits tightly to the exact min/max of the
         bucket's pooled values -- unchanged from before this option
         existed. `"robust"` fits an IQR/Tukey fence instead, discounting
@@ -636,10 +636,10 @@ class Sparkline:
         discounted point is not hidden, even when it is a row's own
         last-plotted one: it clips to the resulting domain edge and is
         flagged via `show_clip_indicators`, the same mechanism a
-        `domain=`/`max_domain=` overflow already uses. Colour resolution
+        `ylim=`/`max_ylim=` overflow already uses. Colour resolution
         is unaffected either way -- `role_for` always reads a row's true
         last-plotted value, never the domain it ends up plotted against.
-        Composes with `max_domain`: the robust fit runs first, then the
+        Composes with `max_ylim`: the robust fit runs first, then the
         ceiling clamps it exactly as it clamps a tight fit.
     width
         Plot width in pixels.
@@ -679,8 +679,8 @@ class Sparkline:
     data: Any | None = None
     ref: float = 0.0
     scale: Scale = "row"
-    domain: tuple[float, float] | None = None
-    max_domain: float | None = None
+    ylim: tuple[float, float] | None = None
+    max_ylim: float | None = None
     autoscale: Autoscale = "tight"
     width: int = 220
     height: int | None = None
@@ -764,8 +764,8 @@ class Sparkline:
             key: _bucket_domain(
                 vals,
                 self.ref,
-                override=self.domain,
-                max_domain=self.max_domain,
+                override=self.ylim,
+                max_domain=self.max_ylim,
                 autoscale=self.autoscale,
             )
             for key, vals in buckets.items()
@@ -883,19 +883,14 @@ def validate_columns(columns: tuple[Column, ...]) -> None:
         if not isinstance(column, Forest | Sparkline):
             continue
         kind = "Forest" if isinstance(column, Forest) else "Sparkline"
-        if column.domain is not None and column.domain[0] >= column.domain[1]:
+        if column.ylim is not None and column.ylim[0] >= column.ylim[1]:
             raise SpecError(
-                f"{kind} column {column.label!r} domain must be strictly increasing "
-                f"(low, high); got {column.domain!r}."
+                f"{kind} column {column.label!r} ylim must be strictly increasing "
+                f"(low, high); got {column.ylim!r}."
             )
-        if (
-            isinstance(column, Sparkline)
-            and column.max_domain is not None
-            and column.max_domain <= 0
-        ):
+        if isinstance(column, Sparkline) and column.max_ylim is not None and column.max_ylim <= 0:
             raise SpecError(
-                f"Sparkline column {column.label!r} max_domain must be > 0; "
-                f"got {column.max_domain!r}."
+                f"Sparkline column {column.label!r} max_ylim must be > 0; got {column.max_ylim!r}."
             )
 
 
@@ -1028,7 +1023,7 @@ class CoefTable:
         of: str,
         ref: float = 0.0,
         scale: Scale = "table",
-        domain: tuple[float, float] | None = None,
+        ylim: tuple[float, float] | None = None,
         symmetric: bool = False,
         width: int = 220,
         height: int | None = None,
@@ -1047,10 +1042,10 @@ class CoefTable:
             Reference value for the dashed line and role resolution.
         scale
             Which set of bars share an x-domain.
-        domain
-            Explicit domain, overriding `scale`.
+        ylim
+            Explicit y-axis limits, overriding `scale`.
         symmetric
-            When `domain` is not set, symmetrize the auto-computed domain
+            When `ylim` is not set, symmetrize the auto-computed domain
             around `ref` instead of fitting tightly to the data.
         width
             Bar width in pixels.
@@ -1074,7 +1069,7 @@ class CoefTable:
                 of=of,
                 ref=ref,
                 scale=scale,
-                domain=domain,
+                ylim=ylim,
                 symmetric=symmetric,
                 width=width,
                 height=height,
@@ -1110,8 +1105,8 @@ class CoefTable:
         data: Any | None = None,
         ref: float = 0.0,
         scale: Scale = "row",
-        domain: tuple[float, float] | None = None,
-        max_domain: float | None = None,
+        ylim: tuple[float, float] | None = None,
+        max_ylim: float | None = None,
         autoscale: Autoscale = "tight",
         width: int = 220,
         height: int | None = None,
@@ -1146,15 +1141,15 @@ class CoefTable:
             resolution.
         scale
             Which set of rows share a y-domain.
-        domain
+        ylim
             Explicit y-domain, overriding `scale`.
-        max_domain
+        max_ylim
             Half-width ceiling around `ref` for the auto-computed domain,
-            e.g. `max_domain=20` clamps to `(ref - 20, ref + 20)`. Only
+            e.g. `max_ylim=20` clamps to `(ref - 20, ref + 20)`. Only
             narrows -- a row whose natural domain already fits inside the
-            ceiling is unaffected. Ignored when `domain` is set.
+            ceiling is unaffected. Ignored when `ylim` is set.
         autoscale
-            Strategy for the auto-computed domain when `domain` is not set.
+            Strategy for the auto-computed domain when `ylim` is not set.
             `"tight"` (default) fits tightly to the pooled values, same as
             before this option existed. `"robust"` fits an IQR/Tukey fence
             instead, discounting outliers that would otherwise flatten the
@@ -1163,7 +1158,7 @@ class CoefTable:
             is flagged via `show_clip_indicators` rather than being
             hidden; colour resolution is unaffected, since it always
             reads a row's true last-plotted value, never the domain.
-            Composes with `max_domain`: the robust fit runs first, then
+            Composes with `max_ylim`: the robust fit runs first, then
             the ceiling clamps it.
         width
             Plot width in pixels.
@@ -1204,8 +1199,8 @@ class CoefTable:
                 data=data,
                 ref=ref,
                 scale=scale,
-                domain=domain,
-                max_domain=max_domain,
+                ylim=ylim,
+                max_ylim=max_ylim,
                 autoscale=autoscale,
                 width=width,
                 height=height,

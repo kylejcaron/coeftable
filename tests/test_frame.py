@@ -192,9 +192,9 @@ def test_color_rule_overrides_direction():
     assert DEFAULT.color("unfavorable") in plots[0]
 
 
-def test_explicit_domain_overrides_scale():
+def test_explicit_ylim_overrides_scale():
     spec = base(pl.DataFrame(RAW))
-    out = resolve(spec.forest("Plot", of="Lift %", domain=(-10.0, 10.0)))
+    out = resolve(spec.forest("Plot", of="Lift %", ylim=(-10.0, 10.0)))
     assert out.axis_rows
 
 
@@ -221,9 +221,9 @@ def test_forest_symmetric_flag_resolves_without_error():
     assert out.axis_rows
 
 
-def test_explicit_domain_wins_over_symmetric():
+def test_explicit_ylim_wins_over_symmetric():
     spec = base(pl.DataFrame(RAW))
-    out = resolve(spec.forest("Plot", of="Lift %", domain=(-10.0, 10.0), symmetric=True))
+    out = resolve(spec.forest("Plot", of="Lift %", ylim=(-10.0, 10.0), symmetric=True))
     assert out.axis_rows
 
 

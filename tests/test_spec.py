@@ -95,32 +95,32 @@ def test_valid_spec_passes_validation():
     validate_columns((Estimate("A", "mean", ci=("lb", "ub")), Forest("Plot", of="A")))
 
 
-def test_inverted_sparkline_domain_is_a_spec_error():
+def test_inverted_sparkline_ylim_is_a_spec_error():
     with pytest.raises(SpecError, match=r"'S'.*strictly increasing.*100.0, 1.0"):
-        validate_columns((Sparkline("S", value="mean", domain=(100.0, 1.0)),))
+        validate_columns((Sparkline("S", value="mean", ylim=(100.0, 1.0)),))
 
 
-def test_inverted_forest_domain_is_a_spec_error():
+def test_inverted_forest_ylim_is_a_spec_error():
     with pytest.raises(SpecError, match=r"'Plot'.*strictly increasing.*100.0, 1.0"):
         validate_columns(
-            (Estimate("A", "mean", ci=("lb", "ub")), Forest("Plot", of="A", domain=(100.0, 1.0)))
+            (Estimate("A", "mean", ci=("lb", "ub")), Forest("Plot", of="A", ylim=(100.0, 1.0)))
         )
 
 
-def test_equal_domain_bounds_are_a_spec_error():
+def test_equal_ylim_bounds_are_a_spec_error():
     with pytest.raises(SpecError, match="strictly increasing"):
-        validate_columns((Sparkline("S", value="mean", domain=(5.0, 5.0)),))
+        validate_columns((Sparkline("S", value="mean", ylim=(5.0, 5.0)),))
 
 
 @pytest.mark.parametrize("bad", [-5, 0])
-def test_non_positive_max_domain_is_a_spec_error(bad):
-    with pytest.raises(SpecError, match=rf"'S'.*max_domain must be > 0.*{bad}"):
-        validate_columns((Sparkline("S", value="mean", max_domain=bad),))
+def test_non_positive_max_ylim_is_a_spec_error(bad):
+    with pytest.raises(SpecError, match=rf"'S'.*max_ylim must be > 0.*{bad}"):
+        validate_columns((Sparkline("S", value="mean", max_ylim=bad),))
 
 
-def test_valid_domain_and_max_domain_pass_validation():
-    validate_columns((Sparkline("S", value="mean", domain=(1.0, 100.0), max_domain=None),))
-    validate_columns((Sparkline("T", value="mean", max_domain=5),))
+def test_valid_ylim_and_max_ylim_pass_validation():
+    validate_columns((Sparkline("S", value="mean", ylim=(1.0, 100.0), max_ylim=None),))
+    validate_columns((Sparkline("T", value="mean", max_ylim=5),))
 
 
 def test_domain_key_rejects_unknown_scale():
