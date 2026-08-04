@@ -82,7 +82,58 @@ crosses as its credible interval narrows over three weeks of data:
 There are two front doors for the series data, the same list-columns vs.
 companion-frame choice used elsewhere in coeftable:
 
-**List columns on the main frame** — `value` / `ci` / `x` name columns
+**A long companion frame** — the shape most real series data already
+arrives in: a SQL export, a dbt model, an experimentation platform's daily
+metrics table. Pass `data=` a separate frame with one row per point, and
+`value` / `ci` / `x` name *scalar* columns on it. coeftable groups the
+companion frame by the table's `rows` (+ `nest`, + `split_columns`) keys
+and collapses each group into a series internally:
+
+```python
+import datetime as dt
+import pandas as pd
+import polars as pl
+import coeftable as ct
+
+dates = [dt.date(2024, 1, 1), dt.date(2024, 1, 8), dt.date(2024, 1, 15)]
+
+trend = pl.DataFrame(
+    {
+        "metric": ["Revenue", "Latency"],
+        "lift": [3.4, 0.5],
+        "lift_lb": [1.2, -1.0],
+        "lift_ub": [5.7, 2.0],
+    }
+)
+
+history = pd.DataFrame(
+    {
+        "metric": ["Revenue", "Revenue", "Revenue", "Latency", "Latency", "Latency"],
+        "date": dates + dates,
+        "lift": [1.5, 2.4, 3.4, -1.0, 0.2, 1.5],
+        "lift_lb": [0.3, 1.4, 2.6, -2.5, -0.6, 1.0],
+        "lift_ub": [2.7, 3.4, 4.2, 0.5, 1.0, 2.0],
+    }
+)
+
+(
+    ct.CoefTable(trend, rows="metric")
+    .estimate("Lift %", "lift", ci=("lift_lb", "lift_ub"), fmt=ct.Percent(signed=True))
+    .sparkline(
+        "Trend",
+        value="lift",
+        ci=("lift_lb", "lift_ub"),
+        x="date",
+        data=history,
+        ref=0.0,
+        axis_fmt=ct.DateAxis(),
+    )
+)
+```
+
+**List columns on the main frame** — if the series is already collapsed
+onto its row (e.g. from a prior `.group_by(...).agg(...)`, or a source that
+natively stores arrays), `value` / `ci` / `x` can instead name columns
 whose cells each hold one list of points per row:
 
 ```python
@@ -128,58 +179,10 @@ trend = pl.DataFrame(
 )
 ```
 
-**A long companion frame** — pass `data=` a separate frame with one row per
-point instead, and `value` / `ci` / `x` name *scalar* columns on it.
-coeftable groups the companion frame by the table's `rows` (+ `nest`,
-+ `split_columns`) keys and collapses each group into the same series
-shape:
-
-```python
-import datetime as dt
-import pandas as pd
-import polars as pl
-import coeftable as ct
-
-dates = [dt.date(2024, 1, 1), dt.date(2024, 1, 8), dt.date(2024, 1, 15)]
-
-trend = pl.DataFrame(
-    {
-        "metric": ["Revenue", "Latency"],
-        "lift": [3.4, 0.5],
-        "lift_lb": [1.2, -1.0],
-        "lift_ub": [5.7, 2.0],
-    }
-)
-
-history = pd.DataFrame(
-    {
-        "metric": ["Revenue", "Revenue", "Revenue", "Latency", "Latency", "Latency"],
-        "date": dates + dates,
-        "lift": [1.5, 2.4, 3.4, -1.0, 0.2, 1.5],
-        "lift_lb": [0.3, 1.4, 2.6, -2.5, -0.6, 1.0],
-        "lift_ub": [2.7, 3.4, 4.2, 0.5, 1.0, 2.0],
-    }
-)
-
-(
-    ct.CoefTable(trend, rows="metric")
-    .estimate("Lift %", "lift", ci=("lift_lb", "lift_ub"), fmt=ct.Percent(signed=True))
-    .sparkline(
-        "Trend",
-        value="lift",
-        ci=("lift_lb", "lift_ub"),
-        x="date",
-        data=history,
-        ref=0.0,
-        axis_fmt=ct.DateAxis(),
-    )
-)
-```
-
-Both render the same column. Reach for list columns when a series is
-already collapsed onto its row; reach for the companion frame when it's
-still one row per observation, e.g. straight out of a long-format model
-output.
+Both render the same column. Reach for the companion frame first — it
+matches how most series data actually arrives, one row per observation.
+Reach for list columns only when the series is already collapsed onto its
+row.
 
 Since `x` is always shared table-wide (dates must line up across rows), a
 series with fewer points than its neighbours visibly occupies only part of
@@ -307,8 +310,10 @@ a `parameter` column.
 
 **Series columns bend this rule.** A point estimate is one number (plus
 bounds), so a triple of scalar columns holds it. A `.sparkline(...)` series
-is N points, not one, so its `value` / `ci` columns hold a *list* per row
-instead — or, via the companion-frame door, live on a separate long frame
-with one row per point. Either way a row of the table is still one row; the
-series column just carries more data per row than an estimate column does.
-See [Trend over time](#trend-over-time) for both shapes.
+is N points, not one -- most naturally via the companion-frame door, a
+separate long frame with one row per point, joined by the table's row/nest/
+split keys. Or, when the series is already collapsed onto its row, its
+`value` / `ci` columns can instead hold a *list* per row directly. Either
+way a row of the table is still one row; the series column just carries
+more data per row than an estimate column does. See
+[Trend over time](#trend-over-time) for both shapes.
