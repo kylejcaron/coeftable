@@ -73,6 +73,8 @@ experiment = pl.DataFrame(
 
 ## Trend over time
 
+![Rendered experiment results table with a 30-day trend column showing favorable, unfavorable, and inconclusive series with narrowing uncertainty bands](docs/images/trend-example.png)
+
 Add a `.sparkline(...)` column to plot a metric's trajectory next to its
 point estimate: an inline SVG line with a shaded credible interval and a
 dashed reference line (pass `show_endpoint=True` to also label the last
