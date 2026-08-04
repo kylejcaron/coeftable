@@ -457,7 +457,7 @@ def test_max_ylim_clamps_the_noisy_row_but_leaves_the_precise_row_unchanged():
 
     # Precise row: its own natural domain is already far tighter than the
     # ref +/- 20 ceiling, so max_ylim changes nothing about its render.
-
+    assert clamped[0] == plain[0]
     # Noisy row: its natural domain (padded from -500..800) blows past the
     # ceiling, so max_ylim narrows it -- the series now clips in both
     # directions where it did not clip at all before.
