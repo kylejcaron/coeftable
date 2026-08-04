@@ -652,10 +652,14 @@ class Sparkline:
         Callable labelling axis ticks; defaults to `fmt`, or `DateAxis()` when
         `x` is temporal.
     show_clip_indicators
-        Flag, per direction, whenever the series is clipped to `domain`
-        (manual or auto-computed). The line and ribbon are always pinned to
-        the domain edge regardless of this setting -- turning it off removes
-        only the indicator, never re-introduces an off-canvas point.
+        Draw a thin double-line cap at each domain edge a contiguous
+        stretch of the series clips against, spanning that stretch's true
+        pixel extent. The trigger is ribbon-aware: it also fires when a CI
+        bound leaves `domain` while the point estimate itself stays
+        inside it. The line/ribbon are always clipped to `domain` and a
+        fainter "ghost" trace of the true trajectory is always drawn,
+        regardless of this setting -- turning it off removes only the cap
+        marks, never the clipping or the ghost.
     """
 
     label: str
@@ -1139,10 +1143,14 @@ class CoefTable:
             Callable labelling axis ticks; defaults to `fmt`, or `DateAxis()`
             when `x` is temporal.
         show_clip_indicators
-            Flag, per direction, whenever the series is clipped to the
-            (manual or auto-computed) y-domain. Lines/ribbons are always
-            pinned to the domain edge regardless -- this only controls the
-            indicator.
+            Draw a thin double-line cap at each domain edge a contiguous
+            stretch of the series clips against, spanning that stretch's
+            true pixel extent (ribbon-aware: it also fires when a CI bound
+            leaves the domain while the point estimate itself stays
+            inside it). Lines/ribbons are always clipped to the domain and
+            a fainter ghost of the true trajectory is always drawn,
+            regardless of this setting -- this only controls the cap
+            marks.
 
         Returns
         -------

@@ -95,6 +95,11 @@ def _polyline_ys(svg: str) -> list[float]:
     return [float(pair.split(",")[1]) for pair in match.group(1).split(" ")]
 
 
+def _cap_edges(svg: str) -> int:
+    """Count distinct clip-cap brackets (each is a 0.45-opacity double line) in a rendered SVG."""
+    return svg.count('stroke-opacity="0.45"') // 2
+
+
 # A baseline hovering around 1.0x with one point spiking to 300x during a
 # since-recovered incident -- index 3 of 6, not the last point. The
 # motivating case for autoscale="robust": tightly fit, the single spike
@@ -435,8 +440,8 @@ def test_max_domain_clamps_the_noisy_row_but_leaves_the_precise_row_unchanged():
     # Noisy row: its natural domain (padded from -500..800) blows past the
     # ceiling, so max_domain narrows it -- the series now clips in both
     # directions where it did not clip at all before.
-    assert plain[1].count("<polygon") == 0
-    assert clamped[1].count("<polygon") == 2
+    assert _cap_edges(plain[1]) == 0
+    assert _cap_edges(clamped[1]) == 2
 
 
 def test_max_domain_leaves_a_domain_already_tighter_than_the_ceiling_alone():
@@ -573,11 +578,11 @@ def test_autoscale_robust_keeps_the_bulk_of_a_spiking_series_legible():
     # five points now span most of the plot's 24px usable height.
     assert extent(robust_plot) > 10.0
 
-    # The spike is still drawn -- clamped to the domain edge -- and
-    # flagged as clipped under the robust fit; not under tight, which is
+    # The spike is still drawn -- clipped to the domain edge -- and raises
+    # a clip-cap bracket under the robust fit; not under tight, which is
     # by construction wide enough to contain every point unclipped.
-    assert tight_plot.count("<polygon") == 0
-    assert robust_plot.count("<polygon") == 1
+    assert _cap_edges(tight_plot) == 0
+    assert _cap_edges(robust_plot) == 1
 
 
 def test_autoscale_robust_single_row_last_point_is_the_outlier_clips_and_flags():
@@ -588,11 +593,11 @@ def test_autoscale_robust_single_row_last_point_is_the_outlier_clips_and_flags()
     plot = nw.from_native(resolve(table).frame)["Trend"].to_list()[0]
     # 300.0 is both the IQR fence's only excluded outlier and this row's
     # own last point. There is no anchor mechanism left to protect it:
-    # the line still draws -- clamped to the domain's edge, not hidden
-    # -- and raises exactly one clip flag, the same clip-then-flag
+    # the line still draws -- clipped to the domain's edge, not hidden --
+    # and raises exactly one clip-cap bracket, the same clip-then-flag
     # mechanism a domain=/max_domain= overflow already uses.
     assert "<polyline" in plot
-    assert plot.count("<polygon") == 1
+    assert _cap_edges(plot) == 1
 
 
 def test_autoscale_robust_keeps_the_bulk_legible_when_the_outlier_is_the_last_point():
@@ -619,8 +624,8 @@ def test_autoscale_robust_keeps_the_bulk_legible_when_the_outlier_is_the_last_po
 
     assert extent(tight_plot) < 1.0
     assert extent(robust_plot) > 10.0
-    assert tight_plot.count("<polygon") == 0
-    assert robust_plot.count("<polygon") == 1
+    assert _cap_edges(tight_plot) == 0
+    assert _cap_edges(robust_plot) == 1
 
 
 def test_autoscale_robust_multi_row_bucket_narrows_around_the_bulk_and_flags_the_outlier():
@@ -651,12 +656,12 @@ def test_autoscale_robust_multi_row_bucket_narrows_around_the_bulk_and_flags_the
     # visibly benefits from a domain it never had to fight to get.
     assert extent(robust_plots[0]) > 10.0
     # "Spiking"'s own last point is the excluded outlier: it clips to the
-    # narrower shared domain's edge and is flagged, same as the
-    # single-row case.
-    assert robust_plots[1].count("<polygon") == 1
+    # narrower shared domain's edge and raises a clip-cap bracket, same
+    # as the single-row case.
+    assert _cap_edges(robust_plots[1]) == 1
     # "Clean" has no outlier of its own, and the narrower domain still
     # comfortably contains its whole series, so it raises no flag.
-    assert robust_plots[0].count("<polygon") == 0
+    assert _cap_edges(robust_plots[0]) == 0
     # Still exactly one resolved domain for the bucket: both rows'
     # reference lines land at the same pixel.
     assert _ref_line_y(robust_plots[0]) == pytest.approx(_ref_line_y(robust_plots[1]))
@@ -678,9 +683,9 @@ def test_autoscale_robust_multi_row_bucket_with_an_empty_sibling_still_resolves(
     # as it always has.
     assert plots[0] == ""
     # "Spiking" is still the bucket's sole outlier: it clips to the
-    # fitted domain's edge and flags, exactly as it would with no empty
-    # sibling present.
-    assert plots[1].count("<polygon") == 1
+    # fitted domain's edge and raises a clip-cap bracket, exactly as it
+    # would with no empty sibling present.
+    assert _cap_edges(plots[1]) == 1
 
 
 def test_autoscale_robust_composes_with_max_domain():
@@ -689,12 +694,14 @@ def test_autoscale_robust_composes_with_max_domain():
     ].to_list()[0]
     robust_clamped_table = spike_table(autoscale="robust", max_domain=0.03)
     robust_clamped = nw.from_native(resolve(robust_clamped_table).frame)["Trend"].to_list()[0]
-    # The robust fit alone already excludes the spike (one clip flag). A
-    # tighter max_domain ceiling then narrows that further still, clipping
-    # two of the surviving inlier points too -- proving the ceiling runs
-    # as a second pass after the robust fit, not instead of it.
-    assert robust_only.count("<polygon") == 1
-    assert robust_clamped.count("<polygon") == 2
+    # The robust fit alone already excludes the spike (one clip-cap
+    # bracket). A tighter max_domain ceiling then narrows that further
+    # still, clipping two more of the surviving inlier points -- one high,
+    # one low -- each opening its own separate bracket since neither is
+    # adjacent to the spike's, proving the ceiling runs as a second pass
+    # after the robust fit, not instead of it.
+    assert _cap_edges(robust_only) == 1
+    assert _cap_edges(robust_clamped) == 3
 
 
 def test_autoscale_robust_clip_does_not_change_the_rendered_colour():
@@ -726,11 +733,14 @@ def test_autoscale_robust_clip_does_not_change_the_rendered_colour():
     assert DEFAULT.color("favorable") in robust_plot
 
     # "tight" is, by construction, wide enough to contain every point --
-    # its one polygon is only the CI ribbon fill. "robust" fences the
-    # same last point out of the domain, so it clips and raises an
-    # additional clip-flag polygon -- proving the colour match above
-    # isn't just because nothing actually clipped under "robust".
+    # its one polygon is only the CI ribbon fill, and it raises no
+    # clip-cap. "robust" fences the same last point out of the domain, so
+    # it clips (adding a ghost trace and a clipped ribbon polygon) and
+    # raises a clip-cap bracket -- proving the colour match above isn't
+    # just because nothing actually clipped under "robust".
     assert robust_plot.count("<polygon") > tight_plot.count("<polygon")
+    assert _cap_edges(tight_plot) == 0
+    assert _cap_edges(robust_plot) == 1
 
 
 def test_show_axis_false_emits_no_footer_row():
@@ -750,7 +760,7 @@ def test_clip_indicators_default_on_for_a_domain_clipped_series():
     out = resolve(table)
     plots = nw.from_native(out.frame)["Trend"].to_list()
     data_cell = next(p for i, p in enumerate(plots) if i not in out.axis_rows)
-    assert data_cell.count("<polygon") == 1
+    assert _cap_edges(data_cell) == 1
 
 
 def test_clip_indicators_false_suppresses_the_flag():
@@ -761,8 +771,13 @@ def test_clip_indicators_false_suppresses_the_flag():
     out = resolve(table)
     plots = nw.from_native(out.frame)["Trend"].to_list()
     data_cell = next(p for i, p in enumerate(plots) if i not in out.axis_rows)
-    assert "<polygon" not in data_cell
+    # The cap bracket disappears...
+    assert _cap_edges(data_cell) == 0
+    # ...but the underlying boundary clipping and ghost trace are
+    # unconditional -- turning the indicator off never reintroduces the
+    # off-canvas coordinate bug, and never hides the true trajectory.
     assert "<polyline" in data_cell
+    assert 'stroke-opacity="0.35"' in data_cell
 
 
 def test_show_endpoint_defaults_to_false():

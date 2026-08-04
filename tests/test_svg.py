@@ -2,6 +2,8 @@ import re
 from datetime import UTC, datetime
 from itertools import pairwise
 
+import pytest
+
 from coeftable.format import DateAxis, Number
 from coeftable.svg import (
     _CALENDAR_TICK_FLOOR,
@@ -383,9 +385,167 @@ def test_sparkline_bar_endpoint_reserve_is_label_length_independent():
     assert endpoints(short) == endpoints(long)
 
 
-def test_sparkline_bar_flags_clipping_above_the_domain():
-    # The original bug: y=300 against domain (0, 20) on a 30px canvas emitted
-    # a literal y="-333.00", relying on the SVG viewBox to hide it.
+def _cap_edge_count(svg: str) -> int:
+    """Count distinct clip-cap brackets (each a 0.45-opacity double line) in a rendered SVG."""
+    return svg.count('stroke-opacity="0.45"') // 2
+
+
+def _real_polylines(svg: str) -> list[str]:
+    """Extract each non-ghost line polyline's `points` attribute, in document order."""
+    return re.findall(
+        r'<polyline points="([^"]+)" fill="none" stroke="[^"]+" stroke-width="1.5"/>', svg
+    )
+
+
+def _ghost_polylines(svg: str) -> list[str]:
+    """Extract each ghost (low-opacity) line polyline's `points` attribute."""
+    return re.findall(
+        r'<polyline points="([^"]+)" fill="none" stroke="[^"]+" '
+        r'stroke-width="1.5" stroke-opacity="0.35"/>',
+        svg,
+    )
+
+
+def test_sparkline_bar_clips_a_segment_at_the_exact_boundary_crossing():
+    # Segment (0, 0) -> (1, 10) crosses domain high=5 at t = (5-0)/(10-0) =
+    # 0.5, i.e. domain x=0.5. With x_domain=(0, 1), width=100, pad=0 the
+    # projector is the identity times 100, so the crossing lands at pixel
+    # x=50.00 exactly -- hand-computed, not read back from the
+    # implementation under test.
+    x = [0.0, 1.0]
+    y = [0.0, 10.0]
+    svg = sparkline_bar(
+        x,
+        y,
+        [None, None],
+        [None, None],
+        x_domain=(0.0, 1.0),
+        domain=(0.0, 5.0),
+        ref=-999.0,
+        color="#000",
+        fmt=Number(decimals=1),
+        width=100,
+        height=30,
+        pad=0,
+        show_endpoint=False,
+    )
+    assert _real_polylines(svg) == ["0.00,30.00 50.00,0.00"]
+    assert _ghost_polylines(svg) == ["0.00,30.00 100.00,-30.00"]
+    # The cap spans the crossing (50.00) to the run's own end (100.00, the
+    # last data point, since the line never re-enters bounds), padded 3px
+    # past each end, straddling the domain's high edge (pixel y=0).
+    caps = re.findall(
+        r'<line x1="([\d.-]+)" y1="([\d.-]+)" x2="([\d.-]+)" y2="[\d.-]+" '
+        r'stroke="[^"]+" stroke-width="0.5" stroke-opacity="0.45"/>',
+        svg,
+    )
+    assert caps == [("47.00", "-0.50", "103.00"), ("47.00", "0.50", "103.00")]
+
+
+def test_sparkline_bar_zigzag_clip_stays_one_polyline_per_in_bounds_run():
+    # A single mid-series spike leaves and re-enters the domain -- a naive
+    # per-segment implementation would draw the surrounding in-bounds
+    # points as separate fragments, losing proper vertex joins and
+    # notching visibly at x=1 and x=3. The fix groups each side into one
+    # continuous polyline instead.
+    x = [0.0, 1.0, 2.0, 3.0, 4.0]
+    y = [1.0, 1.0, 20.0, 1.0, 1.0]
+    svg = sparkline_bar(
+        x,
+        y,
+        [None] * 5,
+        [None] * 5,
+        x_domain=(0.0, 4.0),
+        domain=(0.0, 10.0),
+        ref=-999.0,
+        color="#000",
+        fmt=Number(decimals=1),
+        width=400,
+        height=30,
+        pad=0,
+        show_endpoint=False,
+    )
+    real = _real_polylines(svg)
+    assert len(real) == 2  # one continuous run before the spike, one after
+    assert len(real[0].split(" ")) == 3  # (0,1), (1,1), and the crossing -- not fragmented
+    assert len(real[1].split(" ")) == 3  # the other crossing, (3,1), and (4,1)
+    ghost = _ghost_polylines(svg)
+    assert len(ghost) == 1  # the whole raw run in one piece, unsplit
+    assert len(ghost[0].split(" ")) == 5
+    assert _cap_edge_count(svg) == 1  # one merged bracket, not two
+
+
+def test_sparkline_bar_ghost_trace_and_real_line_connects_without_a_kink():
+    # Spike up through the high edge and back down -- two crossings. If the
+    # real line used different geometry than the ghost (e.g. a per-point
+    # clamp instead of segment-boundary intersection) the two would
+    # visibly kink apart right at the edge; with matching geometry the
+    # real line's boundary endpoints must land exactly on the ghost's own
+    # straight-line trajectory.
+    x = [0.0, 1.0, 2.0]
+    y = [0.0, 10.0, 0.0]
+    svg = sparkline_bar(
+        x,
+        y,
+        [None] * 3,
+        [None] * 3,
+        x_domain=(0.0, 2.0),
+        domain=(0.0, 5.0),
+        ref=-999.0,
+        color="#000",
+        fmt=Number(decimals=1),
+        width=200,
+        height=30,
+        pad=0,
+        show_endpoint=False,
+    )
+    assert _ghost_polylines(svg) == ["0.00,30.00 100.00,-30.00 200.00,30.00"]
+    # Ghost segment (0,30)->(100,-30) crosses y=0 at t=0.5 -> x=50; segment
+    # (100,-30)->(200,30) crosses y=0 at t=0.5 -> x=150. Both real pieces'
+    # boundary endpoints land exactly there, at y=0.00.
+    assert _real_polylines(svg) == ["0.00,30.00 50.00,0.00", "150.00,0.00 200.00,30.00"]
+
+
+def test_sparkline_bar_hard_clip_path_only_appears_when_something_clips():
+    x = [0.0, 1.0, 2.0]
+    y = [1.0, 1.2, 0.9]
+    lower = [0.8, 1.0, 0.7]
+    upper = [1.2, 1.4, 1.1]
+    no_clip = sparkline_bar(
+        x,
+        y,
+        lower,
+        upper,
+        x_domain=(0.0, 2.0),
+        domain=(0.0, 2.0),
+        ref=0.0,
+        color="#000",
+        fmt=Number(decimals=1),
+    )
+    assert "<clipPath" not in no_clip
+    assert "clip-path=" not in no_clip
+
+    clipped = sparkline_bar(
+        [0.0, 1.0, 2.0],
+        [1.0, 300.0, 1.0],
+        [None] * 3,
+        [None] * 3,
+        x_domain=(0.0, 2.0),
+        domain=(0.0, 20.0),
+        ref=0.0,
+        color="#000",
+        fmt=Number(decimals=1),
+    )
+    assert "<clipPath" in clipped
+    assert 'clip-path="url(#' in clipped
+
+
+def test_sparkline_bar_real_layer_never_escapes_the_canvas_even_though_the_ghost_does():
+    # The original bug: y=300 against domain (0, 20) on a 30px canvas
+    # produced an off-canvas coordinate in the ONLY rendered line. Now the
+    # ghost trace is DELIBERATELY allowed off-canvas (the SVG's own
+    # viewport clips it visually) -- but the real, domain-clipped layer
+    # must never carry a coordinate outside the canvas.
     x = [0.0, 1.0, 2.0]
     y = [1.0, 300.0, 1.0]
     svg = sparkline_bar(
@@ -399,35 +559,15 @@ def test_sparkline_bar_flags_clipping_above_the_domain():
         color="#000",
         fmt=Number(decimals=1),
     )
-    flags = re.findall(r'<polygon points="[^"]+" fill="[^"]+"/>', svg)
-    assert len(flags) == 1
-    assert 'y="-333.00"' not in svg
-    coords = re.findall(r'points="([^"]+)"', svg)
-    ys = [float(pair.split(",")[1]) for pts in coords for pair in pts.split(" ")]
-    assert all(0.0 <= y_px <= 30.0 for y_px in ys)
-
-
-def test_sparkline_bar_flags_clipping_below_the_domain():
-    x = [0.0, 1.0, 2.0]
-    y = [1.0, -300.0, 1.0]
-    svg = sparkline_bar(
-        x,
-        y,
-        [None, None, None],
-        [None, None, None],
-        x_domain=(0.0, 2.0),
-        domain=(0.0, 20.0),
-        ref=0.0,
-        color="#000",
-        fmt=Number(decimals=1),
-    )
-    flags = re.findall(r'<polygon points="([^"]+)" fill="[^"]+"/>', svg)
-    assert len(flags) == 1
-    line = re.search(r'<polyline points="([^"]+)"', svg)
-    assert line
-    clamped_y = float(line.group(1).split(" ")[1].split(",")[1])
-    flag_ys = [float(v.split(",")[1]) for v in flags[0].split(" ")]
-    assert max(flag_ys) > clamped_y  # the low flag's tip sits below (larger pixel y) than the line
+    real_ys = [
+        float(pair.split(",")[1]) for piece in _real_polylines(svg) for pair in piece.split(" ")
+    ]
+    assert all(0.0 <= y_px <= 30.0 for y_px in real_ys)
+    ghost_ys = [
+        float(pair.split(",")[1]) for piece in _ghost_polylines(svg) for pair in piece.split(" ")
+    ]
+    assert any(y_px < 0.0 or y_px > 30.0 for y_px in ghost_ys)  # legitimately off-canvas
+    assert 'y="-333.00"' not in svg  # never a raw off-canvas XML attribute, only inside points=
 
 
 def test_sparkline_bar_series_inside_domain_has_no_clip_flags():
@@ -450,56 +590,35 @@ def test_sparkline_bar_series_inside_domain_has_no_clip_flags():
     assert svg.count("<polygon") == 1  # only the ribbon fill, no clip flags
 
 
-def test_sparkline_bar_distinguishes_a_clipped_point_from_a_genuine_gap():
-    # index 1 is a genuine gap (NaN); index 3 has data, just off-scale. A gap
-    # splits the polyline into a new run; a clip does not -- it only raises
-    # the row-level flag -- so the two must be tellable apart from output.
+def test_sparkline_bar_gap_and_clip_are_independent_breaks():
+    # index 1 is a genuine gap (NaN); index 3 has data, just off-scale. A
+    # gap always splits _line_runs into a new run -- unrelated to this
+    # redesign -- what matters here is that the clip inside the SECOND run
+    # doesn't bleed into the first: only the run containing the clip gets
+    # a ghost trace and a cap.
     x = [0.0, 1.0, 2.0, 3.0, 4.0]
     y = [1.0, float("nan"), 1.0, 300.0, 1.0]
     svg = sparkline_bar(
         x,
         y,
-        [None, None, None, None, None],
-        [None, None, None, None, None],
+        [None] * 5,
+        [None] * 5,
         x_domain=(0.0, 4.0),
         domain=(0.0, 20.0),
         ref=0.0,
         color="#000",
         fmt=Number(decimals=1),
     )
-    assert svg.count("<polyline") == 2  # the gap, and only the gap, splits the line
-    flags = re.findall(r'<polygon points="[^"]+" fill="[^"]+"/>', svg)
-    assert len(flags) == 1  # the clip, and only the clip, raises a flag
+    assert len(_ghost_polylines(svg)) == 1  # only the post-gap run clips
+    assert _cap_edge_count(svg) == 1
 
 
-def test_sparkline_bar_a_long_clipped_run_still_raises_only_one_flag():
-    # Five consecutive points sit far above the domain. The rejected
-    # per-crossing design would have marked both the entry and exit of this
-    # run (two marks); the real test is that flag count never scales with
-    # how MANY points are clipped, only with which DIRECTIONS are -- a
-    # noisy series oscillating in and out of a tight domain must not turn
-    # into a wall of markers.
-    x = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
-    y = [1.0, 300.0, 310.0, 305.0, 295.0, 302.0, 1.0]
-    svg = sparkline_bar(
-        x,
-        y,
-        [None] * 7,
-        [None] * 7,
-        x_domain=(0.0, 6.0),
-        domain=(0.0, 20.0),
-        ref=0.0,
-        color="#000",
-        fmt=Number(decimals=1),
-    )
-    flags = re.findall(r'<polygon points="[^"]+" fill="[^"]+"/>', svg)
-    assert len(flags) == 1
-
-
-def test_sparkline_bar_flag_survives_when_an_earlier_line_run_was_clipped():
-    # The clip in the FIRST run must still be flagged even though the LAST
-    # run scanned (after the gap) is entirely clean -- flags accumulate
-    # with OR across every run, not just the last one visited.
+def test_sparkline_bar_isolated_clipped_point_with_no_segment_still_raises_a_cap():
+    # index 0 is clipped but has no neighbour on either side (index 1 is a
+    # gap) -- there is no line segment to compute a boundary crossing
+    # from. Without special-casing this, a lone clipped point would
+    # silently raise no cap at all, exactly the kind of under-communicated
+    # clip this redesign exists to prevent.
     x = [0.0, 1.0, 2.0, 3.0, 4.0]
     y = [300.0, float("nan"), 1.0, 1.0, 1.0]
     svg = sparkline_bar(
@@ -513,13 +632,14 @@ def test_sparkline_bar_flag_survives_when_an_earlier_line_run_was_clipped():
         color="#000",
         fmt=Number(decimals=1),
     )
-    flags = re.findall(r'<polygon points="[^"]+" fill="[^"]+"/>', svg)
-    assert len(flags) == 1
+    assert _cap_edge_count(svg) == 1
 
 
-def test_sparkline_bar_flag_survives_when_an_earlier_band_run_was_clipped():
+def test_sparkline_bar_isolated_clipped_ribbon_bound_with_no_segment_still_raises_a_cap():
+    # Same isolated-point edge case, but the clip is on the ribbon's upper
+    # bound rather than the point itself.
     x = [0.0, 1.0, 2.0, 3.0, 4.0]
-    y = [1.0, 1.0, 1.0, 1.0, 1.0]
+    y = [1.0] * 5
     lower = [0.5, None, 0.5, 0.5, 0.5]
     upper = [300.0, None, 1.5, 1.5, 1.5]
     svg = sparkline_bar(
@@ -533,32 +653,30 @@ def test_sparkline_bar_flag_survives_when_an_earlier_band_run_was_clipped():
         color="#000",
         fmt=Number(decimals=1),
     )
-    flags = re.findall(r'<polygon points="[^"]+" fill="[^"]+"/>', svg)
-    assert len(flags) == 1
+    assert _cap_edge_count(svg) == 1
 
 
-def test_sparkline_bar_series_entirely_outside_the_domain_still_renders():
-    x = [0.0, 1.0, 2.0]
-    y = [300.0, 310.0, 295.0]
+def test_sparkline_bar_a_long_clipped_run_still_merges_into_one_span():
+    # Five consecutive points sit far above the domain. A per-crossing
+    # design would mark both the entry and exit of this run as separate
+    # brackets; the real test is that a bracket count never scales with
+    # how MANY points are clipped, only with how many separate contiguous
+    # stretches (and directions) are -- a noisy series oscillating in and
+    # out of a tight domain must not turn into a wall of markers.
+    x = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+    y = [1.0, 300.0, 310.0, 305.0, 295.0, 302.0, 1.0]
     svg = sparkline_bar(
         x,
         y,
-        [None, None, None],
-        [None, None, None],
-        x_domain=(0.0, 2.0),
+        [None] * 7,
+        [None] * 7,
+        x_domain=(0.0, 6.0),
         domain=(0.0, 20.0),
         ref=0.0,
         color="#000",
         fmt=Number(decimals=1),
     )
-    assert "<polyline" in svg  # still drawn, pinned to the edge -- not treated as a gap
-    flags = re.findall(r'<polygon points="[^"]+" fill="[^"]+"/>', svg)
-    assert len(flags) == 1  # one direction clipped, one flag -- even though nothing is in-domain
-    coords = re.findall(r'points="([^"]+)"', svg)
-    xs = [float(pair.split(",")[0]) for pts in coords for pair in pts.split(" ")]
-    ys = [float(pair.split(",")[1]) for pts in coords for pair in pts.split(" ")]
-    assert all(0.0 <= x_px <= 220.0 for x_px in xs)
-    assert all(0.0 <= y_px <= 30.0 for y_px in ys)
+    assert _cap_edge_count(svg) == 1
 
 
 def test_sparkline_bar_flags_both_directions_when_the_series_clips_both():
@@ -575,14 +693,93 @@ def test_sparkline_bar_flags_both_directions_when_the_series_clips_both():
         color="#000",
         fmt=Number(decimals=1),
     )
-    flags = re.findall(r'<polygon points="[^"]+" fill="[^"]+"/>', svg)
-    assert len(flags) == 2
+    assert _cap_edge_count(svg) == 2
+    # The two brackets sit at the domain's two distinct edges (top and
+    # bottom, pad=3 default height=30), not both piled on the same one.
+    cap_ys = sorted(
+        float(v)
+        for v in re.findall(r'<line x1="[\d.-]+" y1="(-?[\d.]+)"[^>]*stroke-opacity="0.45"', svg)
+    )
+    assert cap_ys == [2.5, 3.5, 26.5, 27.5]
+
+
+def test_sparkline_bar_ribbon_only_clip_raises_a_cap_even_when_the_point_stays_in_bounds():
+    # The whole motivation for this redesign: a ribbon can be clamped to a
+    # sliver of its true width while the point estimate itself stays
+    # comfortably inside the domain. A point-only clip check would show no
+    # indication of this at all.
+    x = [0.0, 1.0, 2.0]
+    y = [5.0, 5.0, 5.0]  # never leaves (0, 10)
+    lower = [3.0, 3.0, 3.0]  # never leaves either
+    upper = [7.0, 20.0, 7.0]  # the middle point's upper bound does
+    svg = sparkline_bar(
+        x,
+        y,
+        lower,
+        upper,
+        x_domain=(0.0, 2.0),
+        domain=(0.0, 10.0),
+        ref=-999.0,
+        color="#000",
+        fmt=Number(decimals=1),
+        width=200,
+        height=30,
+        pad=0,
+        show_endpoint=False,
+    )
+    # The line itself never clips -- one plain polyline, no ghost line, no
+    # wrapping.
+    assert _real_polylines(svg) == ["0.00,15.00 100.00,15.00 200.00,15.00"]
+    assert _ghost_polylines(svg) == []
+    # The ribbon does clip -- a ghost ribbon and a cap both fire despite
+    # the point-only view above showing nothing amiss.
+    assert 'fill-opacity="0.06"' in svg
+    assert _cap_edge_count(svg) == 1
+
+
+def test_sparkline_bar_span_merging_coalesces_overlapping_line_and_ribbon_spans():
+    # The line's own excursion (domain x in [5/7, 2+2/7]) and the ribbon's
+    # upper-bound excursion (domain x in [1.375, 2.625]) overlap but have
+    # different extents. Both clip the same "high" edge, so they must
+    # merge into ONE bracket spanning their union, not draw as two
+    # separate overlapping ones.
+    x = [0.0, 1.0, 2.0, 3.0, 4.0]
+    y = [5.0, 12.0, 12.0, 5.0, 5.0]
+    lower = [3.0] * 5
+    upper = [7.0, 7.0, 15.0, 7.0, 7.0]
+    svg = sparkline_bar(
+        x,
+        y,
+        lower,
+        upper,
+        x_domain=(0.0, 4.0),
+        domain=(0.0, 10.0),
+        ref=-999.0,
+        color="#000",
+        fmt=Number(decimals=1),
+        width=400,
+        height=30,
+        pad=0,
+        show_endpoint=False,
+    )
+    assert _cap_edge_count(svg) == 1
+    caps = re.findall(
+        r'<line x1="([\d.-]+)" y1="[\d.-]+" x2="([\d.-]+)" y2="[\d.-]+" '
+        r'stroke="[^"]+" stroke-width="0.5" stroke-opacity="0.45"/>',
+        svg,
+    )
+    # Union start: the line's own earlier crossing at domain x=5/7, pixel
+    # 500/7 = 71.43, padded -3px.
+    assert float(caps[0][0]) == pytest.approx(500 / 7 - 3.0, abs=0.01)
+    # Union end: the ribbon's later crossing at domain x=2.625, pixel
+    # 262.5, padded +3px.
+    assert float(caps[0][1]) == pytest.approx(262.5 + 3.0, abs=0.01)
 
 
 def test_sparkline_bar_ribbon_clips_lower_and_upper_independently():
     # Only the middle point's upper bound is out of domain; lower never
-    # leaves it. The ribbon should pin just the upper edge and keep the
-    # lower edge at its true, unclamped position throughout.
+    # leaves it. The clipped ribbon should pin just the upper edge and
+    # keep the lower edge at its true, unclamped position throughout.
     x = [0.0, 1.0, 2.0]
     y = [1.0, 1.0, 1.0]
     lower = [0.5, 0.5, 0.5]
@@ -598,20 +795,73 @@ def test_sparkline_bar_ribbon_clips_lower_and_upper_independently():
         color="#000",
         fmt=Number(decimals=1),
     )
-    assert svg.count("<polygon") == 2  # one ribbon fill plus one clip flag
-    flags = re.findall(r'<polygon points="[^"]+" fill="[^"]+"/>', svg)
-    assert len(flags) == 1
+    assert _cap_edge_count(svg) == 1
     band = re.search(r'<polygon points="([^"]+)" fill="[^"]+" fill-opacity="0.15"/>', svg)
     assert band
-    # last three vertices are the reversed lower edge -- all three must share
-    # one y, proving `lower` never moved even though `upper` was clipped
-    lower_edge = band.group(1).split(" ")[3:]
+    # The last three vertices are the reversed lower edge -- all three
+    # must share one y, proving `lower` never moved even though `upper`
+    # was clipped.
+    lower_edge = band.group(1).split(" ")[-3:]
     assert len({point.split(",")[1] for point in lower_edge}) == 1
 
 
-def test_sparkline_bar_show_clip_indicators_false_suppresses_flags_only():
+def test_sparkline_bar_series_entirely_outside_the_domain_still_renders():
+    x = [0.0, 1.0, 2.0]
+    y = [300.0, 310.0, 295.0]
+    svg = sparkline_bar(
+        x,
+        y,
+        [None, None, None],
+        [None, None, None],
+        x_domain=(0.0, 2.0),
+        domain=(0.0, 20.0),
+        ref=0.0,
+        color="#000",
+        fmt=Number(decimals=1),
+    )
+    # Nothing is ever truly in-bounds, so there is no "real" line to draw
+    # -- only the ghost (the true trajectory) and a cap spanning the
+    # whole run register the clip; this is not treated as a gap.
+    assert _real_polylines(svg) == []
+    assert len(_ghost_polylines(svg)) == 1
+    assert _cap_edge_count(svg) == 1
+    coords = re.findall(r'points="([^"]+)"', svg)
+    xs = [float(pair.split(",")[0]) for pts in coords for pair in pts.split(" ")]
+    assert all(0.0 <= x_px <= 220.0 for x_px in xs)
+
+
+def test_sparkline_bar_ribbon_entirely_outside_the_domain_omits_the_real_polygon():
+    # Sutherland-Hodgman clips in two stages (low, then high); a ribbon
+    # entirely on ONE side empties out at whichever stage runs first for
+    # that side, so both directions are exercised here.
+    x = [0.0, 1.0, 2.0]
+    y = [1.0, 1.0, 1.0]
+
+    def clip_omits_real_polygon(lower, upper):
+        svg = sparkline_bar(
+            x,
+            y,
+            lower,
+            upper,
+            x_domain=(0.0, 2.0),
+            domain=(0.0, 20.0),
+            ref=0.0,
+            color="#000",
+            fmt=Number(decimals=1),
+        )
+        assert not re.search(r'<g clip-path="[^"]+"><polygon', svg)
+        assert 'fill-opacity="0.06"' in svg
+        assert _cap_edge_count(svg) == 1
+
+    clip_omits_real_polygon([300.0, 310.0, 295.0], [305.0, 315.0, 300.0])  # entirely above
+    clip_omits_real_polygon([-310.0, -315.0, -300.0], [-305.0, -300.0, -295.0])  # entirely below
+
+
+def test_sparkline_bar_show_clip_indicators_false_suppresses_cap_only():
     # Turning the indicator off must never reintroduce the off-canvas
-    # coordinate bug -- clamping stays mandatory regardless of this flag.
+    # coordinate bug for the REAL layer, and must never hide the ghost
+    # either -- clipping and the ghost trace stay mandatory regardless of
+    # this flag; only the cap bracket is optional.
     x = [0.0, 1.0, 2.0]
     y = [1.0, 300.0, 1.0]
     svg = sparkline_bar(
@@ -626,10 +876,43 @@ def test_sparkline_bar_show_clip_indicators_false_suppresses_flags_only():
         fmt=Number(decimals=1),
         show_clip_indicators=False,
     )
-    assert re.findall(r'<polygon points="[^"]+" fill="[^"]+"/>', svg) == []
-    coords = re.findall(r'points="([^"]+)"', svg)
-    ys = [float(pair.split(",")[1]) for pts in coords for pair in pts.split(" ")]
-    assert all(0.0 <= y_px <= 30.0 for y_px in ys)
+    assert _cap_edge_count(svg) == 0
+    assert len(_ghost_polylines(svg)) == 1
+    real = _real_polylines(svg)
+    assert real  # the real (clipped) layer still renders
+    real_ys = [float(pair.split(",")[1]) for piece in real for pair in piece.split(" ")]
+    assert all(0.0 <= y_px <= 30.0 for y_px in real_ys)
+
+
+def test_sparkline_bar_domain_override_produces_a_correctly_positioned_cap():
+    # sparkline_bar is domain-provenance-agnostic -- it never knows whether
+    # `domain` came from an explicit override, a max_domain= ceiling, or
+    # autoscale="robust" (those compositions are covered at the CoefTable
+    # level in test_sparkline.py, since sparkline_bar itself only ever
+    # sees the final resolved tuple). Here: an explicit domain= must still
+    # produce a cap sitting exactly at that domain's own projected high
+    # edge -- pad px from the canvas top, since a value equal to `high`
+    # always projects there regardless of the rest of the domain.
+    x = [0.0, 1.0, 2.0]
+    y = [1.0, 300.0, 1.0]
+    svg = sparkline_bar(
+        x,
+        y,
+        [None, None, None],
+        [None, None, None],
+        x_domain=(0.0, 2.0),
+        domain=(0.0, 20.0),
+        ref=0.0,
+        color="#000",
+        fmt=Number(decimals=1),
+        height=30,
+        pad=3,
+    )
+    cap_ys = sorted(
+        float(v)
+        for v in re.findall(r'<line x1="[\d.-]+" y1="(-?[\d.]+)"[^>]*stroke-opacity="0.45"', svg)
+    )
+    assert cap_ys == [2.5, 3.5]  # pad=3, offset +/- 0.5
 
 
 def test_sparkline_axis_ticks_align_with_sparkline_bar_points():

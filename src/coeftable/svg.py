@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import dataclasses
 import math
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
+from itertools import pairwise
 
 from coeftable.format import CalendarStep, DateAxis, Format, TimeFormat, is_missing
 from coeftable.theme import Theme
@@ -261,8 +262,190 @@ def _band_runs(
 
 
 def _clamp(value: float, low: float, high: float) -> float:
-    """Pin *value* inside `[low, high]` -- the shared primitive behind every clip in this file."""
+    """Pin *value* inside `[low, high]`.
+
+    Used for the endpoint label's pixel position -- a single point always
+    needs *some* in-bounds spot to sit at. Line/ribbon clipping instead
+    uses `_clip_line_run`/`_clip_band_polygon`, which cut at the true
+    boundary crossing rather than pinning a point in place.
+    """
     return min(high, max(low, value))
+
+
+def _segment_crossings(
+    x0: float, y0: float, x1: float, y1: float, low: float, high: float
+) -> list[tuple[float, float]]:
+    """Split one line segment at each `low`/`high` crossing via linear interpolation.
+
+    Returns `[(x0, y0), (x1, y1)]` with one point inserted per boundary the
+    segment actually crosses, in domain-value space (not pixels) -- callers
+    project after clipping, never before. A segment that never crosses
+    either bound is returned unchanged.
+    """
+    points = [(x0, y0), (x1, y1)]
+    for bound in (low, high):
+        split: list[tuple[float, float]] = [points[0]]
+        for (xa, ya), (xb, yb) in pairwise(points):
+            if (ya - bound) * (yb - bound) < 0:
+                t = (bound - ya) / (yb - ya)
+                split.append((xa + t * (xb - xa), bound))
+            split.append((xb, yb))
+        points = split
+    return points
+
+
+def _clip_line_run(
+    run: list[tuple[float, float]], low: float, high: float
+) -> list[list[tuple[float, float]]]:
+    """Split `run` into its maximal in-bounds sub-runs, clipped to `[low, high]`.
+
+    Each sub-run's boundary endpoints come from `_segment_crossings`, not a
+    per-point clamp, so the drawn approach angle into a clip matches the
+    real trajectory. A sub-run must be rendered as one continuous polyline,
+    never one `<line>` per clipped sub-segment -- fragmenting further loses
+    proper vertex joins and reintroduces a visible notch at every zigzag
+    point. Operates and returns in domain-value space; the caller projects
+    afterward.
+    """
+    sub_runs: list[list[tuple[float, float]]] = []
+    current: list[tuple[float, float]] = []
+    for (x0, y0), (x1, y1) in pairwise(run):
+        pts = _segment_crossings(x0, y0, x1, y1, low, high)
+        for (xa, ya), (xb, yb) in pairwise(pts):
+            if low <= (ya + yb) / 2 <= high:
+                if not current:
+                    current.append((xa, ya))
+                current.append((xb, yb))
+            elif current:
+                sub_runs.append(current)
+                current = []
+    if current:
+        sub_runs.append(current)
+    return sub_runs
+
+
+def _clip_band_polygon(
+    poly: list[tuple[float, float]], low: float, high: float
+) -> list[tuple[float, float]]:
+    """Clip a ribbon polygon to `[low, high]` via Sutherland-Hodgman.
+
+    `poly` and the result are `(x, value)` vertices in raw domain-value
+    space -- this must run before projecting to pixels, never after. Pixel
+    y is inverted relative to domain value (a larger domain value projects
+    to a *smaller* pixel y), so running this same "keep above/below" logic
+    on already-projected coordinates silently keeps the wrong side.
+    """
+
+    def _clip_edge(
+        points: list[tuple[float, float]], bound: float, keep_above: bool
+    ) -> list[tuple[float, float]]:
+        out: list[tuple[float, float]] = []
+        for i, cur in enumerate(points):
+            prev = points[i - 1]
+            cur_in = cur[1] >= bound if keep_above else cur[1] <= bound
+            prev_in = prev[1] >= bound if keep_above else prev[1] <= bound
+            if cur_in:
+                if not prev_in:
+                    t = (bound - prev[1]) / (cur[1] - prev[1])
+                    out.append((prev[0] + t * (cur[0] - prev[0]), bound))
+                out.append(cur)
+            elif prev_in:
+                t = (bound - prev[1]) / (cur[1] - prev[1])
+                out.append((prev[0] + t * (cur[0] - prev[0]), bound))
+        return out
+
+    clipped = _clip_edge(poly, low, keep_above=True)
+    if not clipped:
+        return []
+    return _clip_edge(clipped, high, keep_above=False)
+
+
+def _out_of_bounds_spans(
+    points: list[tuple[float, float]],
+    low: float,
+    high: float,
+    project_x: Callable[[float], float],
+) -> list[tuple[float, float, str]]:
+    """Return the pixel x-ranges where `points` (domain-value space) sits outside `[low, high]`.
+
+    Each returned `(start_x, end_x, edge)` covers one contiguous
+    out-of-bounds stretch; `edge` is `"low"` or `"high"` for the bound it
+    clipped against, and `start_x`/`end_x` are the projected
+    `_segment_crossings` boundary positions, not the surrounding data
+    points' own x. A lone point with no neighbour to form a segment (e.g.
+    an isolated value flanked by gaps on both sides) still contributes a
+    zero-width span at its own position when it is itself out of bounds --
+    without this, a genuinely clipped point that never got a chance to
+    cross a boundary would silently raise no cap at all. Returns `[]` when
+    `points` never leaves the domain.
+    """
+    if len(points) < 2:
+        if len(points) == 1:
+            x0, y0 = points[0]
+            if not (low <= y0 <= high):
+                px = project_x(x0)
+                return [(px, px, "low" if y0 < low else "high")]
+        return []
+    spans: list[tuple[float, float, str]] = []
+    edge: str | None = None
+    start_x = 0.0
+    for (x0, y0), (x1, y1) in pairwise(points):
+        pts = _segment_crossings(x0, y0, x1, y1, low, high)
+        for (xa, ya), (_xb, yb) in pairwise(pts):
+            mid = (ya + yb) / 2
+            out_edge = None if low <= mid <= high else ("low" if mid < low else "high")
+            if out_edge is not None:
+                if edge != out_edge:
+                    if edge is not None:
+                        spans.append((start_x, project_x(xa), edge))
+                    edge = out_edge
+                    start_x = project_x(xa)
+            elif edge is not None:
+                spans.append((start_x, project_x(xa), edge))
+                edge = None
+    if edge is not None:
+        spans.append((start_x, project_x(points[-1][0]), edge))
+    return spans
+
+
+def _merge_spans(spans: list[tuple[float, float, str]]) -> list[tuple[float, float, str]]:
+    """Coalesce overlapping/adjacent spans that share the same edge.
+
+    Several consecutive clipped points -- or a point clipping alongside its
+    own ribbon bound -- naturally produce several overlapping spans;
+    merging them is what turns that into the single continuous bracket the
+    cap actually draws, never a cluster of overlapping marks. Spans on
+    different edges never merge together.
+    """
+    by_edge: dict[str, list[tuple[float, float]]] = {}
+    for start, end, edge in spans:
+        by_edge.setdefault(edge, []).append((start, end))
+    merged: list[tuple[float, float, str]] = []
+    for edge, ranges in by_edge.items():
+        ranges.sort()
+        coalesced = [ranges[0]]
+        for start, end in ranges[1:]:
+            last_start, last_end = coalesced[-1]
+            if start <= last_end:
+                coalesced[-1] = (last_start, max(last_end, end))
+            else:
+                coalesced.append((start, end))
+        merged.extend((start, end, edge) for start, end in coalesced)
+    return merged
+
+
+def _hard_clip_id(width: int, top_edge: float, bottom_edge: float) -> str:
+    """Return a deterministic id for the hard-clip safety net's `<clipPath>`.
+
+    SVG ids share one namespace across an entire embedding page (e.g. a
+    table rendered row by row), so a literal id must never collide between
+    two calls with *different* clip rectangles. Deriving it from the
+    rectangle itself sidesteps that: two calls only ever land on the same
+    id when they also share the exact rectangle it names, so a collision
+    is always harmless.
+    """
+    key = (width, round(top_edge, 3), round(bottom_edge, 3))
+    return f"clip{hash(key) & 0xFFFFFFFFFFFF:x}"
 
 
 def _clip_label(text: str, max_width: float, font_size: float) -> str:
@@ -461,23 +644,27 @@ def sparkline_bar(
     still returns a complete, empty ``<svg>`` rather than raising.
 
     A point outside `domain` is not a gap -- the data exists, it is merely
-    off-scale. The line and ribbon are always drawn pinned to the domain
-    edge there instead of at their true, off-canvas coordinate, regardless
-    of `show_clip_indicators`: nothing this function draws ever escapes the
-    canvas. `lower` and `upper` clip independently, so a bound that stays
-    inside `domain` keeps its true position even while the other is pinned.
+    off-scale. The line and ribbon are clipped to the domain rectangle at
+    the exact pixel where they cross its edge (segment/polygon boundary
+    intersection, not a per-point clamp), so the drawn approach angle into
+    a clip matches the real trajectory instead of visually flattening into
+    it; nothing this function draws ever escapes the canvas regardless.
+    `lower` and `upper` clip independently, so a bound that stays inside
+    `domain` keeps its true position even while the other is pinned. A
+    fainter "ghost" trace of the true, unclamped line and ribbon is always
+    drawn underneath wherever a clip occurs, continuing past the domain
+    edge until it runs off the canvas -- it carries the real shape of what
+    got clipped, not just the fact that it happened.
 
-    When `show_clip_indicators` is set, a small triangle flags each
-    direction the series was clipped in -- one paired with the y-axis top
-    for "clipped above", one for "clipped below" -- both anchored at the
-    row's left edge so they read together as a compact status pair rather
-    than requiring a glance at opposite corners. This is a row-level flag,
-    not a per-point marker: it fires once per direction no matter how many
-    points are clipped, so a noisy series oscillating in and out of a tight
-    domain still gets at most two small marks, not a marker at every
-    crossing. It does not say *where* the clipping happened, only that it
-    did and in which direction; both bounds of the ribbon clipping in
-    opposite directions at the same point still raises both flags.
+    When `show_clip_indicators` is set, a thin double line marks each
+    contiguous clipped stretch against the domain edge it clipped -- one
+    line pair per stretch, spanning its true pixel x-range (padded 3px past
+    each end), not a fixed-width tick centred on one point. Several
+    consecutive clipped points merge into one bracket rather than a
+    cluster of overlapping marks. The trigger is ribbon-aware: it fires on
+    `lower`/`upper` leaving `domain` even when the point estimate itself
+    stays inside it, since a ribbon can be clamped to a sliver of its true
+    width while its point stays comfortably in view.
 
     Parameters
     ----------
@@ -492,8 +679,8 @@ def sparkline_bar(
     ref
         Reference value for the horizontal dashed line.
     color
-        Line, ribbon, endpoint, reference-line and clip-flag colour,
-        resolved from the last point's interval by the caller.
+        Line, ribbon, endpoint, reference-line, ghost-trace and clip-cap
+        colour, resolved from the last point's interval by the caller.
     fmt
         Formats the endpoint value label.
     width, height, pad
@@ -507,10 +694,10 @@ def sparkline_bar(
         `endpoint_width` so its ticks project over the identical inner width
         and land under their points.
     show_clip_indicators
-        Draw the clipped-direction flags described above. The line and
-        ribbon are always clamped to `domain` regardless of this flag --
-        turning it off only removes the indicator, never re-introduces an
-        off-canvas coordinate.
+        Draw the clip-cap marks described above. The line/ribbon clipping
+        and the ghost trace happen regardless of this flag -- turning it
+        off only removes the cap marks, never the underlying clipping or
+        the true-trajectory ghost.
 
     Returns
     -------
@@ -528,23 +715,39 @@ def sparkline_bar(
 
     top_edge = project_y(high)
     bottom_edge = project_y(low)
+    clip_id = _hard_clip_id(width, top_edge, bottom_edge)
 
     parts: list[str] = []
-    clips_high = False
-    clips_low = False
+    ghost_parts: list[str] = []
+    raw_spans: list[tuple[float, float, str]] = []
 
     band_runs = _band_runs(x, y, lower, upper)
     for run in band_runs:
-        top = " ".join(
-            f"{project_x(xi):.2f},{project_y(_clamp(ui, low, high)):.2f}" for xi, _li, ui in run
+        upper_pts = [(xi, ui) for xi, _li, ui in run]
+        lower_pts = [(xi, li) for xi, li, _ui in run]
+        run_spans = _out_of_bounds_spans(upper_pts, low, high, project_x) + _out_of_bounds_spans(
+            lower_pts, low, high, project_x
         )
+        top = " ".join(f"{project_x(xi):.2f},{project_y(ui):.2f}" for xi, ui in upper_pts)
         bottom = " ".join(
-            f"{project_x(xi):.2f},{project_y(_clamp(li, low, high)):.2f}"
-            for xi, li, _ui in reversed(run)
+            f"{project_x(xi):.2f},{project_y(li):.2f}" for xi, li in reversed(lower_pts)
         )
-        parts.append(f'<polygon points="{top} {bottom}" fill="{color}" fill-opacity="0.15"/>')
-        clips_high = clips_high or any(ui > high for _xi, _li, ui in run)
-        clips_low = clips_low or any(li < low for _xi, li, _ui in run)
+        if run_spans:
+            raw_spans.extend(run_spans)
+            ghost_parts.append(
+                f'<polygon points="{top} {bottom}" fill="{color}" fill-opacity="0.06"/>'
+            )
+            clipped = _clip_band_polygon(upper_pts + list(reversed(lower_pts)), low, high)
+            if clipped:
+                band_pts = " ".join(
+                    f"{project_x(px):.2f},{project_y(pv):.2f}" for px, pv in clipped
+                )
+                parts.append(
+                    f'<g clip-path="url(#{clip_id})"><polygon points="{band_pts}" '
+                    f'fill="{color}" fill-opacity="0.15"/></g>'
+                )
+        else:
+            parts.append(f'<polygon points="{top} {bottom}" fill="{color}" fill-opacity="0.15"/>')
 
     line_runs = _line_runs(x, y)
 
@@ -556,12 +759,26 @@ def sparkline_bar(
         )
 
     for run in line_runs:
-        pts = " ".join(
-            f"{project_x(xi):.2f},{project_y(_clamp(yi, low, high)):.2f}" for xi, yi in run
-        )
-        parts.append(f'<polyline points="{pts}" fill="none" stroke="{color}" stroke-width="1.5"/>')
-        clips_high = clips_high or any(yi > high for _xi, yi in run)
-        clips_low = clips_low or any(yi < low for _xi, yi in run)
+        run_spans = _out_of_bounds_spans(run, low, high, project_x)
+        pts = " ".join(f"{project_x(xi):.2f},{project_y(yi):.2f}" for xi, yi in run)
+        if run_spans:
+            raw_spans.extend(run_spans)
+            ghost_parts.append(
+                f'<polyline points="{pts}" fill="none" stroke="{color}" '
+                f'stroke-width="1.5" stroke-opacity="0.35"/>'
+            )
+            clipped_pieces = "".join(
+                '<polyline points="'
+                + " ".join(f"{project_x(cx):.2f},{project_y(cy):.2f}" for cx, cy in piece)
+                + f'" fill="none" stroke="{color}" stroke-width="1.5"/>'
+                for piece in _clip_line_run(run, low, high)
+            )
+            if clipped_pieces:
+                parts.append(f'<g clip-path="url(#{clip_id})">{clipped_pieces}</g>')
+        else:
+            parts.append(
+                f'<polyline points="{pts}" fill="none" stroke="{color}" stroke-width="1.5"/>'
+            )
 
     if line_runs and show_endpoint:
         _, ey = line_runs[-1][-1]
@@ -572,22 +789,25 @@ def sparkline_bar(
             f'font-size="9" text-anchor="end">{label}</text>'
         )
 
-    if show_clip_indicators:
-        flag_w, flag_h = pad * 2.0, pad * 0.83
-        if clips_high:
-            parts.append(
-                f'<polygon points="{pad:.2f},{top_edge + 1:.2f} {pad + flag_w:.2f},'
-                f'{top_edge + 1:.2f} {pad + flag_w / 2:.2f},{top_edge - flag_h:.2f}" '
-                f'fill="{color}"/>'
-            )
-        if clips_low:
-            parts.append(
-                f'<polygon points="{pad:.2f},{bottom_edge - 1:.2f} {pad + flag_w:.2f},'
-                f'{bottom_edge - 1:.2f} {pad + flag_w / 2:.2f},{bottom_edge + flag_h:.2f}" '
-                f'fill="{color}"/>'
-            )
+    cap_parts: list[str] = []
+    if show_clip_indicators and raw_spans:
+        for start_x, end_x, edge in _merge_spans(raw_spans):
+            edge_y = top_edge if edge == "high" else bottom_edge
+            for dy in (-0.5, 0.5):
+                cap_parts.append(
+                    f'<line x1="{start_x - 3.0:.2f}" y1="{edge_y + dy:.2f}" '
+                    f'x2="{end_x + 3.0:.2f}" y2="{edge_y + dy:.2f}" '
+                    f'stroke="{color}" stroke-width="0.5" stroke-opacity="0.45"/>'
+                )
 
-    return _svg(width, height, "".join(parts))
+    body = ghost_parts + parts + cap_parts
+    if raw_spans:
+        body.insert(
+            0,
+            f'<clipPath id="{clip_id}"><rect x="0" y="{top_edge:.2f}" width="{width}" '
+            f'height="{bottom_edge - top_edge:.2f}"/></clipPath>',
+        )
+    return _svg(width, height, "".join(body))
 
 
 def sparkline_axis(
