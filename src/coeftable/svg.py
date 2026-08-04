@@ -439,13 +439,16 @@ def _hard_clip_id(width: int, top_edge: float, bottom_edge: float) -> str:
 
     SVG ids share one namespace across an entire embedding page (e.g. a
     table rendered row by row), so a literal id must never collide between
-    two calls with *different* clip rectangles. Deriving it from the
-    rectangle itself sidesteps that: two calls only ever land on the same
-    id when they also share the exact rectangle it names, so a collision
-    is always harmless.
+    two calls with *different* clip rectangles. The id is built directly
+    from the rectangle's geometry -- its width and its top/bottom edges
+    rounded to 3 decimal places -- as a plain format string, with the
+    `.`/`-` characters those numbers introduce mapped to id-safe ones.
+    Two calls therefore produce the same id exactly when they name the
+    same clip rectangle (to sub-pixel precision), so any shared id is
+    always harmless because the clip it references is identical.
     """
-    key = (width, round(top_edge, 3), round(bottom_edge, 3))
-    return f"clip{hash(key) & 0xFFFFFFFFFFFF:x}"
+    raw = f"clip{width}_{top_edge:.3f}_{bottom_edge:.3f}"
+    return raw.replace("-", "m").replace(".", "_")
 
 
 def _clip_label(text: str, max_width: float, font_size: float) -> str:
@@ -556,6 +559,37 @@ def forest_bar(
     return _svg(width, height, "".join(parts))
 
 
+def _render_tick_axis(
+    ticks: list[float],
+    *,
+    project: Callable[[float], float],
+    label: Format | TimeFormat,
+    baseline: float,
+    height: int,
+    width: int,
+    theme: Theme,
+) -> list[str]:
+    """Render each tick as a mark plus a label, shared by both axis emitters.
+
+    `forest_axis` and `sparkline_axis` draw an identical tick mark and
+    label per position; only the tick set and the labelling callable
+    differ. `label` is applied to each raw tick value to produce its text.
+    """
+    parts: list[str] = []
+    for tick in ticks:
+        tick_x = project(tick)
+        text = label(tick)
+        parts.append(
+            f'<line x1="{tick_x:.2f}" y1="{baseline:.2f}" x2="{tick_x:.2f}" '
+            f'y2="{baseline + 3:.2f}" stroke="{theme.axis}" stroke-width="0.75"/>'
+        )
+        parts.append(
+            f'<text x="{tick_x:.2f}" y="{height - 2:.2f}" fill="{theme.axis}" '
+            f'font-size="9" text-anchor="{_tick_anchor(tick_x, text, width)}">{text}</text>'
+        )
+    return parts
+
+
 def forest_axis(
     *,
     domain: tuple[float, float],
@@ -602,18 +636,98 @@ def forest_axis(
             f'<line x1="{ref_x:.2f}" y1="0" x2="{ref_x:.2f}" y2="{baseline:.2f}" '
             f'stroke="{theme.axis}" stroke-width="1" stroke-dasharray="2,2"/>'
         )
-    for tick in nice_ticks(low, high, target_ticks):
-        tick_x = project(tick)
-        text = fmt(tick)
-        parts.append(
-            f'<line x1="{tick_x:.2f}" y1="{baseline:.2f}" x2="{tick_x:.2f}" '
-            f'y2="{baseline + 3:.2f}" stroke="{theme.axis}" stroke-width="0.75"/>'
+    parts.extend(
+        _render_tick_axis(
+            nice_ticks(low, high, target_ticks),
+            project=project,
+            label=fmt,
+            baseline=baseline,
+            height=height,
+            width=width,
+            theme=theme,
         )
-        parts.append(
-            f'<text x="{tick_x:.2f}" y="{height - 2:.2f}" fill="{theme.axis}" '
-            f'font-size="9" text-anchor="{_tick_anchor(tick_x, text, width)}">{text}</text>'
-        )
+    )
     return _svg(width, height, "".join(parts))
+
+
+def _render_band_run(
+    run: list[tuple[float, float, float]],
+    *,
+    low: float,
+    high: float,
+    project_x: Callable[[float], float],
+    project_y: Callable[[float], float],
+    color: str,
+    clip_id: str,
+) -> tuple[list[str], list[str], list[tuple[float, float, str]]]:
+    """Render one ribbon run into ghost, real and clip-span parts.
+
+    Returns the fainter true-trajectory ghost polygon (empty when the run
+    stays in bounds), the opaque in-domain polygon (clipped when it
+    crosses an edge), and the out-of-bounds spans that drive the clip
+    caps. The caller layers ghost beneath real and feeds the spans to the
+    shared cap pass.
+    """
+    ghost: list[str] = []
+    real: list[str] = []
+    upper_pts = [(xi, ui) for xi, _li, ui in run]
+    lower_pts = [(xi, li) for xi, li, _ui in run]
+    spans = _out_of_bounds_spans(upper_pts, low, high, project_x) + _out_of_bounds_spans(
+        lower_pts, low, high, project_x
+    )
+    top = " ".join(f"{project_x(xi):.2f},{project_y(ui):.2f}" for xi, ui in upper_pts)
+    bottom = " ".join(f"{project_x(xi):.2f},{project_y(li):.2f}" for xi, li in reversed(lower_pts))
+    if spans:
+        ghost.append(f'<polygon points="{top} {bottom}" fill="{color}" fill-opacity="0.06"/>')
+        clipped = _clip_band_polygon(upper_pts + list(reversed(lower_pts)), low, high)
+        if clipped:
+            band_pts = " ".join(f"{project_x(px):.2f},{project_y(pv):.2f}" for px, pv in clipped)
+            real.append(
+                f'<g clip-path="url(#{clip_id})"><polygon points="{band_pts}" '
+                f'fill="{color}" fill-opacity="0.15"/></g>'
+            )
+    else:
+        real.append(f'<polygon points="{top} {bottom}" fill="{color}" fill-opacity="0.15"/>')
+    return ghost, real, spans
+
+
+def _render_line_run(
+    run: list[tuple[float, float]],
+    *,
+    low: float,
+    high: float,
+    project_x: Callable[[float], float],
+    project_y: Callable[[float], float],
+    color: str,
+    clip_id: str,
+) -> tuple[list[str], list[str], list[tuple[float, float, str]]]:
+    """Render one series-line run into ghost, real and clip-span parts.
+
+    Mirrors `_render_band_run` for the estimate line: a translucent ghost
+    polyline of the true trajectory when it clips, the opaque in-domain
+    polyline pieces (clipped to the domain edge), and the out-of-bounds
+    spans for the cap pass.
+    """
+    ghost: list[str] = []
+    real: list[str] = []
+    spans = _out_of_bounds_spans(run, low, high, project_x)
+    pts = " ".join(f"{project_x(xi):.2f},{project_y(yi):.2f}" for xi, yi in run)
+    if spans:
+        ghost.append(
+            f'<polyline points="{pts}" fill="none" stroke="{color}" '
+            f'stroke-width="1.5" stroke-opacity="0.35"/>'
+        )
+        clipped_pieces = "".join(
+            '<polyline points="'
+            + " ".join(f"{project_x(cx):.2f},{project_y(cy):.2f}" for cx, cy in piece)
+            + f'" fill="none" stroke="{color}" stroke-width="1.5"/>'
+            for piece in _clip_line_run(run, low, high)
+        )
+        if clipped_pieces:
+            real.append(f'<g clip-path="url(#{clip_id})">{clipped_pieces}</g>')
+    else:
+        real.append(f'<polyline points="{pts}" fill="none" stroke="{color}" stroke-width="1.5"/>')
+    return ghost, real, spans
 
 
 def sparkline_bar(
@@ -727,31 +841,18 @@ def sparkline_bar(
 
     band_runs = _band_runs(x, y, lower, upper)
     for run in band_runs:
-        upper_pts = [(xi, ui) for xi, _li, ui in run]
-        lower_pts = [(xi, li) for xi, li, _ui in run]
-        run_spans = _out_of_bounds_spans(upper_pts, low, high, project_x) + _out_of_bounds_spans(
-            lower_pts, low, high, project_x
+        ghost, real, spans = _render_band_run(
+            run,
+            low=low,
+            high=high,
+            project_x=project_x,
+            project_y=project_y,
+            color=color,
+            clip_id=clip_id,
         )
-        top = " ".join(f"{project_x(xi):.2f},{project_y(ui):.2f}" for xi, ui in upper_pts)
-        bottom = " ".join(
-            f"{project_x(xi):.2f},{project_y(li):.2f}" for xi, li in reversed(lower_pts)
-        )
-        if run_spans:
-            raw_spans.extend(run_spans)
-            ghost_parts.append(
-                f'<polygon points="{top} {bottom}" fill="{color}" fill-opacity="0.06"/>'
-            )
-            clipped = _clip_band_polygon(upper_pts + list(reversed(lower_pts)), low, high)
-            if clipped:
-                band_pts = " ".join(
-                    f"{project_x(px):.2f},{project_y(pv):.2f}" for px, pv in clipped
-                )
-                parts.append(
-                    f'<g clip-path="url(#{clip_id})"><polygon points="{band_pts}" '
-                    f'fill="{color}" fill-opacity="0.15"/></g>'
-                )
-        else:
-            parts.append(f'<polygon points="{top} {bottom}" fill="{color}" fill-opacity="0.15"/>')
+        ghost_parts.extend(ghost)
+        parts.extend(real)
+        raw_spans.extend(spans)
 
     line_runs = _line_runs(x, y)
 
@@ -763,26 +864,18 @@ def sparkline_bar(
         )
 
     for run in line_runs:
-        run_spans = _out_of_bounds_spans(run, low, high, project_x)
-        pts = " ".join(f"{project_x(xi):.2f},{project_y(yi):.2f}" for xi, yi in run)
-        if run_spans:
-            raw_spans.extend(run_spans)
-            ghost_parts.append(
-                f'<polyline points="{pts}" fill="none" stroke="{color}" '
-                f'stroke-width="1.5" stroke-opacity="0.35"/>'
-            )
-            clipped_pieces = "".join(
-                '<polyline points="'
-                + " ".join(f"{project_x(cx):.2f},{project_y(cy):.2f}" for cx, cy in piece)
-                + f'" fill="none" stroke="{color}" stroke-width="1.5"/>'
-                for piece in _clip_line_run(run, low, high)
-            )
-            if clipped_pieces:
-                parts.append(f'<g clip-path="url(#{clip_id})">{clipped_pieces}</g>')
-        else:
-            parts.append(
-                f'<polyline points="{pts}" fill="none" stroke="{color}" stroke-width="1.5"/>'
-            )
+        ghost, real, spans = _render_line_run(
+            run,
+            low=low,
+            high=high,
+            project_x=project_x,
+            project_y=project_y,
+            color=color,
+            clip_id=clip_id,
+        )
+        ghost_parts.extend(ghost)
+        parts.extend(real)
+        raw_spans.extend(spans)
 
     if line_runs and show_endpoint:
         _, ey = line_runs[-1][-1]
@@ -882,15 +975,15 @@ def sparkline_axis(
     # endpoint label only ever appears on data rows -- so a last tick label
     # reaching into it neither clips nor collides, and keeping it centred
     # leaves it aligned on its own tick mark.
-    for tick in ticks:
-        tick_x = project(tick)
-        text = label(tick)
-        parts.append(
-            f'<line x1="{tick_x:.2f}" y1="{baseline:.2f}" x2="{tick_x:.2f}" '
-            f'y2="{baseline + 3:.2f}" stroke="{theme.axis}" stroke-width="0.75"/>'
+    parts.extend(
+        _render_tick_axis(
+            ticks,
+            project=project,
+            label=label,
+            baseline=baseline,
+            height=height,
+            width=width,
+            theme=theme,
         )
-        parts.append(
-            f'<text x="{tick_x:.2f}" y="{height - 2:.2f}" fill="{theme.axis}" '
-            f'font-size="9" text-anchor="{_tick_anchor(tick_x, text, width)}">{text}</text>'
-        )
+    )
     return _svg(width, height, "".join(parts))
