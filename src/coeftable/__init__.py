@@ -2,13 +2,22 @@
 
 from importlib.metadata import PackageNotFoundError, version
 
-from coeftable.format import CIStyle, Currency, Number, Percent
+from coeftable.format import (
+    CalendarStep,
+    CIStyle,
+    Currency,
+    DateAxis,
+    Number,
+    Percent,
+    TimeFormat,
+)
 from coeftable.spec import (
     CoefTable,
     ColumnNotFoundError,
     Estimate,
     Forest,
     Passthrough,
+    Sparkline,
     SpecError,
 )
 from coeftable.theme import Theme, role_for
@@ -20,16 +29,20 @@ except PackageNotFoundError:  # pragma: no cover
 
 __all__ = [
     "CIStyle",
+    "CalendarStep",
     "CoefTable",
     "ColumnNotFoundError",
     "Currency",
+    "DateAxis",
     "Estimate",
     "Forest",
     "Number",
     "Passthrough",
     "Percent",
+    "Sparkline",
     "SpecError",
     "Theme",
+    "TimeFormat",
     "__version__",
     "role_for",
 ]

@@ -16,3 +16,5 @@ src/coeftable/_version.py
 .kata.local.toml
 # roborev snapshots
 /.roborev/
+# internal planning docs (not shipped, not for the public repo)
+docs/superpowers/

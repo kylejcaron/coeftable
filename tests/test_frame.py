@@ -4,7 +4,7 @@ import polars as pl
 import pytest
 
 from coeftable.format import CIStyle
-from coeftable.frame import _forest_height, _pad_domain, resolve
+from coeftable.frame import _pad_domain, _plot_height, resolve
 from coeftable.spec import CoefTable, ColumnNotFoundError, Estimate, Forest, SpecError
 
 RAW = {
@@ -192,9 +192,9 @@ def test_color_rule_overrides_direction():
     assert DEFAULT.color("unfavorable") in plots[0]
 
 
-def test_explicit_domain_overrides_scale():
+def test_explicit_ylim_overrides_scale():
     spec = base(pl.DataFrame(RAW))
-    out = resolve(spec.forest("Plot", of="Lift %", domain=(-10.0, 10.0)))
+    out = resolve(spec.forest("Plot", of="Lift %", ylim=(-10.0, 10.0)))
     assert out.axis_rows
 
 
@@ -221,39 +221,39 @@ def test_forest_symmetric_flag_resolves_without_error():
     assert out.axis_rows
 
 
-def test_explicit_domain_wins_over_symmetric():
+def test_explicit_ylim_wins_over_symmetric():
     spec = base(pl.DataFrame(RAW))
-    out = resolve(spec.forest("Plot", of="Lift %", domain=(-10.0, 10.0), symmetric=True))
+    out = resolve(spec.forest("Plot", of="Lift %", ylim=(-10.0, 10.0), symmetric=True))
     assert out.axis_rows
 
 
-def test_forest_height_picks_stacked_layout_default():
+def test_plot_height_picks_stacked_layout_default():
     estimate = Estimate("Lift %", "rel", ci=("lb", "ub"))
     forest = Forest("Plot", of="Lift %")
-    assert _forest_height(forest, estimate) == 48
+    assert _plot_height((estimate,), forest.height) == 48
 
 
-def test_forest_height_picks_shorter_default_for_single_line_layouts():
+def test_plot_height_picks_shorter_default_for_single_line_layouts():
     estimate = Estimate("Lift %", "rel", ci=("lb", "ub"), ci_style=CIStyle(layout="inline"))
     forest = Forest("Plot", of="Lift %")
-    assert _forest_height(forest, estimate) == 34
+    assert _plot_height((estimate,), forest.height) == 34
 
 
-def test_forest_height_explicit_override_wins():
+def test_plot_height_explicit_override_wins():
     estimate = Estimate("Lift %", "rel", ci=("lb", "ub"))
     forest = Forest("Plot", of="Lift %", height=100)
-    assert _forest_height(forest, estimate) == 100
+    assert _plot_height((estimate,), forest.height) == 100
 
 
-def test_forest_columns_are_tracked_on_resolved():
+def test_plot_columns_tracks_forest_columns():
     spec = base(pl.DataFrame(RAW))
     out = resolve(spec.forest("Plot", of="Lift %"))
-    assert out.forest_columns == ["Plot"]
+    assert out.plot_columns == ["Plot"]
 
 
-def test_non_forest_table_has_no_forest_columns():
+def test_table_without_plot_columns_has_none():
     out = resolve(base(pl.DataFrame(RAW)))
-    assert out.forest_columns == []
+    assert out.plot_columns == []
 
 
 def test_passthrough_renders_the_frame_column_verbatim():
@@ -295,3 +295,17 @@ def test_duplicate_identity_rows_raise_spec_error():
     )
     with pytest.raises(SpecError, match="Duplicate input row"):
         resolve(table)
+
+
+def test_ordered_unique_dedupes_distinct_nan_objects():
+    from coeftable.grid import _ordered_unique
+
+    # Two separately-constructed nan objects are not identical, so a
+    # dedupe that leaned on CPython's `in` identity fast-path would keep
+    # both. They must collapse to a single representative.
+    values = [1.0, float("nan"), 2.0, float("nan"), 1.0]
+    result = _ordered_unique(values, sort=False)
+    nans = [v for v in result if isinstance(v, float) and v != v]
+    non_nans = [v for v in result if not (isinstance(v, float) and v != v)]
+    assert len(nans) == 1
+    assert non_nans == [1.0, 2.0]

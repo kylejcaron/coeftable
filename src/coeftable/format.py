@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
-from typing import Literal
+from datetime import UTC, datetime
+from typing import Any, Literal
 
 from coeftable.theme import Theme
 
 type Format = Callable[[float], str]
+type TimeFormat = Callable[[float], str]
 type Layout = Literal["stacked", "inline", "value_only"]
 
 
@@ -27,6 +29,50 @@ def is_missing(value: float | None) -> bool:
         True when the value carries no information.
     """
     return value is None or (isinstance(value, float) and math.isnan(value))
+
+
+def coerce_numeric(values: Iterable[Any], *, subject: str = "Value") -> list[float | None]:
+    """Coerce raw backend values to `float | None`, `None` for anything missing.
+
+    Handles `None` directly, and NaN uniformly as missing regardless of its
+    source (plain `float`, numpy, `Decimal`) once coerced. Also recognises
+    the missing-value sentinels narwhals' supported backends surface for
+    non-float columns that `float()` cannot parse directly: pandas'
+    nullable ``<NA>`` and ``NaT``.
+
+    Parameters
+    ----------
+    values
+        Raw values, e.g. a narwhals column's `.to_list()`.
+    subject
+        Identifies what is being coerced in the `TypeError` message raised
+        for a value that is neither missing nor numeric, e.g. ``"Column 'x'"``.
+
+    Returns
+    -------
+    list[float | None]
+        One entry per input value.
+
+    Raises
+    ------
+    TypeError
+        When a value is neither a recognised missing sentinel nor coercible
+        to `float`.
+    """
+    out: list[float | None] = []
+    for value in values:
+        if value is None:
+            out.append(None)
+            continue
+        try:
+            coerced = float(value)
+        except (TypeError, ValueError):
+            if str(value) in ("<NA>", "NaT"):
+                out.append(None)
+                continue
+            raise TypeError(f"{subject} must be numeric; found {value!r}.") from None
+        out.append(None if math.isnan(coerced) else coerced)
+    return out
 
 
 def compact_number(value: float) -> str:
@@ -161,6 +207,141 @@ class Currency(Number):
     prefix: str = "$"
 
 
+type CalendarStep = Literal["day", "month", "year"]
+
+
+_MONTH_ABBR = (
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+)
+
+
+@dataclass(frozen=True)
+class DateAxis:
+    """Format an epoch float as a short calendar label.
+
+    The label's granularity follows `step`: ``"year"`` renders ``2026``,
+    ``"month"`` renders ``Jan``, and ``"day"`` renders ``Jan 5``. There is no
+    quarter granularity -- a quarterly axis is simply month ticks every
+    three months, still labelled ``Jan``/``Apr``/``Jul``/``Oct``.
+
+    `labels` cascades coarser components across an ordered tick set -- month,
+    then year -- showing each only where it changes from the predecessor. A
+    run of ticks inside one month never repeats the month name; a run inside
+    one year never repeats the year. If the *entire* set never leaves one
+    calendar year, the year is not shown anywhere, not even on the first
+    tick -- it adds nothing a reader doesn't already know from context, and
+    costs the most pixel-constrained rungs (day, month) their widest token
+    for zero information. It only ever appears where a reader would
+    otherwise be unable to tell which year a tick falls in: the first tick
+    of a *multi*-year set, and every later tick whose year differs from its
+    predecessor. A shown year is the compact two-digit token (``'26``) --
+    the apostrophe is load-bearing, not decorative: a bare ``24`` on a
+    day-rung axis would be indistinguishable from day-of-month 24. The year
+    rung is the one exception and always renders the full four digits:
+    every one of its ticks is a distinct year by construction, so there is
+    nothing to cascade, and the pixel budget per tick is never tight there.
+    `sparkline_axis`'s grouped super-tick row (`svg._super_row`) reuses this
+    same cascade logic through the private `_cascade`, over each group's
+    representative date rather than a rendered tick -- `labels` itself is a
+    standalone public entry point for a caller with its own ordered tick set
+    to format, not the renderer's only path through this logic.
+
+    `__call__` formats a single value with no neighbours to diff against and
+    no tick set to check for a year boundary, so unlike `labels` it always
+    fully qualifies -- day step includes both month and year, month step
+    includes year. Reach for `labels` whenever a whole tick set renders
+    together; use `__call__` directly only for a single value in isolation.
+
+    Parameters
+    ----------
+    step
+        Tick granularity to render at.
+    """
+
+    step: CalendarStep = "month"
+
+    def __call__(self, value: float) -> str:
+        """Format *value* alone -- see the class docstring for why this always fully qualifies.
+
+        Parameters
+        ----------
+        value
+            Epoch seconds (UTC).
+
+        Returns
+        -------
+        str
+            Fully qualified calendar label at this instance's `step` granularity.
+        """
+        dt = datetime.fromtimestamp(value, tz=UTC)
+        if self.step == "year":
+            return str(dt.year)
+        if self.step == "month":
+            return f"{_MONTH_ABBR[dt.month - 1]} '{dt.year % 100:02d}"
+        return f"{_MONTH_ABBR[dt.month - 1]} {dt.day} '{dt.year % 100:02d}"
+
+    def labels(self, values: Sequence[float]) -> list[str]:
+        """Format a full, ordered tick set, cascading month/year only where they change.
+
+        Parameters
+        ----------
+        values
+            Epoch seconds (UTC), in the order they will be rendered.
+
+        Returns
+        -------
+        list of str
+            One label per value, same length and order as `values`.
+        """
+        dts = [datetime.fromtimestamp(value, tz=UTC) for value in values]
+        return self._cascade(dts, multi_year=len({dt.year for dt in dts}) > 1)
+
+    def _cascade(self, dts: list[datetime], *, multi_year: bool) -> list[str]:
+        """Shared cascade body, parameterised on whether *any* year label is shown at all.
+
+        `labels` computes `multi_year` from exactly the values it was given,
+        which is correct for a direct caller. `sparkline_axis`'s grouped
+        super-tick row (`_super_row` in `svg.py`) needs a different source of
+        truth: whether the *domain* spans multiple years, fixed once from
+        the full, undropped group set, not recomputed from whichever subset
+        survives a dropped label. Recomputing per subset would let dropping
+        the one group that crosses a year boundary suppress the year token
+        globally, even though other surviving labels still need it -- e.g. a
+        recast where every remaining label happens to share one year would
+        wrongly drop back to bare `"Jan"` instead of `"Jan '25"`. This does
+        not guarantee a *specific* dropped year's own label survives --
+        `_resolve_collisions` can still drop the sole representative of an
+        edge year outright -- only that the year token is never suppressed
+        for whichever labels do survive.
+        """
+        out: list[str] = []
+        prev: datetime | None = None
+        for dt in dts:
+            year_changed = multi_year and (prev is None or dt.year != prev.year)
+            if self.step == "year":
+                out.append(str(dt.year))
+            elif self.step == "month":
+                month = _MONTH_ABBR[dt.month - 1]
+                out.append(f"{month} '{dt.year % 100:02d}" if year_changed else month)
+            else:
+                month_changed = prev is None or year_changed or dt.month != prev.month
+                day = f"{_MONTH_ABBR[dt.month - 1]} {dt.day}" if month_changed else str(dt.day)
+                out.append(f"{day} '{dt.year % 100:02d}" if year_changed else day)
+            prev = dt
+        return out
+
+
 @dataclass(frozen=True)
 class CIStyle:
     """Control how a point estimate and its interval are assembled.
@@ -224,7 +405,7 @@ def render_interval(
         return point
     open_bracket = "(" if lower is None else style.brackets[0]
     close_bracket = ")" if upper is None else style.brackets[1]
-    low_text = f"-{style.unbounded}" if lower is None else fmt(lower)
+    low_text = f"\u2212{style.unbounded}" if lower is None else fmt(lower)
     high_text = style.unbounded if upper is None else fmt(upper)
     interval = f"{open_bracket}{low_text}{style.separator}{high_text}{close_bracket}"
     if style.layout == "inline":
