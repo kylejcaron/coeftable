@@ -123,7 +123,7 @@ trend = pl.DataFrame(
         ci=("history_lb", "history_ub"),
         x="date",
         ref=0.0,
-        axis_fmt=ct.DateAxis(step="week"),
+        axis_fmt=ct.DateAxis(),
     )
 )
 ```
@@ -171,7 +171,7 @@ history = pd.DataFrame(
         x="date",
         data=history,
         ref=0.0,
-        axis_fmt=ct.DateAxis(step="week"),
+        axis_fmt=ct.DateAxis(),
     )
 )
 ```

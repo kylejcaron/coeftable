@@ -298,11 +298,14 @@ def test_companion_frame_front_door_renders_end_to_end():
 
 
 def test_companion_frame_null_nest_key_resolves_not_blank():
-    """A null nest key on a pandas main frame arrives as `nan`, matching the
-    companion's `nan` only once both are normalised to `None`. Without that,
-    the null-variant row silently renders blank instead of its series.
+    """A null nest key on the main frame carries `None` (polars); the
+    companion frame's null cell in the same key column surfaces as pandas's
+    `nan`. The two only match once both are normalised to `None` -- the main
+    frame here is deliberately polars, not pandas, so its `None` cannot
+    coincidentally share pandas's cached nan singleton and mask a broken
+    normalisation.
     """
-    raw = pd.DataFrame({"metric": ["A", "A"], "variant": ["X", None]})
+    raw = pl.DataFrame({"metric": ["A", "A"], "variant": ["X", None]})
     companion = pd.DataFrame(
         {
             "metric": ["A", "A", "A", "A"],

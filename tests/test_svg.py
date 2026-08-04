@@ -1032,8 +1032,27 @@ def test_sparkline_axis_renders_calendar_labels_for_temporal_domain():
     )
     assert svg.startswith("<svg")
     assert svg.endswith("</svg>")
+    # The tick set spans two calendar years, so sparkline_axis must wire
+    # show_year=True through to DateAxis -- every month label carries its
+    # year, not just the bare abbreviation.
+    assert "Jan 2024" in svg
+    assert "Jan 2025" in svg
+
+
+def test_sparkline_axis_omits_the_year_within_a_single_calendar_year():
+    low = datetime(2024, 1, 1, tzinfo=UTC).timestamp()
+    high = datetime(2024, 8, 1, tzinfo=UTC).timestamp()
+    svg = sparkline_axis(
+        x_domain=(low, high),
+        fmt=DateAxis(),
+        theme=DEFAULT,
+        temporal=True,
+        target_ticks=14,
+    )
+    # Every tick falls in 2024 -- show_year must stay False, so labels are
+    # the bare month abbreviation with no adjacent year.
     assert "Jan" in svg
-    assert "Feb" in svg
+    assert "2024" not in svg
 
 
 def test_sparkline_axis_temporal_labels_adapt_to_a_coarser_step_than_fmt_default():
