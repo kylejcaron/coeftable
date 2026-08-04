@@ -364,10 +364,12 @@ def _max_bare_ticks(rung_label: CalendarStep, width: int) -> int:
     the expensive part of considering it -- once its tick count already
     exceeds what `width` could fit even packed at the rung's own shortest
     possible bare label (`"1"` for day, `"Jan"` for month, `"2024"` for
-    year) and the minimum inter-label gap. `_resolve_collisions` only ever
-    drops up to 2 labels, so a count this far over budget can never end up
-    admitted -- skipping it changes no selection, only the wasted work of
-    computing that it loses.
+    year) and the minimum inter-label gap, allowing for the up-to-2 labels
+    `_resolve_collisions` may drop from the edges to admit an otherwise
+    colliding arrangement. A count beyond this bound (`_select_bare_rung`'s
+    call adds the 2-label slack on top of what this returns) can never end
+    up admitted -- skipping it changes no selection, only the wasted work
+    of computing that it loses.
     """
     min_chars = {"day": 1, "month": 3, "year": 4}[rung_label]
     min_width = min_chars * 9.0 * _CHAR_WIDTH_RATIO
@@ -406,7 +408,7 @@ def _select_bare_rung(
         if rung.label in exclude:
             continue
         ticks = _rung_ticks(low, high, rung)
-        if not ticks or len(ticks) > _max_bare_ticks(rung.label, width):
+        if not ticks or len(ticks) > _max_bare_ticks(rung.label, width) + 2:
             continue
         dts = [datetime.fromtimestamp(t, tz=UTC) for t in ticks]
         texts_all = [_bare_label(dt, rung.label) for dt in dts]

@@ -8,12 +8,15 @@ from coeftable.format import DateAxis, Number
 from coeftable.svg import (
     _CALENDAR_TICK_FLOOR,
     _CHAR_WIDTH_RATIO,
+    _MIN_LABEL_GAP,
     _SUPER_ROW_OFFSET,
     _bare_label,
     _calendar_groups,
     _fits,
     _label_boxes,
+    _max_bare_ticks,
     _projector,
+    _resolve_collisions,
     _select_bare_rung,
     _super_row,
     calendar_ticks,
@@ -162,6 +165,34 @@ def test_sparkline_axis_falls_back_to_cascaded_labels_when_no_super_row_fits(
     labels = re.findall(r'text-anchor="[^"]+">([^<]*)</text>', svg)
     assert labels
     assert labels[0].startswith("Jan")  # cascaded, not a bare "17"
+
+
+def test_max_bare_ticks_skip_bound_includes_the_edge_drop_slack():
+    # `_resolve_collisions` can admit an arrangement with up to 2 labels
+    # dropped from the edges (when they -- and only they -- collide with
+    # their neighbour), so `_select_bare_rung`'s skip must allow a rung's
+    # raw tick count up to `_max_bare_ticks(...) + 2`, not just the bound
+    # itself, or it would wrongly exclude a genuinely admissible rung
+    # before ever calling `_resolve_collisions` on it.
+    #
+    # Constructed directly: `bound` 1-char labels packed at exactly the
+    # minimum pitch fill `width` with no slack, plus one extra label
+    # crammed just inside each end -- close enough to collide with its
+    # sole neighbour, nothing else. Reproducible with `bound=4`, `width=28`.
+    width = 28
+    bound = _max_bare_ticks("day", width)
+    assert bound == 4
+    min_width = 1 * 9.0 * _CHAR_WIDTH_RATIO
+    pitch = min_width + _MIN_LABEL_GAP
+    interior = [min_width / 2 + i * pitch for i in range(bound)]
+    xs = [interior[0] - pitch * 0.3, *interior, interior[-1] + pitch * 0.3]
+    texts = ["1"] * len(xs)
+    n = len(xs)
+    assert n == bound + 2
+    admitted = _resolve_collisions(xs, lambda kept, t=texts: [t[i] for i in kept], width)
+    assert admitted is not None  # only reachable by dropping both edges
+    assert admitted[0] == "" and admitted[-1] == ""
+    assert all(admitted[1:-1])
 
 
 def test_sparkline_bar_is_well_formed_svg():
