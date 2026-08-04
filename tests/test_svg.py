@@ -10,13 +10,12 @@ from coeftable.svg import (
     _CHAR_WIDTH_RATIO,
     _SUPER_ROW_OFFSET,
     _bare_label,
+    _calendar_groups,
     _fits,
     _label_boxes,
-    _month_groups,
     _projector,
     _select_bare_rung,
     _super_row,
-    _year_groups,
     calendar_ticks,
     forest_axis,
     forest_bar,
@@ -136,6 +135,33 @@ def test_sparkline_axis_anchors_a_clipping_temporal_tick_label():
     labels = re.findall(r'text-anchor="([^"]+)">([^<]*)</text>', svg)
     assert labels
     assert labels[0] == ("start", "Jan")
+
+
+def test_sparkline_axis_falls_back_to_cascaded_labels_when_no_super_row_fits(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    # Defense in depth: if `_super_row` ever fails to admit any arrangement
+    # (e.g. a collision `_resolve_collisions` can't clear by dropping an
+    # edge -- confirmed unreachable via real calendar domains by a 6,000
+    # case sweep, but not structurally impossible), the sub-row must not
+    # fall back to bare, context-free numbers with no month/year anywhere.
+    import coeftable.svg as svg_module
+
+    def no_super_row(
+        sub_step: object, low: float, high: float, *, project: object, width: int
+    ) -> None:
+        return None
+
+    monkeypatch.setattr(svg_module, "_super_row", no_super_row)
+    low = datetime(2024, 1, 17, tzinfo=UTC).timestamp()
+    high = datetime(2024, 3, 17, tzinfo=UTC).timestamp()
+    svg = sparkline_axis(
+        x_domain=(low, high), fmt=DateAxis(), theme=DEFAULT, temporal=True, show_endpoint=False
+    )
+    assert 'height="22"' in svg  # no super row built -> single-row height
+    labels = re.findall(r'text-anchor="[^"]+">([^<]*)</text>', svg)
+    assert labels
+    assert labels[0].startswith("Jan")  # cascaded, not a bare "17"
 
 
 def test_sparkline_bar_is_well_formed_svg():
@@ -1276,18 +1302,18 @@ def test_bare_label_shows_only_its_own_component():
     assert _bare_label(value, "year") == "2026"
 
 
-def test_month_groups_covers_every_month_the_domain_touches():
+def test_calendar_groups_covers_every_month_the_domain_touches():
     low = datetime(2024, 1, 17, tzinfo=UTC).timestamp()
     high = datetime(2024, 3, 17, tzinfo=UTC).timestamp()
-    groups = _month_groups(low, high)
+    groups = _calendar_groups(low, high, 1)
     assert [start.month for start, _ in groups] == [1, 2, 3]
     assert all(start.day == 1 for start, _ in groups)
 
 
-def test_year_groups_covers_every_year_the_domain_touches():
+def test_calendar_groups_covers_every_year_the_domain_touches():
     low = datetime(2024, 6, 1, tzinfo=UTC).timestamp()
     high = datetime(2026, 6, 1, tzinfo=UTC).timestamp()
-    groups = _year_groups(low, high)
+    groups = _calendar_groups(low, high, 12)
     assert [start.year for start, _ in groups] == [2024, 2025, 2026]
     assert all(start.month == 1 and start.day == 1 for start, _ in groups)
 

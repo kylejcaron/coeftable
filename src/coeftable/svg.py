@@ -406,28 +406,23 @@ def _select_bare_rung(
     return best[1], best[2], best[3]
 
 
-def _month_groups(low: float, high: float) -> list[tuple[datetime, datetime]]:
-    """Calendar-month `(start, end)` bounds for every month overlapping `[low, high]`."""
+def _calendar_groups(low: float, high: float, step_months: int) -> list[tuple[datetime, datetime]]:
+    """`(start, end)` bounds for every `step_months`-month period overlapping `[low, high]`.
+
+    `step_months=1` gives calendar months, `step_months=12` gives calendar
+    years -- both `_super_row`'s grouping levels, so one walk over the same
+    `_month_index`/`_month_start` grid (already used by `_month_aligned_ticks`
+    for the identical alignment problem on tick positions) covers both
+    instead of two near-identical hand-rolled loops.
+    """
     high_dt = datetime.fromtimestamp(high, tz=UTC)
     index = _month_index(datetime.fromtimestamp(low, tz=UTC))
+    index -= index % step_months  # align to the step's own grid at or before low
     groups: list[tuple[datetime, datetime]] = []
     start = _month_start(index)
     while start < high_dt:
-        index += 1
+        index += step_months
         end = _month_start(index)
-        groups.append((start, end))
-        start = end
-    return groups
-
-
-def _year_groups(low: float, high: float) -> list[tuple[datetime, datetime]]:
-    """Calendar-year `(start, end)` bounds for every year overlapping `[low, high]`."""
-    high_dt = datetime.fromtimestamp(high, tz=UTC)
-    year = datetime.fromtimestamp(low, tz=UTC).year
-    groups: list[tuple[datetime, datetime]] = []
-    start = datetime(year, 1, 1, tzinfo=UTC)
-    while start < high_dt:
-        end = datetime(start.year + 1, 1, 1, tzinfo=UTC)
         groups.append((start, end))
         start = end
     return groups
@@ -458,10 +453,10 @@ def _super_row(
     is never left unqualified by a neighbour that got dropped.
     """
     if sub_step == "day":
-        groups = _month_groups(low, high)
+        groups = _calendar_groups(low, high, 1)
         group_step: CalendarStep = "month"
     elif sub_step == "month":
-        groups = _year_groups(low, high)
+        groups = _calendar_groups(low, high, 12)
         group_step = "year"
     else:
         return None
@@ -916,22 +911,20 @@ def _render_two_tier_axis(
     with no tick mark of their own, centred over the true pixel span each
     group covers.
 
-    The sub-row sits at exactly the position a single-row axis of
-    `sub_height` would use -- unlabelled ticks read no differently switching
-    between the two -- and the super row is a fixed offset further out.
+    The sub-row is exactly `_render_tick_axis` at `height=sub_height` --
+    unlabelled ticks read no differently switching between a one-row and a
+    two-row axis, so it is not reimplemented here. The super row is a fixed
+    offset further out, text-only.
     """
-    parts: list[str] = []
-    for tick, text in zip(sub_ticks, sub_texts, strict=True):
-        tick_x = project(tick)
-        parts.append(
-            f'<line x1="{tick_x:.2f}" y1="{baseline:.2f}" x2="{tick_x:.2f}" '
-            f'y2="{baseline + 3:.2f}" stroke="{theme.axis}" stroke-width="0.75"/>'
-        )
-        if text:
-            parts.append(
-                f'<text x="{tick_x:.2f}" y="{sub_height - 2:.2f}" fill="{theme.axis}" '
-                f'font-size="9" text-anchor="{_tick_anchor(tick_x, text, width)}">{text}</text>'
-            )
+    parts = _render_tick_axis(
+        sub_ticks,
+        project=project,
+        texts=sub_texts,
+        baseline=baseline,
+        height=sub_height,
+        width=width,
+        theme=theme,
+    )
     super_y = sub_height - 2 + _SUPER_ROW_OFFSET
     for x, text in zip(super_centers, super_texts, strict=True):
         if text:
@@ -1332,7 +1325,7 @@ def sparkline_axis(
             # group by in the super row above it. Falls back to allowing it
             # only if excluding it leaves no rung that fits at all.
             exclude: frozenset[CalendarStep] = (
-                frozenset({"year"}) if len(_year_groups(low, high)) > 1 else frozenset()
+                frozenset({"year"}) if len(_calendar_groups(low, high, 12)) > 1 else frozenset()
             )
             bare = _select_bare_rung(
                 low, high, target_ticks, project=project, width=width, exclude=exclude
@@ -1360,6 +1353,14 @@ def sparkline_axis(
                         )
                     )
                     return _svg(width, height + int(_SUPER_ROW_OFFSET), "".join(parts))
+                # No super row could be built -- nothing coarser for a
+                # year-granular sub-row, or (in principle) a collision
+                # `_resolve_collisions` can't clear by dropping an edge.
+                # Fall back to cascaded labels, not the bare sub-row text:
+                # bare numbers alone carry no month/year context at all,
+                # which is worse than the single-row cascade design this
+                # replaced ever rendered.
+                texts = DateAxis(step=rung.label).labels(ticks)
     elif temporal:
         ticks = calendar_ticks(low, high, target_ticks)
         texts = [fmt(t) for t in ticks]
