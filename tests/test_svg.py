@@ -656,6 +656,57 @@ def test_sparkline_bar_isolated_clipped_ribbon_bound_with_no_segment_still_raise
     assert _cap_edge_count(svg) == 1
 
 
+def test_sparkline_bar_isolated_clipped_point_no_segment_raises_a_cap_on_low_edge():
+    # Mirror of the HIGH-edge case above: the isolated-point special case in
+    # _out_of_bounds_spans branches on direction ("low" if y0 < low else
+    # "high"), so a HIGH-only test cannot exercise this path.
+    x = [0.0, 1.0, 2.0, 3.0, 4.0]
+    y = [-300.0, float("nan"), 1.0, 1.0, 1.0]
+    svg = sparkline_bar(
+        x,
+        y,
+        [None] * 5,
+        [None] * 5,
+        x_domain=(0.0, 4.0),
+        domain=(0.0, 20.0),
+        ref=10.0,
+        color="#000",
+        fmt=Number(decimals=1),
+    )
+    assert _cap_edge_count(svg) == 1
+    cap_ys = sorted(
+        float(v)
+        for v in re.findall(r'<line x1="[\d.-]+" y1="(-?[\d.]+)"[^>]*stroke-opacity="0.45"', svg)
+    )
+    assert cap_ys == [26.5, 27.5]  # bottom edge (pad=3, height=30 default)
+
+
+def test_sparkline_bar_isolated_clipped_ribbon_bound_no_segment_raises_a_cap_on_low_edge():
+    # Same isolated-point edge case as the ribbon test above, mirrored onto
+    # the ribbon's lower bound.
+    x = [0.0, 1.0, 2.0, 3.0, 4.0]
+    y = [1.0] * 5
+    lower = [-300.0, None, 0.5, 0.5, 0.5]
+    upper = [1.5, None, 1.5, 1.5, 1.5]
+    svg = sparkline_bar(
+        x,
+        y,
+        lower,
+        upper,
+        x_domain=(0.0, 4.0),
+        domain=(0.0, 20.0),
+        ref=10.0,
+        color="#000",
+        fmt=Number(decimals=1),
+    )
+    assert _cap_edge_count(svg) == 1
+    cap_ys = sorted(
+        float(v)
+        for v in re.findall(r'<line x1="[\d.-]+" y1="(-?[\d.]+)"[^>]*stroke-opacity="0.45"', svg)
+    )
+    assert cap_ys == [26.5, 27.5]
+
+
 def test_sparkline_bar_a_long_clipped_run_still_merges_into_one_span():
     # Five consecutive points sit far above the domain. A per-crossing
     # design would mark both the entry and exit of this run as separate
