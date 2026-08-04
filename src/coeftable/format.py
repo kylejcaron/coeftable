@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -230,34 +230,49 @@ _MONTH_ABBR = (
 class DateAxis:
     """Format an epoch float as a short calendar label.
 
-    The label's granularity follows `step`, matching whichever rung
-    `calendar_ticks` chose for the domain: ``"year"`` renders ``2026``,
-    ``"month"`` renders ``Jan``, and ``"day"`` renders ``Jan 5``. There is
-    no quarter granularity -- a quarterly axis is simply month ticks every
+    The label's granularity follows `step`: ``"year"`` renders ``2026``,
+    ``"month"`` renders ``Jan``, and ``"day"`` renders ``Jan 5``. There is no
+    quarter granularity -- a quarterly axis is simply month ticks every
     three months, still labelled ``Jan``/``Apr``/``Jul``/``Oct``.
 
-    When `show_year` is set -- which `sparkline_axis` does whenever the tick
-    set spans more than one calendar year -- month and day labels append the
-    year (``Jan 2026`` / ``Jan 5, 2026``) so ticks stay unambiguous across a
-    year boundary. Within a single year the bare month/day reads cleanly.
+    `labels` cascades coarser components across an ordered tick set -- month,
+    then year -- showing each only where it changes from the predecessor. A
+    run of ticks inside one month never repeats the month name; a run inside
+    one year never repeats the year. If the *entire* set never leaves one
+    calendar year, the year is not shown anywhere, not even on the first
+    tick -- it adds nothing a reader doesn't already know from context, and
+    costs the most pixel-constrained rungs (day, month) their widest token
+    for zero information. It only ever appears where a reader would
+    otherwise be unable to tell which year a tick falls in: the first tick
+    of a *multi*-year set, and every later tick whose year differs from its
+    predecessor. A shown year is the compact two-digit token (``'26``) --
+    the apostrophe is load-bearing, not decorative: a bare ``24`` on a
+    day-rung axis would be indistinguishable from day-of-month 24. The year
+    rung is the one exception and always renders the full four digits:
+    every one of its ticks is a distinct year by construction, so there is
+    nothing to cascade, and the pixel budget per tick is never tight there.
+    `sparkline_axis`'s grouped super-tick row (`svg._super_row`) reuses this
+    same cascade logic through the private `_cascade`, over each group's
+    representative date rather than a rendered tick -- `labels` itself is a
+    standalone public entry point for a caller with its own ordered tick set
+    to format, not the renderer's only path through this logic.
 
-    `sparkline_axis` builds a copy of the supplied instance with `step` and
-    `show_year` set for the domain being rendered, so the defaults here only
-    matter when `DateAxis` is called directly.
+    `__call__` formats a single value with no neighbours to diff against and
+    no tick set to check for a year boundary, so unlike `labels` it always
+    fully qualifies -- day step includes both month and year, month step
+    includes year. Reach for `labels` whenever a whole tick set renders
+    together; use `__call__` directly only for a single value in isolation.
 
     Parameters
     ----------
     step
         Tick granularity to render at.
-    show_year
-        Append the calendar year to month and day labels.
     """
 
     step: CalendarStep = "month"
-    show_year: bool = False
 
     def __call__(self, value: float) -> str:
-        """Format *value*.
+        """Format *value* alone -- see the class docstring for why this always fully qualifies.
 
         Parameters
         ----------
@@ -267,16 +282,59 @@ class DateAxis:
         Returns
         -------
         str
-            Short calendar label at this instance's `step` granularity.
+            Fully qualified calendar label at this instance's `step` granularity.
         """
         dt = datetime.fromtimestamp(value, tz=UTC)
         if self.step == "year":
             return str(dt.year)
         if self.step == "month":
-            month = _MONTH_ABBR[dt.month - 1]
-            return f"{month} {dt.year}" if self.show_year else month
-        day = f"{_MONTH_ABBR[dt.month - 1]} {dt.day}"
-        return f"{day}, {dt.year}" if self.show_year else day
+            return f"{_MONTH_ABBR[dt.month - 1]} '{dt.year % 100:02d}"
+        return f"{_MONTH_ABBR[dt.month - 1]} {dt.day} '{dt.year % 100:02d}"
+
+    def labels(self, values: Sequence[float]) -> list[str]:
+        """Format a full, ordered tick set, cascading month/year only where they change.
+
+        Parameters
+        ----------
+        values
+            Epoch seconds (UTC), in the order they will be rendered.
+
+        Returns
+        -------
+        list of str
+            One label per value, same length and order as `values`.
+        """
+        dts = [datetime.fromtimestamp(value, tz=UTC) for value in values]
+        return self._cascade(dts, multi_year=len({dt.year for dt in dts}) > 1)
+
+    def _cascade(self, dts: list[datetime], *, multi_year: bool) -> list[str]:
+        """Shared cascade body, parameterised on whether *any* year label is shown at all.
+
+        `labels` computes `multi_year` from exactly the values it was given,
+        which is correct for a direct caller. `sparkline_axis`'s grouped
+        super-tick row (`_super_row` in `svg.py`) needs a different source of
+        truth: whether the *domain* spans multiple years, fixed once from
+        the full, undropped group set, not recomputed from whichever subset
+        survives a dropped label. Recomputing per subset would let dropping
+        the one group that crosses a year boundary silently erase the fact
+        that the axis spans multiple years at all -- the collision fix
+        would end up hiding real information, not just noise.
+        """
+        out: list[str] = []
+        prev: datetime | None = None
+        for dt in dts:
+            year_changed = multi_year and (prev is None or dt.year != prev.year)
+            if self.step == "year":
+                out.append(str(dt.year))
+            elif self.step == "month":
+                month = _MONTH_ABBR[dt.month - 1]
+                out.append(f"{month} '{dt.year % 100:02d}" if year_changed else month)
+            else:
+                month_changed = prev is None or year_changed or dt.month != prev.month
+                day = f"{_MONTH_ABBR[dt.month - 1]} {dt.day}" if month_changed else str(dt.day)
+                out.append(f"{day} '{dt.year % 100:02d}" if year_changed else day)
+            prev = dt
+        return out
 
 
 @dataclass(frozen=True)

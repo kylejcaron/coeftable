@@ -1,5 +1,5 @@
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from itertools import pairwise
 
 import pytest
@@ -7,6 +7,16 @@ import pytest
 from coeftable.format import DateAxis, Number
 from coeftable.svg import (
     _CALENDAR_TICK_FLOOR,
+    _CHAR_WIDTH_RATIO,
+    _SUPER_ROW_OFFSET,
+    _bare_label,
+    _fits,
+    _label_boxes,
+    _month_groups,
+    _projector,
+    _select_bare_rung,
+    _super_row,
+    _year_groups,
     calendar_ticks,
     forest_axis,
     forest_bar,
@@ -117,10 +127,12 @@ def test_forest_axis_anchors_a_tick_label_only_when_it_would_clip():
 def test_sparkline_axis_anchors_a_clipping_temporal_tick_label():
     # The originally observed bug: a month label on the first tick sits at
     # x=inset and, centred, loses its leading character off-canvas ("Jan" ->
-    # "an"). Covers the sparkline_axis call site and its temporal branch.
+    # "an"). Covers the sparkline_axis call site and its two-tier sub-row.
     low = datetime(2024, 1, 1, tzinfo=UTC).timestamp()
     high = datetime(2024, 3, 1, tzinfo=UTC).timestamp()
-    svg = sparkline_axis(x_domain=(low, high), fmt=DateAxis(), theme=DEFAULT, temporal=True)
+    svg = sparkline_axis(
+        x_domain=(low, high), fmt=DateAxis(), theme=DEFAULT, temporal=True, target_ticks=1
+    )
     labels = re.findall(r'text-anchor="([^"]+)">([^<]*)</text>', svg)
     assert labels
     assert labels[0] == ("start", "Jan")
@@ -1032,14 +1044,13 @@ def test_sparkline_axis_renders_calendar_labels_for_temporal_domain():
     )
     assert svg.startswith("<svg")
     assert svg.endswith("</svg>")
-    # The tick set spans two calendar years, so sparkline_axis must wire
-    # show_year=True through to DateAxis -- every month label carries its
-    # year, not just the bare abbreviation.
-    assert "Jan 2024" in svg
-    assert "Jan 2025" in svg
+    # This domain spans 14 months, so it renders the two-tier axis: bare
+    # month names on the sub-row, full years grouped on the row above.
+    assert "2024" in svg
+    assert "2025" in svg
 
 
-def test_sparkline_axis_omits_the_year_within_a_single_calendar_year():
+def test_sparkline_axis_shows_the_year_once_for_a_single_calendar_year():
     low = datetime(2024, 1, 1, tzinfo=UTC).timestamp()
     high = datetime(2024, 8, 1, tzinfo=UTC).timestamp()
     svg = sparkline_axis(
@@ -1049,16 +1060,20 @@ def test_sparkline_axis_omits_the_year_within_a_single_calendar_year():
         temporal=True,
         target_ticks=14,
     )
-    # Every tick falls in 2024 -- show_year must stay False, so labels are
-    # the bare month abbreviation with no adjacent year.
-    assert "Jan" in svg
-    assert "2024" not in svg
+    # Every tick falls in 2024 -- the sub-row never repeats it (bare month
+    # names only), but the grouped row above still shows it once. The
+    # two-tier layout always nests, even a single group, so there is no
+    # reason to suppress a lone year the way an inline single-row token
+    # would have needed to.
+    labels = re.findall(r'text-anchor="[^"]+">([^<]*)</text>', svg)
+    assert labels[:-1] == ["Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug"]
+    assert labels[-1] == "2024"
 
 
 def test_sparkline_axis_temporal_labels_adapt_to_a_coarser_step_than_fmt_default():
-    # sparkline_axis must override the label granularity to match whichever
-    # ladder rung calendar_ticks actually picked, not whatever `step` the
-    # caller happened to construct `fmt` with.
+    # sparkline_axis's bare-rung selection can override the label
+    # granularity entirely, not just whatever `step` the caller happened to
+    # construct `fmt` with.
     low = datetime(2020, 1, 1, tzinfo=UTC).timestamp()
     high = datetime(2025, 1, 1, tzinfo=UTC).timestamp()
     svg = sparkline_axis(
@@ -1067,8 +1082,11 @@ def test_sparkline_axis_temporal_labels_adapt_to_a_coarser_step_than_fmt_default
         theme=DEFAULT,
         temporal=True,
     )
-    assert "2020" in svg
-    assert "Jan" not in svg
+    labels = re.findall(r'text-anchor="[^"]+">([^<]*)</text>', svg)
+    assert labels
+    # A 5-year span lands on year granularity -- not the caller's requested
+    # month step, which would render bare "Jan" labels with no year at all.
+    assert all(re.fullmatch(r"\d{4}", text) for text in labels)
 
 
 def test_calendar_ticks_14_month_span_lands_on_month_boundaries():
@@ -1154,13 +1172,17 @@ def test_calendar_ticks_meets_the_density_floor_across_ladder_boundaries():
 def test_calendar_ticks_recovers_density_for_a_6_to_7_day_span():
     # Originally reported: a week-long window picked the week rung, which
     # crosses at most one boundary in 6-7 days and rendered a single tick.
+    # The exact rung the wider ladder lands on is not the point -- only that
+    # an ordinary short span still clears the density floor on real,
+    # uniformly spaced day boundaries.
     low = datetime(2024, 1, 1, tzinfo=UTC).timestamp()
     for days in (6, 7):
         high = low + days * 86_400.0
         ticks = calendar_ticks(low, high)
         assert len(ticks) >= _CALENDAR_TICK_FLOOR
-        gaps = [b - a for a, b in pairwise(ticks)]
-        assert all(gap == 86_400.0 for gap in gaps)
+        gaps = {b - a for a, b in pairwise(ticks)}
+        assert len(gaps) == 1
+        assert gaps.pop() % 86_400.0 == 0
 
 
 def test_calendar_ticks_recovers_density_for_a_29_day_span():
@@ -1184,3 +1206,244 @@ def test_sparkline_axis_temporal_domain_honours_a_custom_callable_fmt():
     labels = re.findall(r"<text[^>]*>([^<]+)</text>", svg)
     assert labels
     assert all(label == "X" for label in labels)
+
+
+def test_calendar_ticks_new_ladder_rungs_cover_the_5_to_14_day_band():
+    # 2d/3d/14d rungs exist specifically to close the gap between week (too
+    # sparse under 15 days) and day (too dense over 6 days) -- confirm the
+    # ladder actually lands on one of them, not just carries it unused.
+    low = datetime(2024, 1, 17, tzinfo=UTC).timestamp()
+    seen_steps = set()
+    for days in range(5, 15):
+        high = low + days * 86_400.0
+        ticks = calendar_ticks(low, high)
+        gaps = {b - a for a, b in pairwise(ticks)}
+        assert len(gaps) == 1
+        seen_steps.add(gaps.pop())
+    assert seen_steps & {2 * 86_400.0, 3 * 86_400.0}
+
+
+def test_calendar_ticks_weekly_grid_aligns_to_monday():
+    # Epoch-aligned weekly ticks land on Thursdays -- an artifact of
+    # 1970-01-01, not a choice. The grid is phase-shifted to the ISO week
+    # start instead.
+    low = datetime(2024, 1, 1, tzinfo=UTC).timestamp()
+    high = datetime(2024, 3, 1, tzinfo=UTC).timestamp()
+    ticks = calendar_ticks(low, high, target=8)  # forces the week rung
+    dates = [datetime.fromtimestamp(t, tz=UTC) for t in ticks]
+    assert dates
+    assert all(d.weekday() == 0 for d in dates)  # Monday == 0
+
+
+def test_super_row_recascades_the_surviving_group_label_after_a_drop():
+    # A domain whose finest admissible month-group arrangement must drop an
+    # edge group's label to clear a collision -- here the one that would
+    # anchor the year. `multi_year` is pinned from the full, undropped
+    # group set specifically so that dropping it does not silently erase
+    # the fact that the domain spans two years: some surviving label must
+    # still carry each year that appears anywhere in the underlying data.
+    low = datetime(2024, 10, 15, tzinfo=UTC).timestamp()
+    high = datetime(2025, 2, 15, tzinfo=UTC).timestamp()
+    width = 160
+    project = _projector((low, high), width, 3)
+    result = _super_row("day", low, high, project=project, width=width)
+    assert result is not None
+    _centers, admitted = result
+    assert "" in admitted  # this domain's collision does drop one group's label
+    shown = [text for text in admitted if text]
+    assert any("'24" in text for text in shown)
+    assert any("'25" in text for text in shown)
+
+
+def test_sparkline_axis_numeric_labels_never_collide():
+    # The same collision property, but for the plain numeric axis a
+    # non-temporal x column renders through (nice_ticks + a Number format --
+    # e.g. "days since start" as a bare float, not a calendar date).
+    fmt = Number(decimals=0)
+    for high in (1.0, 5.0, 14.0, 30.0, 90.0, 365.0, 1000.0, 5000.0, 123_456.0):
+        for width in (220, 160):
+            project = _projector((0.0, high), width, 3)
+            ticks = nice_ticks(0.0, high, 4)
+            texts = [fmt(t) for t in ticks]
+            boxes = _label_boxes(ticks, texts, project, width)
+            assert _fits(boxes), f"numeric collision: high={high} width={width} labels={texts}"
+
+
+def test_bare_label_shows_only_its_own_component():
+    value = datetime(2026, 4, 15, tzinfo=UTC)
+    assert _bare_label(value, "day") == "15"
+    assert _bare_label(value, "month") == "Apr"
+    assert _bare_label(value, "year") == "2026"
+
+
+def test_month_groups_covers_every_month_the_domain_touches():
+    low = datetime(2024, 1, 17, tzinfo=UTC).timestamp()
+    high = datetime(2024, 3, 17, tzinfo=UTC).timestamp()
+    groups = _month_groups(low, high)
+    assert [start.month for start, _ in groups] == [1, 2, 3]
+    assert all(start.day == 1 for start, _ in groups)
+
+
+def test_year_groups_covers_every_year_the_domain_touches():
+    low = datetime(2024, 6, 1, tzinfo=UTC).timestamp()
+    high = datetime(2026, 6, 1, tzinfo=UTC).timestamp()
+    groups = _year_groups(low, high)
+    assert [start.year for start, _ in groups] == [2024, 2025, 2026]
+    assert all(start.month == 1 and start.day == 1 for start, _ in groups)
+
+
+def test_super_row_renders_a_single_group_centred_over_the_whole_span():
+    # A day sub-row confined to one month, and a month sub-row confined to
+    # one year, both still get one group label -- the two-tier layout
+    # always nests, even when there is only one group to show.
+    low = datetime(2024, 1, 17, tzinfo=UTC).timestamp()
+    high = datetime(2024, 1, 30, tzinfo=UTC).timestamp()
+    project = _projector((low, high), 220, 3)
+    result = _super_row("day", low, high, project=project, width=220)
+    assert result is not None
+    _centers, texts = result
+    assert texts == ["Jan"]
+
+    low = datetime(2024, 1, 17, tzinfo=UTC).timestamp()
+    high = datetime(2024, 7, 17, tzinfo=UTC).timestamp()
+    project = _projector((low, high), 220, 3)
+    result = _super_row("month", low, high, project=project, width=220)
+    assert result is not None
+    _centers, texts = result
+    assert texts == ["2024"]
+
+
+def test_super_row_none_for_year_sub_step():
+    # Nothing is coarser than a year to group a yearly sub-row by.
+    low = datetime(2024, 1, 1, tzinfo=UTC).timestamp()
+    high = datetime(2030, 1, 1, tzinfo=UTC).timestamp()
+    project = _projector((low, high), 220, 3)
+    assert _super_row("year", low, high, project=project, width=220) is None
+
+
+def test_super_row_groups_months_without_a_year_token_within_one_year():
+    low = datetime(2024, 1, 17, tzinfo=UTC).timestamp()
+    high = datetime(2024, 3, 17, tzinfo=UTC).timestamp()
+    project = _projector((low, high), 220, 3)
+    result = _super_row("day", low, high, project=project, width=220)
+    assert result is not None
+    _centers, texts = result
+    assert [t for t in texts if t] == ["Jan", "Feb", "Mar"]
+
+
+def test_super_row_groups_years_always_full_four_digits():
+    low = datetime(2024, 1, 17, tzinfo=UTC).timestamp()
+    high = datetime(2026, 1, 17, tzinfo=UTC).timestamp()
+    project = _projector((low, high), 220, 3)
+    result = _super_row("month", low, high, project=project, width=220)
+    assert result is not None
+    _centers, texts = result
+    assert [t for t in texts if t] == ["2024", "2025", "2026"]
+
+
+def test_super_row_group_centres_on_its_true_clipped_span():
+    # January only starts on the 17th in this domain -- the group's centre
+    # must reflect the visible sliver, not the full calendar month.
+    low = datetime(2024, 1, 17, tzinfo=UTC).timestamp()
+    high = datetime(2024, 3, 17, tzinfo=UTC).timestamp()
+    project = _projector((low, high), 220, 3)
+    result = _super_row("day", low, high, project=project, width=220)
+    assert result is not None
+    centers, _texts = result
+    # The clipped January sliver (17th-31st, 14 days) is far narrower than
+    # February or March (full calendar months) -- its centre sits closer to
+    # the domain's left edge than an even three-way split would put it.
+    even_third = 3 + (220 - 6) / 3 / 2
+    assert centers[0] < even_third
+
+
+def test_select_bare_rung_labels_have_no_cascaded_context():
+    low = datetime(2024, 1, 17, tzinfo=UTC).timestamp()
+    high = datetime(2024, 1, 30, tzinfo=UTC).timestamp()
+    project = _projector((low, high), 220, 3)
+    result = _select_bare_rung(low, high, 4, project=project, width=220)
+    assert result is not None
+    rung, _ticks, texts = result
+    assert rung.label == "day"
+    # Bare day numbers only -- no month name anywhere, unlike the cascaded
+    # single-row design's first label.
+    assert all(t == "" or t.isdigit() for t in texts)
+
+
+def test_sparkline_axis_renders_two_tier_for_a_multi_month_domain():
+    low = datetime(2024, 1, 17, tzinfo=UTC).timestamp()
+    high = datetime(2024, 3, 17, tzinfo=UTC).timestamp()
+    svg = sparkline_axis(
+        x_domain=(low, high), fmt=DateAxis(), theme=DEFAULT, temporal=True, show_endpoint=False
+    )
+    # Two rows cost a fixed height addition over the single-row default.
+    assert f'height="{22 + int(_SUPER_ROW_OFFSET)}"' in svg
+    texts = re.findall(r"<text[^>]*>([^<]+)</text>", svg)
+    # Bare sub-tick day numbers, with "Jan"/"Feb"/"Mar" living only in the
+    # grouped row -- no sub-tick label carries a month name.
+    assert any(t.isdigit() for t in texts)
+    assert {"Jan", "Feb", "Mar"} <= set(texts)
+
+
+def test_sparkline_axis_nests_even_a_single_group():
+    # A domain confined to a single month still gets the two-tier layout --
+    # one group label ("Jan"), centred over the whole width, rather than
+    # folding it into the first tick inline.
+    low = datetime(2024, 1, 17, tzinfo=UTC).timestamp()
+    high = datetime(2024, 1, 30, tzinfo=UTC).timestamp()
+    svg = sparkline_axis(
+        x_domain=(low, high), fmt=DateAxis(), theme=DEFAULT, temporal=True, show_endpoint=False
+    )
+    assert f'height="{22 + int(_SUPER_ROW_OFFSET)}"' in svg
+    labels = re.findall(r'text-anchor="[^"]+">([^<]*)</text>', svg)
+    assert labels
+    assert labels[-1] == "Jan"
+    # The sub-row is bare -- no label repeats the month inline.
+    assert all(text.isdigit() for text in labels[:-1])
+
+
+def test_sparkline_axis_two_tier_rows_never_collide():
+    # The same collision property as the single-row design, but exercised
+    # end-to-end through sparkline_axis for domains that actually trigger
+    # the two-tier layout, checking each row independently (they are
+    # vertically separated, so only within-row collisions matter).
+    def row_boxes(items: list[tuple[float, str, str]]) -> list[tuple[float, float]]:
+        boxes = []
+        for x, anchor, text in items:
+            w = len(text) * 9.0 * _CHAR_WIDTH_RATIO
+            left = x if anchor == "start" else (x - w if anchor == "end" else x - w / 2)
+            boxes.append((left, left + w))
+        return boxes
+
+    starts = [
+        datetime(2024, 1, 17, tzinfo=UTC),
+        datetime(2024, 12, 20, tzinfo=UTC),
+        datetime(2023, 2, 28, tzinfo=UTC),
+    ]
+    spans_days = (*range(1, 15), 31, 60, 91, 182, 366, 425, 731, 851, 1155)
+    layouts = ((220, True), (220, False), (160, True))
+    for start in starts:
+        for days in spans_days:
+            low = start.timestamp()
+            high = (start + timedelta(days=days)).timestamp()
+            for width, show_endpoint in layouts:
+                svg = sparkline_axis(
+                    x_domain=(low, high),
+                    fmt=DateAxis(),
+                    theme=DEFAULT,
+                    temporal=True,
+                    width=width,
+                    show_endpoint=show_endpoint,
+                )
+                items = re.findall(
+                    r'<text x="([-\d.]+)" y="([-\d.]+)"[^>]*text-anchor="([^"]+)">([^<]*)</text>',
+                    svg,
+                )
+                by_row: dict[str, list[tuple[float, str, str]]] = {}
+                for x, y, anchor, text in items:
+                    by_row.setdefault(y, []).append((float(x), anchor, text))
+                for y, row in by_row.items():
+                    assert _fits(row_boxes(row)), (
+                        f"collision: start={start.date()} days={days} width={width} "
+                        f"show_endpoint={show_endpoint} row_y={y} labels={row}"
+                    )

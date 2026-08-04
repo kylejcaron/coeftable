@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import dataclasses
 import math
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from itertools import pairwise
 from typing import NamedTuple
 
-from coeftable.format import CalendarStep, DateAxis, Format, TimeFormat, is_missing
+from coeftable.format import _MONTH_ABBR, CalendarStep, DateAxis, Format, TimeFormat, is_missing
 from coeftable.theme import Theme
 
 _TICK_STEPS = (1.0, 2.0, 2.5, 5.0, 10.0)
@@ -50,6 +49,12 @@ def nice_ticks(low: float, high: float, target: int = 4) -> list[float]:
 _SECONDS_PER_DAY = 86_400.0
 _SECONDS_PER_MONTH = 30.4375 * _SECONDS_PER_DAY
 
+# 1970-01-01 (epoch) was a Thursday, 4 days after the preceding Monday, so an
+# epoch-aligned 7-day grid lands on Thursdays -- an artifact, not a choice.
+# Offsetting by this phase realigns weekly and fortnightly ticks to Monday,
+# the ISO-8601 week start.
+_WEEK_PHASE = 4 * _SECONDS_PER_DAY
+
 
 class _CalendarRung(NamedTuple):
     """One candidate calendar tick granularity.
@@ -72,11 +77,16 @@ class _CalendarRung(NamedTuple):
         return self.months * _SECONDS_PER_MONTH if self.months else self.seconds
 
 
-# Finest to coarsest. Month multiples 1-6 divide 12 (ticks stay aligned
-# within a year); 12 and up are whole years labelled by year alone.
+# Finest to coarsest. 2d/3d/14d close the density gap below the week rung --
+# without them a 5-14 day span has nowhere to land except >=7 colliding day
+# ticks or <3 sparse week ticks. Month multiples 1-6 divide 12 (ticks stay
+# aligned within a year); 12 and up are whole years labelled by year alone.
 _CALENDAR_RUNGS: tuple[_CalendarRung, ...] = (
     _CalendarRung("day", 0, _SECONDS_PER_DAY),
+    _CalendarRung("day", 0, 2 * _SECONDS_PER_DAY),
+    _CalendarRung("day", 0, 3 * _SECONDS_PER_DAY),
     _CalendarRung("day", 0, 7 * _SECONDS_PER_DAY),
+    _CalendarRung("day", 0, 14 * _SECONDS_PER_DAY),
     _CalendarRung("month", 1, 0.0),
     _CalendarRung("month", 2, 0.0),
     _CalendarRung("month", 3, 0.0),
@@ -96,9 +106,9 @@ _CALENDAR_RUNGS: tuple[_CalendarRung, ...] = (
 _CALENDAR_TICK_FLOOR = 3
 
 
-def _uniform_ticks(low: float, high: float, step: float) -> list[float]:
-    """Evenly spaced ticks every `step` seconds -- the day/week case of `calendar_ticks`."""
-    start = math.ceil(low / step) * step
+def _uniform_ticks(low: float, high: float, step: float, phase: float = 0.0) -> list[float]:
+    """Evenly spaced ticks every `step` seconds, offset by `phase` (the day/week rung case)."""
+    start = math.ceil((low - phase) / step) * step + phase
     count = math.floor((high - start) / step) + 1
     return [round(start + i * step, 6) for i in range(max(count, 0))]
 
@@ -142,7 +152,11 @@ def _rung_ticks(low: float, high: float, rung: _CalendarRung) -> list[float]:
         low_dt = datetime.fromtimestamp(low, tz=UTC)
         high_dt = datetime.fromtimestamp(high, tz=UTC)
         return _month_aligned_ticks(low_dt, high_dt, rung.months)
-    return _uniform_ticks(low, high, rung.seconds)
+    # Any multiple of a week gets the Monday phase; sub-week day multiples
+    # (2d, 3d) have no natural start-of-week to align to, so they stay
+    # epoch-uniform -- every day is an equally valid boundary at that scale.
+    phase = _WEEK_PHASE if rung.seconds % (7 * _SECONDS_PER_DAY) == 0 else 0.0
+    return _uniform_ticks(low, high, rung.seconds, phase)
 
 
 def _select_calendar_rung(low: float, high: float, target: int) -> _CalendarRung:
@@ -230,6 +244,244 @@ def _tick_anchor(tick_x: float, label: str, width: int, font_size: float = 9.0) 
     if tick_x + half > width:
         return "end"
     return "middle"
+
+
+_MIN_LABEL_GAP = 2.0
+# Minimum horizontal gap (px) required between adjacent label boxes for a
+# calendar rung to be admitted by `_resolve_collisions`. Non-zero to absorb
+# `_CHAR_WIDTH_RATIO`'s approximation error, not because 0px would look fine.
+
+
+def _label_boxes_at(xs: list[float], texts: list[str], width: int) -> list[tuple[float, float]]:
+    """Pixel `(left, right)` extent of each label already projected to `xs`.
+
+    Shared by every collision check in this module -- tick-based (project a
+    calendar/numeric position first, via `_label_boxes`) and position-based
+    (a grouped super-tick's segment centre, which has no underlying tick to
+    project) -- so all of them measure a label identically.
+    """
+    boxes: list[tuple[float, float]] = []
+    for x, text in zip(xs, texts, strict=True):
+        label_width = len(text) * 9.0 * _CHAR_WIDTH_RATIO
+        anchor = _tick_anchor(x, text, width)
+        if anchor == "start":
+            left = x
+        elif anchor == "end":
+            left = x - label_width
+        else:
+            left = x - label_width / 2
+        boxes.append((left, left + label_width))
+    return boxes
+
+
+def _label_boxes(
+    ticks: list[float], texts: list[str], project: Callable[[float], float], width: int
+) -> list[tuple[float, float]]:
+    """Pixel `(left, right)` extent of each tick's label, including `_tick_anchor`'s edge shift.
+
+    Shared by `_select_bare_rung`/`_super_row` and `_render_tick_axis` so a fit
+    decision and the actual render can never disagree about where a label sits.
+    """
+    return _label_boxes_at([project(tick) for tick in ticks], texts, width)
+
+
+def _fits(boxes: list[tuple[float, float]]) -> bool:
+    """Return True when every adjacent pair of label boxes clears `_MIN_LABEL_GAP`."""
+    return all(b2[0] - b1[1] >= _MIN_LABEL_GAP for b1, b2 in pairwise(boxes))
+
+
+def _resolve_collisions(
+    xs: list[float], make_texts: Callable[[list[int]], list[str]], width: int
+) -> list[str] | None:
+    """Resolve label text with a colliding outermost label dropped, or None if none fits.
+
+    `make_texts(kept_indices)` (re)computes label text for whichever subset
+    is actually being tried, every time -- dropping an outermost position
+    lets it re-anchor context onto whichever position becomes the new first
+    or last, so a survivor is never left silently unqualified by a
+    neighbour that got dropped. Recomputing from scratch, not slicing the
+    full-set labels, is what makes this correct: a bare day number two
+    ticks in only reads safely if *its own* predecessor in the rendered set
+    shares its month, not the predecessor in the discarded full set.
+
+    Shared by `_select_bare_rung` (sub-row ticks, bare per-index lookup) and
+    `_super_row` (grouped labels, recasts via `DateAxis._cascade` over
+    group starts) -- one collision-and-drop policy for every row this
+    module renders.
+
+    `_tick_anchor` shifts an edge label inward to keep it on-canvas, and
+    that shift alone can drag it into its neighbour -- so if the only
+    collision involves the first or last position, drop that position's
+    *label* (its mark still renders, where the caller draws one) rather
+    than rejecting the whole arrangement for one over-dragged edge. Stops
+    once fewer than 2 labels would remain, so a 2-position row is never
+    blanked down to nothing.
+    """
+    n = len(xs)
+
+    def arrangement(kept: list[int]) -> list[str] | None:
+        kept_texts = make_texts(kept)
+        boxes = _label_boxes_at([xs[i] for i in kept], kept_texts, width)
+        if not _fits(boxes):
+            return None
+        out = [""] * n
+        for i, text in zip(kept, kept_texts, strict=True):
+            out[i] = text
+        return out
+
+    full = arrangement(list(range(n)))
+    if full is not None:
+        return full
+    if n < 2:
+        return None
+    for drop in ([n - 1], [0], [0, n - 1]):
+        if n - len(drop) < 2:
+            break
+        got = arrangement([i for i in range(n) if i not in drop])
+        if got is not None:
+            return got
+    return None
+
+
+def _bare_label(dt: datetime, step: CalendarStep) -> str:
+    """Format `dt` at its own granularity alone, with no coarser context.
+
+    Used only for the two-tier axis's sub-row: coarser context (month or
+    year) lives entirely in the grouped super row above it, so the sub-row
+    never needs to say more than its own single component.
+    """
+    if step == "year":
+        return str(dt.year)
+    if step == "month":
+        return _MONTH_ABBR[dt.month - 1]
+    return str(dt.day)
+
+
+def _select_bare_rung(
+    low: float,
+    high: float,
+    target: int,
+    *,
+    project: Callable[[float], float],
+    width: int,
+    exclude: frozenset[CalendarStep] = frozenset(),
+) -> tuple[_CalendarRung, list[float], list[str]] | None:
+    """Pick the calendar rung whose *bare* labels best fit, for the two-tier sub-row.
+
+    Every label is a single bare component (`_bare_label`) with no
+    cascading -- narrower than a cascaded label at the same rung, so this
+    searches the ladder independently of any cascade-aware selection.
+
+    `exclude` drops whole rung labels (typically `{"year"}`) from
+    consideration: a domain spanning multiple years must not let its sub-row
+    land on year granularity, or there is nothing coarser left to group by
+    in the super row above it -- see `sparkline_axis`.
+
+    Returns None only for a degenerate domain (never for a valid one, since
+    `exclude` never empties the whole ladder -- day and month rungs are
+    always eligible). Callers passing a non-empty `exclude` should retry
+    without it before treating None as truly unresolvable.
+    """
+    if not (math.isfinite(low) and math.isfinite(high)) or high <= low:
+        return None
+    best: tuple[tuple[int, int, int], _CalendarRung, list[float], list[str]] | None = None
+    for index, rung in enumerate(_CALENDAR_RUNGS):
+        if rung.label in exclude:
+            continue
+        ticks = _rung_ticks(low, high, rung)
+        if not ticks:
+            continue
+        dts = [datetime.fromtimestamp(t, tz=UTC) for t in ticks]
+        texts_all = [_bare_label(dt, rung.label) for dt in dts]
+        xs = [project(t) for t in ticks]
+        admitted = _resolve_collisions(xs, lambda kept, ta=texts_all: [ta[i] for i in kept], width)
+        if admitted is None:
+            continue
+        shown = sum(1 for text in admitted if text)
+        score = (abs(shown - target), -shown, index)
+        if best is None or score < best[0]:
+            best = (score, rung, ticks, admitted)
+    if best is None:
+        return None
+    return best[1], best[2], best[3]
+
+
+def _month_groups(low: float, high: float) -> list[tuple[datetime, datetime]]:
+    """Calendar-month `(start, end)` bounds for every month overlapping `[low, high]`."""
+    high_dt = datetime.fromtimestamp(high, tz=UTC)
+    index = _month_index(datetime.fromtimestamp(low, tz=UTC))
+    groups: list[tuple[datetime, datetime]] = []
+    start = _month_start(index)
+    while start < high_dt:
+        index += 1
+        end = _month_start(index)
+        groups.append((start, end))
+        start = end
+    return groups
+
+
+def _year_groups(low: float, high: float) -> list[tuple[datetime, datetime]]:
+    """Calendar-year `(start, end)` bounds for every year overlapping `[low, high]`."""
+    high_dt = datetime.fromtimestamp(high, tz=UTC)
+    year = datetime.fromtimestamp(low, tz=UTC).year
+    groups: list[tuple[datetime, datetime]] = []
+    start = datetime(year, 1, 1, tzinfo=UTC)
+    while start < high_dt:
+        end = datetime(start.year + 1, 1, 1, tzinfo=UTC)
+        groups.append((start, end))
+        start = end
+    return groups
+
+
+def _super_row(
+    sub_step: CalendarStep,
+    low: float,
+    high: float,
+    *,
+    project: Callable[[float], float],
+    width: int,
+) -> tuple[list[float], list[str]] | None:
+    """Return grouped super-tick centres and labels for the two-tier axis's coarser row.
+
+    Groups by month when the sub-row is daily, by year when it is monthly --
+    the one level up `sub_step` implies. Returns None only when there is
+    nothing coarser to group a yearly sub-row by (nothing else does: even a
+    single group still renders, one label centred over the whole visible
+    span -- see `sparkline_axis`, which always uses the two-tier layout
+    rather than falling back to a single row when a group exists).
+
+    Uses `_resolve_collisions` exactly as the sub-row does: a group's label
+    centres over its true, domain-clipped pixel span (not its full calendar
+    extent -- a January that only starts on the 17th still centres over the
+    shorter visible sliver), and the same collision-and-drop policy governs
+    it, recasting via `DateAxis._cascade` so a surviving label after a drop
+    is never left unqualified by a neighbour that got dropped.
+    """
+    if sub_step == "day":
+        groups = _month_groups(low, high)
+        group_step: CalendarStep = "month"
+    elif sub_step == "month":
+        groups = _year_groups(low, high)
+        group_step = "year"
+    else:
+        return None
+    if not groups:
+        return None
+    starts = [start for start, _ in groups]
+    centers = [
+        project((max(start.timestamp(), low) + min(end.timestamp(), high)) / 2)
+        for start, end in groups
+    ]
+    label = DateAxis(step=group_step)
+    multi_year = len({start.year for start in starts}) > 1
+    admitted = _resolve_collisions(
+        centers,
+        lambda kept: label._cascade([starts[i] for i in kept], multi_year=multi_year),
+        width,
+    )
+    if admitted is None or not any(admitted):
+        return None
+    return centers, admitted
 
 
 def _line_runs(
@@ -587,30 +839,106 @@ def _render_tick_axis(
     ticks: list[float],
     *,
     project: Callable[[float], float],
-    label: Format | TimeFormat,
+    texts: list[str],
     baseline: float,
     height: int,
     width: int,
     theme: Theme,
 ) -> list[str]:
-    """Render each tick as a mark plus a label, shared by both axis emitters.
+    """Render each tick as a mark plus its (already formatted) label.
 
-    `forest_axis` and `sparkline_axis` draw an identical tick mark and
-    label per position; only the tick set and the labelling callable
-    differ. `label` is applied to each raw tick value to produce its text.
+    `forest_axis` and `sparkline_axis` draw an identical tick mark and label
+    per position; only the tick set and how `texts` was produced differ -- a
+    plain `Format` call for `forest_axis`, `DateAxis.labels()`'s cascading
+    rule for a temporal `sparkline_axis`. `texts` must be the same length as
+    `ticks`; a blank entry draws the tick mark with no label, which is how
+    `_resolve_collisions` (via `_select_bare_rung`/`_super_row`) resolves an edge-label collision.
     """
     parts: list[str] = []
-    for tick in ticks:
+    for tick, text in zip(ticks, texts, strict=True):
         tick_x = project(tick)
-        text = label(tick)
         parts.append(
             f'<line x1="{tick_x:.2f}" y1="{baseline:.2f}" x2="{tick_x:.2f}" '
             f'y2="{baseline + 3:.2f}" stroke="{theme.axis}" stroke-width="0.75"/>'
         )
+        if text:
+            parts.append(
+                f'<text x="{tick_x:.2f}" y="{height - 2:.2f}" fill="{theme.axis}" '
+                f'font-size="9" text-anchor="{_tick_anchor(tick_x, text, width)}">{text}</text>'
+            )
+    return parts
+
+
+def _dedupe_consecutive_labels(texts: list[str]) -> list[str]:
+    """Blank any label whose text repeats its predecessor's, keeping the tick mark.
+
+    A repeated label conveys no information and reads as a rendering bug --
+    most often a numeric domain whose tick spacing is finer than the
+    formatter's own precision (`Number(decimals=0)` rounding ticks at 0,
+    0.25, 0.5, 0.75, 1.0 to "0", "0", "0", "1", "1"). Ticks stay exactly
+    where `nice_ticks` put them; only the misleadingly-repeated text is
+    dropped, mirroring how `_resolve_collisions` resolves a calendar-tick collision.
+    Not used on `DateAxis.labels()`'s output -- its own cascade already
+    guarantees no two adjacent calendar ticks format identically.
+    """
+    out: list[str] = []
+    prev: str | None = None
+    for text in texts:
+        if text and text == prev:
+            out.append("")
+        else:
+            out.append(text)
+            if text:
+                prev = text
+    return out
+
+
+_SUPER_ROW_OFFSET = 12.0
+# Extra px reserved below the sub-row's own label baseline for the grouped
+# month/year row -- see `_render_two_tier_axis`.
+
+
+def _render_two_tier_axis(
+    sub_ticks: list[float],
+    sub_texts: list[str],
+    super_centers: list[float],
+    super_texts: list[str],
+    *,
+    project: Callable[[float], float],
+    baseline: float,
+    sub_height: int,
+    width: int,
+    theme: Theme,
+) -> list[str]:
+    """Render the two-row temporal axis.
+
+    Bare sub-ticks near the spine, grouped month/year labels further out
+    with no tick mark of their own, centred over the true pixel span each
+    group covers.
+
+    The sub-row sits at exactly the position a single-row axis of
+    `sub_height` would use -- unlabelled ticks read no differently switching
+    between the two -- and the super row is a fixed offset further out.
+    """
+    parts: list[str] = []
+    for tick, text in zip(sub_ticks, sub_texts, strict=True):
+        tick_x = project(tick)
         parts.append(
-            f'<text x="{tick_x:.2f}" y="{height - 2:.2f}" fill="{theme.axis}" '
-            f'font-size="9" text-anchor="{_tick_anchor(tick_x, text, width)}">{text}</text>'
+            f'<line x1="{tick_x:.2f}" y1="{baseline:.2f}" x2="{tick_x:.2f}" '
+            f'y2="{baseline + 3:.2f}" stroke="{theme.axis}" stroke-width="0.75"/>'
         )
+        if text:
+            parts.append(
+                f'<text x="{tick_x:.2f}" y="{sub_height - 2:.2f}" fill="{theme.axis}" '
+                f'font-size="9" text-anchor="{_tick_anchor(tick_x, text, width)}">{text}</text>'
+            )
+    super_y = sub_height - 2 + _SUPER_ROW_OFFSET
+    for x, text in zip(super_centers, super_texts, strict=True):
+        if text:
+            parts.append(
+                f'<text x="{x:.2f}" y="{super_y:.2f}" fill="{theme.muted}" '
+                f'font-size="9" text-anchor="{_tick_anchor(x, text, width)}">{text}</text>'
+            )
     return parts
 
 
@@ -660,11 +988,13 @@ def forest_axis(
             f'<line x1="{ref_x:.2f}" y1="0" x2="{ref_x:.2f}" y2="{baseline:.2f}" '
             f'stroke="{theme.axis}" stroke-width="1" stroke-dasharray="2,2"/>'
         )
+    ticks = nice_ticks(low, high, target_ticks)
+    texts = _dedupe_consecutive_labels([fmt(t) for t in ticks])
     parts.extend(
         _render_tick_axis(
-            nice_ticks(low, high, target_ticks),
+            ticks,
             project=project,
-            label=fmt,
+            texts=texts,
             baseline=baseline,
             height=height,
             width=width,
@@ -952,17 +1282,25 @@ def sparkline_axis(
         Shared x-domain, table-wide -- see `sparkline_bar`'s `x_domain`.
     fmt
         Callable used to label each tick. When `temporal` is True and `fmt`
-        is a `DateAxis`, a copy with `step` set to whichever rung
-        `calendar_ticks` picked for this domain is used instead, so the
-        label granularity always matches the ticks being drawn. Any other
-        callable, temporal or not, is called exactly as given.
+        is a `DateAxis`, the axis always renders two rows: bare sub-ticks
+        near the spine (`_select_bare_rung`) plus a grouped month/year row
+        further out (`_super_row`), each group centred over its true pixel
+        span with no tick mark of its own -- even a domain confined to a
+        single month or year still gets one group label, centred over the
+        whole width, rather than folding that context into a tick label
+        inline. The only case with no super row is a domain that itself
+        spans years at year-tick granularity, where nothing is coarser to
+        group by; that renders bare year ticks alone. Any other callable,
+        temporal or not, is called once per tick exactly as given.
     theme
         Supplies the axis colour and label size.
     temporal
-        Use `calendar_ticks` (real month/quarter/year boundaries) instead of
-        `nice_ticks` (decimal steps).
+        Use calendar-aware selection (real month/quarter/year boundaries)
+        instead of `nice_ticks` (decimal steps).
     width, height, inset
-        Geometry in pixels.
+        Geometry in pixels. A two-row axis (see `fmt` above) adds a fixed
+        offset to `height` for the grouped row; that addition is not
+        configurable.
     target_ticks
         Approximate number of ticks wanted.
     show_endpoint, endpoint_width
@@ -983,17 +1321,51 @@ def sparkline_axis(
         f'<line x1="{inset}" y1="{baseline:.2f}" x2="{plot_width - inset}" y2="{baseline:.2f}" '
         f'stroke="{theme.axis}" stroke-width="0.75"/>'
     ]
-    if temporal:
-        ticks = calendar_ticks(low, high, target_ticks)
-        if isinstance(fmt, DateAxis) and ticks:
-            rung = _select_calendar_rung(low, high, target_ticks)
-            years = {datetime.fromtimestamp(t, tz=UTC).year for t in ticks}
-            label = dataclasses.replace(fmt, step=rung.label, show_year=len(years) > 1)
+    if temporal and isinstance(fmt, DateAxis):
+        if not (math.isfinite(low) and math.isfinite(high)) or high < low:
+            ticks, texts = [], []
+        elif high == low:
+            ticks, texts = [low], [fmt(low)]
         else:
-            label = fmt
+            # A domain spanning multiple years must not let its sub-row land
+            # on year granularity -- there would be nothing coarser left to
+            # group by in the super row above it. Falls back to allowing it
+            # only if excluding it leaves no rung that fits at all.
+            exclude: frozenset[CalendarStep] = (
+                frozenset({"year"}) if len(_year_groups(low, high)) > 1 else frozenset()
+            )
+            bare = _select_bare_rung(
+                low, high, target_ticks, project=project, width=width, exclude=exclude
+            )
+            if bare is None and exclude:
+                bare = _select_bare_rung(low, high, target_ticks, project=project, width=width)
+            if bare is None:
+                ticks, texts = [], []
+            else:
+                rung, ticks, texts = bare
+                super_row = _super_row(rung.label, low, high, project=project, width=width)
+                if super_row is not None:
+                    super_centers, super_texts = super_row
+                    parts.extend(
+                        _render_two_tier_axis(
+                            ticks,
+                            texts,
+                            super_centers,
+                            super_texts,
+                            project=project,
+                            baseline=baseline,
+                            sub_height=height,
+                            width=width,
+                            theme=theme,
+                        )
+                    )
+                    return _svg(width, height + int(_SUPER_ROW_OFFSET), "".join(parts))
+    elif temporal:
+        ticks = calendar_ticks(low, high, target_ticks)
+        texts = [fmt(t) for t in ticks]
     else:
         ticks = nice_ticks(low, high, target_ticks)
-        label = fmt
+        texts = _dedupe_consecutive_labels([fmt(t) for t in ticks])
     # The anchor boundary is `width`, not `plot_width`: what we are avoiding is
     # the canvas cutting a label off, and the canvas is the full `width`. The
     # endpoint reserve past `plot_width` is empty on a footer row -- the
@@ -1004,7 +1376,7 @@ def sparkline_axis(
         _render_tick_axis(
             ticks,
             project=project,
-            label=label,
+            texts=texts,
             baseline=baseline,
             height=height,
             width=width,

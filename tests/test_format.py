@@ -113,21 +113,50 @@ def test_absent_ci_renders_point_estimate_only():
     assert "\u221e" not in html
 
 
-def test_date_axis_renders_label_by_step_granularity():
+def test_date_axis_call_fully_qualifies_with_no_neighbours():
+    # __call__ has no tick-set context to diff against, so unlike labels()
+    # it always shows every coarser component.
     value = datetime(2026, 4, 15, tzinfo=UTC).timestamp()
     assert DateAxis(step="year")(value) == "2026"
-    assert DateAxis(step="month")(value) == "Apr"
-    assert DateAxis(step="day")(value) == "Apr 15"
-
-
-def test_date_axis_show_year_appends_year_to_month_and_day_labels():
-    value = datetime(2026, 4, 15, tzinfo=UTC).timestamp()
-    assert DateAxis(step="month", show_year=True)(value) == "Apr 2026"
-    assert DateAxis(step="day", show_year=True)(value) == "Apr 15, 2026"
-    # Year labels are already unambiguous -- show_year is a no-op there.
-    assert DateAxis(step="year", show_year=True)(value) == "2026"
+    assert DateAxis(step="month")(value) == "Apr '26"
+    assert DateAxis(step="day")(value) == "Apr 15 '26"
 
 
 def test_date_axis_default_step_is_month():
     value = datetime(2026, 4, 15, tzinfo=UTC).timestamp()
-    assert DateAxis()(value) == "Apr"
+    assert DateAxis()(value) == "Apr '26"
+
+
+def test_date_axis_labels_omit_the_year_within_a_single_calendar_year():
+    # A day-rung tick set that never leaves April 2026 -- itself a single
+    # year -- shows no year token anywhere, not even on the first tick: it
+    # adds nothing an axis reader doesn't already know from the surrounding
+    # table. The month still shows once, on the first tick.
+    dates = [datetime(2026, 4, 5), datetime(2026, 4, 12), datetime(2026, 4, 19)]
+    values = [d.replace(tzinfo=UTC).timestamp() for d in dates]
+    assert DateAxis(step="day").labels(values) == ["Apr 5", "12", "19"]
+
+
+def test_date_axis_labels_show_month_again_at_a_month_boundary():
+    dates = [datetime(2026, 4, 28), datetime(2026, 5, 5)]
+    values = [d.replace(tzinfo=UTC).timestamp() for d in dates]
+    assert DateAxis(step="day").labels(values) == ["Apr 28", "May 5"]
+
+
+def test_date_axis_labels_show_year_only_where_it_changes():
+    dates = [
+        datetime(2024, 4, 1),
+        datetime(2024, 7, 1),
+        datetime(2024, 10, 1),
+        datetime(2025, 1, 1),
+    ]
+    values = [d.replace(tzinfo=UTC).timestamp() for d in dates]
+    assert DateAxis(step="month").labels(values) == ["Apr '24", "Jul", "Oct", "Jan '25"]
+
+
+def test_date_axis_labels_at_year_step_always_show_the_full_year():
+    # Every year-rung tick is a distinct year by construction -- nothing to
+    # cascade -- and the pixel budget per tick is never tight there.
+    dates = [datetime(2025, 1, 1), datetime(2026, 1, 1), datetime(2027, 1, 1)]
+    values = [d.replace(tzinfo=UTC).timestamp() for d in dates]
+    assert DateAxis(step="year").labels(values) == ["2025", "2026", "2027"]
