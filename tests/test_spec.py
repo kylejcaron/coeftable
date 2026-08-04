@@ -7,7 +7,9 @@ from coeftable.spec import (
     Estimate,
     Forest,
     Passthrough,
+    Sparkline,
     SpecError,
+    _domain_key,
     validate_columns,
 )
 from coeftable.theme import MONO, Direction
@@ -91,6 +93,41 @@ def test_no_columns_is_a_spec_error():
 
 def test_valid_spec_passes_validation():
     validate_columns((Estimate("A", "mean", ci=("lb", "ub")), Forest("Plot", of="A")))
+
+
+def test_inverted_sparkline_domain_is_a_spec_error():
+    with pytest.raises(SpecError, match=r"'S'.*strictly increasing.*100.0, 1.0"):
+        validate_columns((Sparkline("S", value="mean", domain=(100.0, 1.0)),))
+
+
+def test_inverted_forest_domain_is_a_spec_error():
+    with pytest.raises(SpecError, match=r"'Plot'.*strictly increasing.*100.0, 1.0"):
+        validate_columns(
+            (Estimate("A", "mean", ci=("lb", "ub")), Forest("Plot", of="A", domain=(100.0, 1.0)))
+        )
+
+
+def test_equal_domain_bounds_are_a_spec_error():
+    with pytest.raises(SpecError, match="strictly increasing"):
+        validate_columns((Sparkline("S", value="mean", domain=(5.0, 5.0)),))
+
+
+@pytest.mark.parametrize("bad", [-5, 0])
+def test_non_positive_max_domain_is_a_spec_error(bad):
+    with pytest.raises(SpecError, match=rf"'S'.*max_domain must be > 0.*{bad}"):
+        validate_columns((Sparkline("S", value="mean", max_domain=bad),))
+
+
+def test_valid_domain_and_max_domain_pass_validation():
+    validate_columns((Sparkline("S", value="mean", domain=(1.0, 100.0), max_domain=None),))
+    validate_columns((Sparkline("T", value="mean", max_domain=5),))
+
+
+def test_domain_key_rejects_unknown_scale():
+    bogus = Sparkline("S", value="mean")
+    object.__setattr__(bogus, "scale", "galaxy")
+    with pytest.raises(SpecError, match="unknown scale"):
+        _domain_key(bogus, "row", "group", "split")
 
 
 def test_specs_are_frozen_and_hashable():

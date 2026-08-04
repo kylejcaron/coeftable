@@ -60,6 +60,19 @@ class Series:
     x_temporal: bool = False
 
 
+def _nan_to_none(values: list[Any]) -> list[Any]:
+    """Normalize float ``nan`` key values to ``None``.
+
+    A pandas companion frame surfaces a null key-column cell as
+    ``float('nan')``, while identities built from a polars/pyarrow main
+    frame carry ``None`` for the same absence. ``nan != None`` (and
+    ``nan != nan``), so an unnormalized key would never match its
+    identity and the row would silently render blank. Collapsing ``nan``
+    to ``None`` on both sides keeps the two aligned.
+    """
+    return [None if isinstance(v, float) and math.isnan(v) else v for v in values]
+
+
 # Deliberately naive: paired with elapsed-time subtraction in _epoch_seconds
 # so relative spacing never depends on the host machine's local timezone.
 _EPOCH = datetime.datetime(1970, 1, 1)
@@ -323,9 +336,9 @@ def resolve_companion_series(
     """
     frame = nw.from_native(data, eager_only=True)
     n = len(frame)
-    c_row_keys = frame[rows].to_list() if rows else [""] * n
-    c_nest_keys = frame[nest].to_list() if nest else [None] * n
-    c_split_keys = frame[split_columns].to_list() if split_columns else [None] * n
+    c_row_keys = _nan_to_none(frame[rows].to_list()) if rows else [""] * n
+    c_nest_keys = _nan_to_none(frame[nest].to_list()) if nest else [None] * n
+    c_split_keys = _nan_to_none(frame[split_columns].to_list()) if split_columns else [None] * n
     y_all = frame[value].to_list()
     lower_all = frame[ci[0]].to_list() if ci is not None else None
     upper_all = frame[ci[1]].to_list() if ci is not None else None

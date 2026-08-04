@@ -7,6 +7,7 @@ kind (`Estimate`, `Forest`, `Passthrough`) it is laying out.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -16,8 +17,17 @@ from coeftable.spec import SpecError
 
 def _ordered_unique(values: list[Any], *, sort: bool) -> list[Any]:
     seen: list[Any] = []
+    seen_nan = False
     for value in values:
-        if value not in seen:
+        if isinstance(value, float) and math.isnan(value):
+            # nan != nan, so plain `in` membership relies on CPython's
+            # identity fast-path and misses distinct nan objects. Track it
+            # explicitly so every nan collapses to one representative.
+            if seen_nan:
+                continue
+            seen_nan = True
+            seen.append(value)
+        elif value not in seen:
             seen.append(value)
     return sorted(seen, key=str) if sort else seen
 

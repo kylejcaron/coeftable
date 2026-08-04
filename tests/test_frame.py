@@ -295,3 +295,17 @@ def test_duplicate_identity_rows_raise_spec_error():
     )
     with pytest.raises(SpecError, match="Duplicate input row"):
         resolve(table)
+
+
+def test_ordered_unique_dedupes_distinct_nan_objects():
+    from coeftable.grid import _ordered_unique
+
+    # Two separately-constructed nan objects are not identical, so a
+    # dedupe that leaned on CPython's `in` identity fast-path would keep
+    # both. They must collapse to a single representative.
+    values = [1.0, float("nan"), 2.0, float("nan"), 1.0]
+    result = _ordered_unique(values, sort=False)
+    nans = [v for v in result if isinstance(v, float) and v != v]
+    non_nans = [v for v in result if not (isinstance(v, float) and v != v)]
+    assert len(nans) == 1
+    assert non_nans == [1.0, 2.0]

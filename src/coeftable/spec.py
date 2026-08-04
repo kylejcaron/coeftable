@@ -248,6 +248,11 @@ def _domain_key(column: Forest | Sparkline, row_key: Any, group: Any, split: Any
             return ("split", split)
         case "row":
             return ("row", row_key)
+        case _:
+            raise SpecError(
+                f"Column {column.label!r} has unknown scale {column.scale!r}; "
+                "expected one of 'table', 'row_group', 'split_column', 'row'."
+            )
 
 
 def _pad_domain(
@@ -694,7 +699,11 @@ class Sparkline:
 
     def prepare(self, scan: Scan) -> Prepared:
         """Resolve each row's series, bucket y-domains, and size the row height."""
-        from coeftable.series import resolve_companion_series, resolve_list_series
+        from coeftable.series import (
+            _nan_to_none,
+            resolve_companion_series,
+            resolve_list_series,
+        )
 
         if self.data is None:
             series_list = resolve_list_series(
@@ -716,7 +725,14 @@ class Sparkline:
                     f"Sparkline {self.label!r}: columns {missing} are not in `data`. "
                     f"Available columns: {list(companion.columns)}."
                 )
-            identities = list(zip(scan.row_keys, scan.nest_keys, scan.split_keys, strict=True))
+            identities = list(
+                zip(
+                    _nan_to_none(list(scan.row_keys)),
+                    _nan_to_none(list(scan.nest_keys)),
+                    _nan_to_none(list(scan.split_keys)),
+                    strict=True,
+                )
+            )
             by_identity = resolve_companion_series(
                 self.data,
                 identities,
@@ -825,8 +841,10 @@ def validate_columns(columns: tuple[Column, ...]) -> None:
     ------
     SpecError
         When no columns are declared, labels collide, a `Forest` names an
-        undeclared estimate, a `Forest` is bound to a CI-less estimate, or
-        a `Sparkline`'s `ci` is not a `(lower, upper)` pair.
+        undeclared estimate, a `Forest` is bound to a CI-less estimate, a
+        `Sparkline`'s `ci` is not a `(lower, upper)` pair, an explicit
+        `domain` is not strictly increasing, or a `Sparkline`'s
+        `max_domain` is not positive.
     """
     if not columns:
         raise SpecError("Table has no columns; declare at least one.")
@@ -858,6 +876,25 @@ def validate_columns(columns: tuple[Column, ...]) -> None:
             raise SpecError(
                 f"Sparkline column {column.label!r} ci must be a (lower, upper) pair; "
                 f"got {column.ci!r}."
+            )
+
+    for column in columns:
+        if not isinstance(column, Forest | Sparkline):
+            continue
+        kind = "Forest" if isinstance(column, Forest) else "Sparkline"
+        if column.domain is not None and column.domain[0] >= column.domain[1]:
+            raise SpecError(
+                f"{kind} column {column.label!r} domain must be strictly increasing "
+                f"(low, high); got {column.domain!r}."
+            )
+        if (
+            isinstance(column, Sparkline)
+            and column.max_domain is not None
+            and column.max_domain <= 0
+        ):
+            raise SpecError(
+                f"Sparkline column {column.label!r} max_domain must be > 0; "
+                f"got {column.max_domain!r}."
             )
 
 

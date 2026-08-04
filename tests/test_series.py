@@ -204,6 +204,27 @@ def test_nullable_pandas_sentinels_become_none():
     assert series.y == [2.0, 1.0]
 
 
+def test_pandas_companion_null_key_matches_none_identity():
+    """A pandas companion frame surfaces a null key cell as `float('nan')`,
+    while identities from the main frame carry `None`. Without normalising
+    both sides to `None`, `nan != None` misses the group and the row
+    silently renders an empty series -- the data-loss bug this guards.
+    """
+    companion = pd.DataFrame(
+        {"metric": ["A", "A"], "variant": ["X", None], "y_val": [100.0, 200.0]}
+    )
+    result = resolve_companion_series(
+        companion,
+        [("A", "X", None), ("A", None, None)],
+        rows="metric",
+        nest="variant",
+        split_columns=None,
+        value="y_val",
+    )
+    assert result[("A", "X", None)].y == [100.0]
+    assert result[("A", None, None)].y == [200.0]
+
+
 def test_temporal_x_normalises_with_correct_relative_spacing(make):
     dates = [dt.date(2024, 1, 1), dt.date(2024, 1, 2), dt.date(2024, 1, 12)]
     raw = {"metric": ["Revenue"], "y": [[1.0, 2.0, 3.0]], "x": [dates]}

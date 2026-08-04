@@ -297,6 +297,30 @@ def test_companion_frame_front_door_renders_end_to_end():
     assert all("<svg" in p and "<polyline" in p for p in data_rows)
 
 
+def test_companion_frame_null_nest_key_resolves_not_blank():
+    """A null nest key on a pandas main frame arrives as `nan`, matching the
+    companion's `nan` only once both are normalised to `None`. Without that,
+    the null-variant row silently renders blank instead of its series.
+    """
+    raw = pd.DataFrame({"metric": ["A", "A"], "variant": ["X", None]})
+    companion = pd.DataFrame(
+        {
+            "metric": ["A", "A", "A", "A"],
+            "variant": ["X", "X", None, None],
+            "day": [0, 1, 0, 1],
+            "lift": [1.0, 2.0, 10.0, 20.0],
+        }
+    )
+    table = CoefTable(raw, rows="metric", nest="variant").sparkline(
+        "Trend", value="lift", x="day", data=companion
+    )
+    out = resolve(table)
+    plots = nw.from_native(out.frame)["Trend"].to_list()
+    data_rows = [p for i, p in enumerate(plots) if i not in out.axis_rows]
+    assert len(data_rows) == 2
+    assert all("<polyline" in p for p in data_rows)
+
+
 def test_companion_frame_missing_identity_renders_blank_cell():
     raw = {"metric": ["Revenue", "Ghost"]}
     companion = pd.DataFrame({"metric": ["Revenue", "Revenue"], "lift": [1.0, 2.0]})
