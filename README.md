@@ -191,6 +191,40 @@ Want a plain trend line with no uncertainty band — no `ci`, no ribbon?
 great_tables' own `.gt().fmt_nanoplot(...)` covers that directly.
 `.sparkline(...)` exists specifically for the estimate-with-interval case.
 
+**Shaping the y-axis.** Each row's domain fits tightly to its own data by
+default (`scale="row"`, `autoscale="tight"`). Four ways to change that,
+shown together against the same noisy series:
+
+```python
+import polars as pl
+import coeftable as ct
+
+trend = pl.DataFrame(
+    {
+        "metric": ["Revenue"],
+        "lift": [[1.0, 1.05, 0.95, 1.02, 0.98, 300.0]],
+    }
+)
+
+(
+    ct.CoefTable(trend, rows="metric")
+    # Default: fits tightly to this row's own min/max. A single outlier
+    # like the 300.0 here dominates and flattens the rest of the series.
+    .sparkline("Tight (default)", value="lift", ref=1.0)
+    # autoscale="robust" fits an IQR/Tukey fence instead of raw min/max,
+    # so the outlier doesn't flatten the rest. It still draws -- clipped
+    # to the domain edge and flagged with a clip-cap marker, never hidden.
+    .sparkline("Robust", value="lift", ref=1.0, autoscale="robust")
+    # max_ylim=N narrows whatever domain scale/autoscale would have
+    # produced -- clamping to `ref +/- N`, only if the natural domain
+    # would have exceeded that ceiling. Composes with autoscale.
+    .sparkline("Ceiling", value="lift", ref=1.0, max_ylim=0.5)
+    # ylim=(lo, hi) is an absolute override, replacing scale/autoscale/
+    # max_ylim entirely.
+    .sparkline("Override", value="lift", ref=1.0, ylim=(0.9, 1.1))
+)
+```
+
 ## Comparing methods
 
 Use `split_columns` to compare multiple methods side by side. Each value in the
