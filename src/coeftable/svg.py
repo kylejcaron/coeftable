@@ -49,10 +49,10 @@ def nice_ticks(low: float, high: float, target: int = 4) -> list[float]:
 _SECONDS_PER_DAY = 86_400.0
 _SECONDS_PER_MONTH = 30.4375 * _SECONDS_PER_DAY
 
-# 1970-01-01 (epoch) was a Thursday, 4 days after the preceding Monday, so an
-# epoch-aligned 7-day grid lands on Thursdays -- an artifact, not a choice.
-# Offsetting by this phase realigns weekly and fortnightly ticks to Monday,
-# the ISO-8601 week start.
+# 1970-01-01 (epoch) was a Thursday, 4 days before the *following* Monday
+# (3 days after the preceding one), so an epoch-aligned 7-day grid lands on
+# Thursdays -- an artifact, not a choice. Offsetting forward by 4 days
+# realigns weekly and fortnightly ticks to Monday, the ISO-8601 week start.
 _WEEK_PHASE = 4 * _SECONDS_PER_DAY
 
 
@@ -357,6 +357,23 @@ def _bare_label(dt: datetime, step: CalendarStep) -> str:
     return str(dt.day)
 
 
+def _max_bare_ticks(rung_label: CalendarStep, width: int) -> int:
+    """Upper bound on ticks any arrangement of one bare rung could ever admit.
+
+    Lets `_select_bare_rung` skip a rung's datetime/label/collision pass --
+    the expensive part of considering it -- once its tick count already
+    exceeds what `width` could fit even packed at the rung's own shortest
+    possible bare label (`"1"` for day, `"Jan"` for month, `"2024"` for
+    year) and the minimum inter-label gap. `_resolve_collisions` only ever
+    drops up to 2 labels, so a count this far over budget can never end up
+    admitted -- skipping it changes no selection, only the wasted work of
+    computing that it loses.
+    """
+    min_chars = {"day": 1, "month": 3, "year": 4}[rung_label]
+    min_width = min_chars * 9.0 * _CHAR_WIDTH_RATIO
+    return max(int((width + _MIN_LABEL_GAP) / (min_width + _MIN_LABEL_GAP)), 1)
+
+
 def _select_bare_rung(
     low: float,
     high: float,
@@ -389,7 +406,7 @@ def _select_bare_rung(
         if rung.label in exclude:
             continue
         ticks = _rung_ticks(low, high, rung)
-        if not ticks:
+        if not ticks or len(ticks) > _max_bare_ticks(rung.label, width):
             continue
         dts = [datetime.fromtimestamp(t, tz=UTC) for t in ticks]
         texts_all = [_bare_label(dt, rung.label) for dt in dts]
@@ -844,10 +861,12 @@ def _render_tick_axis(
 
     `forest_axis` and `sparkline_axis` draw an identical tick mark and label
     per position; only the tick set and how `texts` was produced differ -- a
-    plain `Format` call for `forest_axis`, `DateAxis.labels()`'s cascading
-    rule for a temporal `sparkline_axis`. `texts` must be the same length as
-    `ticks`; a blank entry draws the tick mark with no label, which is how
-    `_resolve_collisions` (via `_select_bare_rung`/`_super_row`) resolves an edge-label collision.
+    plain `Format` call for `forest_axis`, `_select_bare_rung`'s bare
+    per-component text (or `_super_row`'s grouped `DateAxis._cascade` call,
+    for the two-tier super row) for a temporal `sparkline_axis`. `texts`
+    must be the same length as `ticks`; a blank entry draws the tick mark
+    with no label, which is how `_resolve_collisions` (via
+    `_select_bare_rung`/`_super_row`) resolves an edge-label collision.
     """
     parts: list[str] = []
     for tick, text in zip(ticks, texts, strict=True):

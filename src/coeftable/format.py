@@ -316,9 +316,14 @@ class DateAxis:
         truth: whether the *domain* spans multiple years, fixed once from
         the full, undropped group set, not recomputed from whichever subset
         survives a dropped label. Recomputing per subset would let dropping
-        the one group that crosses a year boundary silently erase the fact
-        that the axis spans multiple years at all -- the collision fix
-        would end up hiding real information, not just noise.
+        the one group that crosses a year boundary suppress the year token
+        globally, even though other surviving labels still need it -- e.g. a
+        recast where every remaining label happens to share one year would
+        wrongly drop back to bare `"Jan"` instead of `"Jan '25"`. This does
+        not guarantee a *specific* dropped year's own label survives --
+        `_resolve_collisions` can still drop the sole representative of an
+        edge year outright -- only that the year token is never suppressed
+        for whichever labels do survive.
         """
         out: list[str] = []
         prev: datetime | None = None
