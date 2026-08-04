@@ -400,33 +400,28 @@ def test_domain_override_wins_over_scale():
     assert _ref_line_y(plots[0]) == pytest.approx(_ref_line_y(plots[1]))
 
 
-def test_clamp_domain_narrows_a_domain_that_exceeds_the_ceiling():
-    assert _clamp_domain((-604.0, 904.0), ref=0.0, max_domain=20.0) == (-20.0, 20.0)
-
-
-def test_clamp_domain_is_a_no_op_when_the_ceiling_is_wider_than_the_domain():
-    assert _clamp_domain((-0.08, 1.08), ref=0.0, max_domain=20.0) == (-0.08, 1.08)
-
-
-def test_clamp_domain_narrows_each_bound_independently():
-    # Only the high bound exceeds the ceiling; the low bound, already
-    # tighter than it, is left exactly as it was rather than pulled up.
-    assert _clamp_domain((-0.8, 10.8), ref=0.0, max_domain=5.0) == (-0.8, 5.0)
+@pytest.mark.parametrize(
+    ("domain", "max_domain", "expected"),
+    [
+        # Exceeds the ceiling on both sides -- both bounds narrow.
+        ((-604.0, 904.0), 20.0, (-20.0, 20.0)),
+        # Already narrower than the ceiling -- left untouched.
+        ((-0.08, 1.08), 20.0, (-0.08, 1.08)),
+        # Only the high bound exceeds the ceiling; the low bound, already
+        # tighter than it, is left exactly as it was rather than pulled up.
+        ((-0.8, 10.8), 5.0, (-0.8, 5.0)),
+    ],
+)
+def test_clamp_domain_narrows_only_the_bounds_that_exceed_the_ceiling(
+    domain, max_domain, expected
+):
+    assert _clamp_domain(domain, ref=0.0, max_domain=max_domain) == expected
 
 
 def test_clamp_domain_never_widens_regardless_of_ceiling_size():
     for max_domain in (0.01, 1.0, 5.0, 20.0, 1000.0):
         low, high = _clamp_domain((-3.0, 4.0), ref=0.0, max_domain=max_domain)
         assert high - low <= 7.0
-
-
-def test_clamp_domain_negative_max_domain_inverts_like_an_unvalidated_reversed_domain():
-    # max_domain has no positivity validation, matching domain=(low, high)
-    # itself, which is equally unvalidated (validate_columns has no shape
-    # check for it either). Locking in the current, accepted, non-crashing
-    # artifact rather than leaving it undocumented -- see _clamp_domain's
-    # docstring for the precondition this violates.
-    assert _clamp_domain((-0.08, 1.08), ref=0.0, max_domain=-5.0) == (5.0, -5.0)
 
 
 def test_bucket_domain_override_wins_even_when_max_domain_is_set():
