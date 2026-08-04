@@ -648,13 +648,17 @@ def sparkline_bar(
     the exact pixel where they cross its edge (segment/polygon boundary
     intersection, not a per-point clamp), so the drawn approach angle into
     a clip matches the real trajectory instead of visually flattening into
-    it; nothing this function draws ever escapes the canvas regardless.
-    `lower` and `upper` clip independently, so a bound that stays inside
-    `domain` keeps its true position even while the other is pinned. A
-    fainter "ghost" trace of the true, unclamped line and ribbon is always
-    drawn underneath wherever a clip occurs, continuing past the domain
-    edge until it runs off the canvas -- it carries the real shape of what
-    got clipped, not just the fact that it happened.
+    it; the opaque (real) layer stays pinned inside the domain rectangle
+    and never escapes the canvas regardless. `lower` and `upper` clip
+    independently, so a bound that stays inside `domain` keeps its true
+    position even while the other is pinned. A fainter "ghost" trace of
+    the true, unclamped line and ribbon is always drawn underneath
+    wherever a clip occurs, continuing past the domain edge on its own
+    real trajectory -- it deliberately *may* carry off-canvas coordinates;
+    the outer `<svg>` viewport clips those visually, so the ghost never
+    bleeds into surrounding content even though its own coordinates are
+    unbounded. It carries the real shape of what got clipped, not just
+    the fact that it happened.
 
     When `show_clip_indicators` is set, a thin double line marks each
     contiguous clipped stretch against the domain edge it clipped -- one
