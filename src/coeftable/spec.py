@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 import narwhals as nw
 
+from coeftable.collapsible import make_collapsible
 from coeftable.format import (
     CIStyle,
     DateAxis,
@@ -1300,6 +1301,9 @@ class CoefTable:
 
         return to_gt(self)
 
+    def _maybe_collapse(self, html: str) -> str:
+        return make_collapsible(html) if self.collapsible_groups else html
+
     def as_raw_html(self) -> str:
         """Render to an HTML string.
 
@@ -1311,13 +1315,7 @@ class CoefTable:
         str
             The rendered table as a standalone HTML fragment.
         """
-        from coeftable.collapsible import make_collapsible
-
-        html = self.gt().as_raw_html()
-        return make_collapsible(html) if self.collapsible_groups else html
+        return self._maybe_collapse(self.gt().as_raw_html())
 
     def _repr_html_(self) -> str:
-        from coeftable.collapsible import make_collapsible
-
-        html = self.gt()._repr_html_()
-        return make_collapsible(html) if self.collapsible_groups else html
+        return self._maybe_collapse(self.gt()._repr_html_())
