@@ -18,6 +18,7 @@ from coeftable.svg import (
     _label_boxes,
     _max_bare_ticks,
     _projector,
+    _render_two_tier_axis,
     _resolve_collisions,
     _select_bare_rung,
     _super_row,
@@ -1842,3 +1843,24 @@ def test_sparkline_axis_tick_label_escapes_ampersand():
     svg = sparkline_axis(x_domain=(0.0, 2.0), fmt=_AmpFmt(), theme=DEFAULT)
     assert ">Q1 & Q2<" not in svg
     assert ">Q1 &amp; Q2<" in svg
+
+
+def test_two_tier_axis_super_row_escapes_ampersand_and_angle_brackets():
+    # The super row's text comes from DateAxis._cascade in practice, which
+    # never emits &/</> -- this drives the private renderer directly to
+    # cover the escape mechanism itself, identical to the other three
+    # `<text>` sinks in svg.py.
+    parts = _render_two_tier_axis(
+        [0.0],
+        ["1"],
+        [0.0],
+        ["Q1 & Q2 <2024>"],
+        project=lambda x: x,
+        baseline=4.0,
+        sub_height=22,
+        width=220,
+        theme=DEFAULT,
+    )
+    svg = "".join(parts)
+    assert "<2024>" not in svg
+    assert "Q1 &amp; Q2 &lt;2024&gt;" in svg
