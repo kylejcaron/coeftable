@@ -76,14 +76,14 @@ class Theme:
     border_style: Literal["boxed", "minimal"] = "boxed"
     border_color: str | None = None
     series_palette: tuple[str, ...] = (
-        "#4C72B0",
+        "#3B4CC0",
         "#DD8452",
-        "#55A868",
-        "#C44E52",
         "#8172B3",
         "#937860",
         "#DA8BC3",
-        "#8C8C8C",
+        "#64B5CD",
+        "#CCB974",
+        "#5A5A5A",
     )
 
     def color(self, role: Role) -> str:
@@ -127,7 +127,16 @@ class Theme:
         -------
         str
             Hex colour string.
+
+        Raises
+        ------
+        ValueError
+            If ``series_palette`` is empty or `index` is negative.
         """
+        if not self.series_palette:
+            raise ValueError("Theme.series_palette must not be empty")
+        if index < 0:
+            raise ValueError(f"series_color index must be non-negative, got {index}")
         return self.series_palette[index % len(self.series_palette)]
 
 
@@ -186,9 +195,8 @@ COLORBLIND = Theme(
         "#56B4E9",
         "#009E73",
         "#F0E442",
-        "#0072B2",
-        "#D55E00",
         "#CC79A7",
+        "#000000",
     ),
 )
 

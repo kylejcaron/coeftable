@@ -172,3 +172,23 @@ def test_series_palette_does_not_affect_role_colors():
     for theme, roles in expected.items():
         for role, hex_color in roles.items():
             assert theme.color(role) == hex_color
+
+
+def test_series_palette_never_reuses_a_theme_own_role_colors():
+    # A multi-series sparkline arm rendered in a role colour would visually
+    # imply a value judgement about that arm -- exactly what the docstring
+    # says the series scale must not carry.
+    for theme in (BLUE, COLORBLIND, MONO, TEXTUAL):
+        role_colors = {theme.favorable, theme.unfavorable, theme.inconclusive, theme.neutral}
+        assert role_colors.isdisjoint(theme.series_palette)
+
+
+def test_series_color_rejects_empty_palette():
+    empty = dataclasses.replace(DEFAULT, series_palette=())
+    with pytest.raises(ValueError, match="must not be empty"):
+        empty.series_color(0)
+
+
+def test_series_color_rejects_negative_index():
+    with pytest.raises(ValueError, match="non-negative"):
+        DEFAULT.series_color(-1)
