@@ -1,3 +1,4 @@
+import random
 import re
 
 import polars as pl
@@ -127,3 +128,16 @@ def test_nested_table_inside_a_passthrough_cell_is_not_tagged_as_a_body_row():
 def test_html_with_no_tbody_is_returned_unchanged():
     html = "<div id='x'><p>no table here</p></div>"
     assert make_collapsible(html) == html
+
+
+def test_coeftable_as_raw_html_wiring_matches_direct_transform():
+    # Guards the funnel in spec.py: as_raw_html() must be exactly
+    # make_collapsible(self.gt().as_raw_html()), not a reimplementation.
+    # great_tables assigns a fresh random wrapper-div id per .gt() call, so
+    # seed around each render to compare in isolation.
+    grouped = table(groups="area", collapsible_groups=True)
+    random.seed(0)
+    via_wiring = grouped.as_raw_html()
+    random.seed(0)
+    direct = make_collapsible(grouped.gt().as_raw_html())
+    assert via_wiring == direct

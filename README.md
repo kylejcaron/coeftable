@@ -33,10 +33,11 @@ ct.CoefTable(df, rows="metric", estimate="est", ci=("lb", "ub"))
 ```
 
 A `CoefTable` renders itself in marimo, Jupyter, and any other `_repr_html_`-aware viewer —
-leave it as the last expression in a cell, no extra call needed. Outside a notebook, use
-`.gt()` to reach the underlying [great_tables](https://posit-dev.github.io/great-tables/)
-object: `table.gt().as_raw_html()` for an HTML string, `table.gt().save("t.png")` for an
-image, `table.gt().tab_options(...)` to keep styling with great_tables' own API.
+leave it as the last expression in a cell, no extra call needed. Outside a notebook,
+`table.as_raw_html()` is the HTML string entry point. `.gt()` remains the escape hatch to the
+underlying [great_tables](https://posit-dev.github.io/great-tables/) object itself:
+`table.gt().save("t.png")` for an image, `table.gt().tab_options(...)` to keep styling with
+great_tables' own API.
 
 ## Data shape
 
@@ -49,7 +50,10 @@ a `parameter` column.
 **Dimensions:**
 - `rows` — the label for each row in the table (e.g. a metric name).
 - `nest` — an optional secondary label stacked below each row.
-- `groups` — an optional column whose values produce section headers.
+- `groups` — an optional column whose values produce section headers. Pass
+  `collapsible_groups=True` to make those sections collapsible in the rendered
+  HTML — a pure CSS toggle, no JavaScript, sections start expanded. Applies to
+  `as_raw_html()`/`_repr_html_`; `.gt()` is unaffected.
 - `split_columns` — an optional column whose values produce repeated column
   groups side by side, useful for comparing methods.
 

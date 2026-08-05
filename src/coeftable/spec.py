@@ -927,6 +927,10 @@ class CoefTable:
         Header text.
     sort_rows
         Sort row keys lexically instead of by first appearance.
+    collapsible_groups
+        Make each `groups` section collapsible via a CSS-only toggle, no
+        JavaScript. Has no effect on `.gt()`; use `as_raw_html()` or
+        `_repr_html_` (the notebook-display path) to get the transform.
     """
 
     def __init__(
@@ -946,6 +950,7 @@ class CoefTable:
         title: str = "",
         subtitle: str = "",
         sort_rows: bool = False,
+        collapsible_groups: bool = False,
     ) -> None:
         declared = tuple(columns)
         if estimate is not None:
@@ -962,6 +967,7 @@ class CoefTable:
         self.title = title
         self.subtitle = subtitle
         self.sort_rows = sort_rows
+        self.collapsible_groups = collapsible_groups
         if declared:
             validate_columns(declared)
 
@@ -978,6 +984,7 @@ class CoefTable:
             "title": self.title,
             "subtitle": self.subtitle,
             "sort_rows": self.sort_rows,
+            "collapsible_groups": self.collapsible_groups,
         }
         settings.update(changes)
         return CoefTable(self.data, **settings)
@@ -1280,6 +1287,10 @@ class CoefTable:
     def gt(self) -> GT:
         """Render to a `great_tables` object.
 
+        This is a pure `great_tables` escape hatch: `collapsible_groups`
+        does not apply to the returned object. Use `as_raw_html()` for an
+        HTML string with that transform applied.
+
         Returns
         -------
         GT
@@ -1289,5 +1300,24 @@ class CoefTable:
 
         return to_gt(self)
 
+    def as_raw_html(self) -> str:
+        """Render to an HTML string.
+
+        The non-notebook entry point: applies `collapsible_groups` when
+        set, unlike `.gt().as_raw_html()`.
+
+        Returns
+        -------
+        str
+            The rendered table as a standalone HTML fragment.
+        """
+        from coeftable.collapsible import make_collapsible
+
+        html = self.gt().as_raw_html()
+        return make_collapsible(html) if self.collapsible_groups else html
+
     def _repr_html_(self) -> str:
-        return self.gt()._repr_html_()
+        from coeftable.collapsible import make_collapsible
+
+        html = self.gt()._repr_html_()
+        return make_collapsible(html) if self.collapsible_groups else html
