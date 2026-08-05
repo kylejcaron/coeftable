@@ -867,10 +867,10 @@ class Sparkline:
                     series=self.series,
                 )
                 empty = Series(x=[], y=[], lower=[], upper=[], x_temporal=False)
-                series_list = [
-                    [dict(arms_by_identity[identity]).get(key, empty) for key in series_keys]
-                    for identity in identities
-                ]
+                series_list = []
+                for identity in identities:
+                    by_arm = dict(arms_by_identity[identity])
+                    series_list.append([by_arm.get(key, empty) for key in series_keys])
 
         buckets: dict[Any, list[float]] = {}
         x_values: list[float] = []

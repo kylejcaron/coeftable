@@ -1337,3 +1337,44 @@ def test_series_overlay_show_axis_false_emits_no_legend_and_no_axis_row():
     assert out.axis_rows == []
     plots = nw.from_native(out.frame)["Trend"].to_list()
     assert all("<rect" not in p for p in plots)
+
+
+def test_series_overlay_same_arm_gets_the_same_color_across_splits():
+    raw = {"metric": ["Revenue", "Revenue"], "method": ["OLS", "DiD"]}
+    companion = pd.DataFrame(
+        {
+            "metric": ["Revenue"] * 8,
+            "method": ["OLS", "OLS", "OLS", "OLS", "DiD", "DiD", "DiD", "DiD"],
+            "arm": ["control", "control", "treatment", "treatment"] * 2,
+            "day": [0, 1, 0, 1] * 2,
+            "lift": [1.0, 2.0, 3.0, 4.0, 10.0, 20.0, 30.0, 40.0],
+        }
+    )
+    table = CoefTable(pl.DataFrame(raw), rows="metric", split_columns="method").sparkline(
+        "Trend", value="lift", x="day", data=companion, series="arm"
+    )
+    out = resolve(table)
+    frame = nw.from_native(out.frame)
+    ols_plot = frame[out.spanners["OLS"][0]].to_list()[0]
+    did_plot = frame[out.spanners["DiD"][0]].to_list()[0]
+    assert DEFAULT.series_color(0) in ols_plot
+    assert DEFAULT.series_color(1) in ols_plot
+    assert DEFAULT.series_color(0) in did_plot
+    assert DEFAULT.series_color(1) in did_plot
+
+
+def test_series_overlay_show_endpoint_draws_one_label_per_arm():
+    raw = {"metric": ["Revenue"]}
+    table = CoefTable(pl.DataFrame(raw), rows="metric").sparkline(
+        "Trend",
+        value="lift",
+        x="day",
+        data=_series_companion(),
+        series="arm",
+        show_endpoint=True,
+    )
+    out = resolve(table)
+    plot = nw.from_native(out.frame)["Trend"].to_list()[0]
+    labels = re.findall(r'<text[^>]*fill="([^"]+)"[^>]*>([^<]*)</text>', plot)
+    assert {color for color, _ in labels} == {DEFAULT.series_color(0), DEFAULT.series_color(1)}
+    assert len(labels) == 2
