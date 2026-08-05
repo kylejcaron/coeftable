@@ -1799,3 +1799,46 @@ def test_sparkline_axis_legend_drops_chips_that_do_not_fit_rather_than_overflowi
 def test_sparkline_axis_no_legend_when_none():
     svg = sparkline_axis(x_domain=(0.0, 2.0), fmt=Number(decimals=0), theme=DEFAULT, legend=None)
     assert "<rect" not in svg
+
+
+def test_sparkline_axis_legend_escapes_ampersand_and_angle_brackets_in_labels():
+    svg = sparkline_axis(
+        x_domain=(0.0, 2.0),
+        fmt=Number(decimals=0),
+        theme=DEFAULT,
+        legend=[("A&B<C>", "#111111")],
+    )
+    assert "<C>" not in svg
+    assert "A&amp;B&lt;C&gt;" in svg
+
+
+def test_sparkline_multi_endpoint_label_escapes_ampersand():
+    x = [0.0, 1.0]
+    y = [1.0, 2.0]
+
+    class _AmpFmt:
+        def __call__(self, value):
+            return "R&D"
+
+    a = _trace(x, y, [None] * 2, [None] * 2, "#E69F00")
+    svg = sparkline_multi(
+        [a],
+        x_domain=(0.0, 1.0),
+        domain=(0.0, 2.0),
+        ref=None,
+        ref_color="#000",
+        fmt=_AmpFmt(),
+        show_endpoint=True,
+    )
+    assert ">R&D<" not in svg
+    assert ">R&amp;D<" in svg
+
+
+def test_sparkline_axis_tick_label_escapes_ampersand():
+    class _AmpFmt:
+        def __call__(self, value):
+            return "Q1 & Q2"
+
+    svg = sparkline_axis(x_domain=(0.0, 2.0), fmt=_AmpFmt(), theme=DEFAULT)
+    assert ">Q1 & Q2<" not in svg
+    assert ">Q1 &amp; Q2<" in svg

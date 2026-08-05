@@ -1378,3 +1378,27 @@ def test_series_overlay_show_endpoint_draws_one_label_per_arm():
     labels = re.findall(r'<text[^>]*fill="([^"]+)"[^>]*>([^<]*)</text>', plot)
     assert {color for color, _ in labels} == {DEFAULT.series_color(0), DEFAULT.series_color(1)}
     assert len(labels) == 2
+
+
+def test_series_overlay_legend_omits_an_arm_that_never_renders_anywhere():
+    # "phantom" only appears in the companion frame under "Latency", which
+    # isn't a row the table requests -- it must never draw a line, so the
+    # legend must not advertise it either.
+    raw = {"metric": ["Revenue"]}
+    companion = pd.DataFrame(
+        {
+            "metric": ["Revenue", "Revenue", "Revenue", "Revenue", "Latency", "Latency"],
+            "arm": ["control", "control", "treatment", "treatment", "phantom", "phantom"],
+            "day": [0, 1, 0, 1, 0, 1],
+            "lift": [1.0, 2.0, 3.0, 4.0, 99.0, 98.0],
+        }
+    )
+    table = CoefTable(pl.DataFrame(raw), rows="metric").sparkline(
+        "Trend", value="lift", x="day", data=companion, series="arm"
+    )
+    out = resolve(table)
+    plots = nw.from_native(out.frame)["Trend"].to_list()
+    axis_cell = plots[out.axis_rows[0]]
+    assert ">control<" in axis_cell
+    assert ">treatment<" in axis_cell
+    assert ">phantom<" not in axis_cell

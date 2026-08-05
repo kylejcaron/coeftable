@@ -1013,12 +1013,26 @@ class Sparkline:
         state: _SparklineState = ctx.prepared.payload
         legend = None
         if self.series is not None and state.series_keys:
+            # `series_keys` spans every distinct value in the whole
+            # companion frame, including an arm that never resolves a
+            # point in any table row (e.g. it only appears for an
+            # identity absent from the table, or is entirely missing).
+            # Advertising that arm in the legend would promise a line
+            # that never draws, so restrict to arms with at least one
+            # rendered point somewhere in the column.
+            rendered = {
+                key
+                for arms in state.series
+                for key, series in zip(state.series_keys, arms, strict=True)
+                if _last_point(series) is not None
+            }
             legend = [
                 (label, (self.series_colors or {}).get(key, ctx.theme.series_color(i)))
                 for i, (key, label) in enumerate(
                     zip(state.series_keys, state.series_labels, strict=True)
                 )
-            ]
+                if key in rendered
+            ] or None
         return sparkline_axis(
             x_domain=state.x_domain,
             fmt=self.axis_fmt or (DateAxis() if state.x_temporal else self.fmt),

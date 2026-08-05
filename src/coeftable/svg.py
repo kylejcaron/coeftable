@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import math
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
@@ -756,6 +757,18 @@ def _clip_label(text: str, max_width: float, font_size: float) -> str:
     return text[: budget - 1] + "\u2026"
 
 
+def _esc(text: str) -> str:
+    """Escape `&`, `<` and `>` for safe embedding as `<text>` element content.
+
+    Every tick, endpoint and legend label ultimately traces back to
+    caller-controlled data (a `Format` callable's output, or a raw
+    `series=` value via `str()`) -- unescaped, a label containing `&`/`<`/`>`
+    would emit malformed SVG. Quotes are left alone; nothing here writes
+    label text into an attribute value.
+    """
+    return html.escape(text, quote=False)
+
+
 def forest_bar(
     estimate: float | None,
     lower: float | None,
@@ -878,9 +891,10 @@ def _render_tick_axis(
             f'y2="{baseline + 3:.2f}" stroke="{theme.axis}" stroke-width="0.75"/>'
         )
         if text:
+            anchor = _tick_anchor(tick_x, text, width)
             parts.append(
                 f'<text x="{tick_x:.2f}" y="{height - 2:.2f}" fill="{theme.axis}" '
-                f'font-size="9" text-anchor="{_tick_anchor(tick_x, text, width)}">{text}</text>'
+                f'font-size="9" text-anchor="{anchor}">{_esc(text)}</text>'
             )
     return parts
 
@@ -951,7 +965,7 @@ def _render_two_tier_axis(
         if text:
             parts.append(
                 f'<text x="{x:.2f}" y="{super_y:.2f}" fill="{theme.muted}" '
-                f'font-size="9" text-anchor="{_tick_anchor(x, text, width)}">{text}</text>'
+                f'font-size="9" text-anchor="{_tick_anchor(x, text, width)}">{_esc(text)}</text>'
             )
     return parts
 
@@ -1273,7 +1287,7 @@ def sparkline_multi(
             label = _clip_label(fmt(ey), max(endpoint_width - 4, 4), 9.0)
             parts.append(
                 f'<text x="{right_edge}" y="{ey_px + 3:.2f}" fill="{trace.color}" '
-                f'font-size="9" text-anchor="end">{label}</text>'
+                f'font-size="9" text-anchor="end">{_esc(label)}</text>'
             )
 
     cap_parts: list[str] = []
@@ -1450,7 +1464,7 @@ def _render_legend(
         text_x = x + _LEGEND_SWATCH + _LEGEND_SWATCH_GAP
         parts.append(
             f'<text x="{text_x:.2f}" y="{y_text:.2f}" fill="{theme.text}" '
-            f'font-size="9" text-anchor="start">{text}</text>'
+            f'font-size="9" text-anchor="start">{_esc(text)}</text>'
         )
         x += chip_width + _LEGEND_CHIP_GAP
     return parts
