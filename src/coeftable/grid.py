@@ -207,15 +207,13 @@ def assemble_rows(
         the rendered footer text per display column.
     shared_footer_labels
         Labels (a subset of `footer_keys`' keys) whose footer closes once
-        for the whole table rather than once per group or row key --
-        `Forest`/`Sparkline` columns with `scale in {"table",
-        "split_column"}`. An axis row is recorded in `shared_axis_rows`
-        only when every column closing at that row is in this set; a row
-        combining a shared and a per-group footer is treated as per-group,
-        since it is not safe to show unconditionally.
-    render_footer
-        Called with the labels (with their keys) due at this row; returns
-        the rendered footer text per display column.
+        for the whole table rather than once per group or row key. This
+        module is column-agnostic (see the module docstring), so the
+        caller decides membership -- `frame.py` populates it from each
+        column's own `Prepared.shared_footer`. An axis row is recorded in
+        `shared_axis_rows` only when every column closing at that row is
+        in this set; a row combining a shared and a per-group footer is
+        treated as per-group, since it is not safe to show unconditionally.
 
     Returns
     -------
