@@ -78,16 +78,16 @@ class Theme:
     # tab10 (D3/matplotlib's default qualitative palette): high-contrast,
     # well-tested for line charts at small sizes.
     series_palette: tuple[str, ...] = (
-        "#1f77b4",
-        "#ff7f0e",
-        "#2ca02c",
-        "#d62728",
-        "#9467bd",
-        "#8c564b",
-        "#e377c2",
-        "#7f7f7f",
-        "#bcbd22",
-        "#17becf",
+        "#1F77B4",
+        "#FF7F0E",
+        "#2CA02C",
+        "#D62728",
+        "#9467BD",
+        "#8C564B",
+        "#E377C2",
+        "#7F7F7F",
+        "#BCBD22",
+        "#17BECF",
     )
 
     def color(self, role: Role) -> str:
@@ -250,14 +250,14 @@ TEXTUAL = Theme(
     # ColorBrewer Set2: softer/pastel than tab10, so overlaid ribbons
     # don't fight the muted publication aesthetic for attention.
     series_palette=(
-        "#66c2a5",
-        "#fc8d62",
-        "#8da0cb",
-        "#e78ac3",
-        "#a6d854",
-        "#ffd92f",
-        "#e5c494",
-        "#b3b3b3",
+        "#66C2A5",
+        "#FC8D62",
+        "#8DA0CB",
+        "#E78AC3",
+        "#A6D854",
+        "#FFD92F",
+        "#E5C494",
+        "#B3B3B3",
     ),
 )
 
