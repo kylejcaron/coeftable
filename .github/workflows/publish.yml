@@ -40,6 +40,14 @@ jobs:
 
   publish:
     runs-on: ubuntu-latest
+    # PyPI must have a trusted publisher registered for BOTH entry points,
+    # each with environment "publish": this workflow, for a manual run or a
+    # hand-pushed tag, and release.yml, for an automated release. Upload
+    # authentication matches on the reusable workflow, but the build
+    # provenance attestation carries the TOP-LEVEL workflow, so an automated
+    # release presents release.yml and is rejected with "does not match
+    # expected Trusted Publisher" unless that entry point is registered too.
+    #
     # A tag pushed by a workflow using the default token does not raise a
     # push event, so a release cut by automation asks for the upload
     # explicitly. Any other run sitting on a tag -- a hand-pushed tag, or a
