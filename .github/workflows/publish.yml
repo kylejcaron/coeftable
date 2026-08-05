@@ -51,10 +51,10 @@ jobs:
       url: https://pypi.org/p/coeftable
     needs: build-package
     permissions:
+      contents: read
       id-token: write
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/checkout@v6
         with:
-          name: Packages
-          path: dist
-      - uses: pypa/gh-action-pypi-publish@release/v1
+          persist-credentials: false
+      - uses: ./.github/actions/pypi-publish

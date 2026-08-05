@@ -121,13 +121,13 @@ jobs:
       name: publish
       url: https://pypi.org/p/coeftable
     permissions:
+      contents: read
       id-token: write
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/checkout@v6
         with:
-          name: Packages
-          path: dist
-      - uses: pypa/gh-action-pypi-publish@release/v1
+          persist-credentials: false
+      - uses: ./.github/actions/pypi-publish
 
   changelog:
     # Same reason as the publish job above: the release is created with the
