@@ -8,7 +8,7 @@ from typing import Literal
 
 type Role = Literal["favorable", "unfavorable", "inconclusive", "neutral"]
 type Direction = Literal["higher_is_better", "lower_is_better", "neutral"]
-type ColorRule = Callable[[float | None, float | None, float | None, float], Role]
+type ColorRule = Callable[[float | None, float | None, float | None, float | None], Role]
 
 
 @dataclass(frozen=True)
@@ -100,7 +100,7 @@ class Theme:
 def role_for(
     lower: float | None,
     upper: float | None,
-    ref: float,
+    ref: float | None,
     direction: Direction,
 ) -> Role:
     """Map an interval to a semantic role.
@@ -109,14 +109,16 @@ def role_for(
     according to `direction`; one that spans `ref`, or that is unbounded on the
     deciding side, is inconclusive. A `direction` of ``"neutral"`` always yields
     ``"neutral"``, so a table making no directional claim does not look like a
-    table full of null results.
+    table full of null results. `ref=None` also always yields ``"neutral"``:
+    "favorable" has no definition without a reference to compare against.
 
     Parameters
     ----------
     lower, upper
         Interval bounds. `None` means unbounded on that side.
     ref
-        Reference value the interval is compared against.
+        Reference value the interval is compared against. `None` means there
+        is no reference, so the role is always `"neutral"`.
     direction
         Which side of `ref` counts as favorable.
 
@@ -125,7 +127,7 @@ def role_for(
     Role
         The resolved role.
     """
-    if direction == "neutral":
+    if direction == "neutral" or ref is None:
         return "neutral"
     if lower is not None and lower > ref:
         return "favorable" if direction == "higher_is_better" else "unfavorable"

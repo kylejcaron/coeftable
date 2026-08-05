@@ -266,9 +266,15 @@ def _domain_key(column: Forest | Sparkline, row_key: Any, group: Any, split: Any
 
 
 def _resolve_role(
-    ctx: Cell, value: float | None, low: float | None, high: float | None, ref: float
+    ctx: Cell, value: float | None, low: float | None, high: float | None, ref: float | None
 ) -> Role:
-    """Resolve a cell's colour role: `ctx.color_rule` when set, else `role_for`."""
+    """Resolve a cell's colour role: `ctx.color_rule` when set, else `role_for`.
+
+    A `None` reference is forwarded unchanged: `ctx.color_rule`, documented
+    as a total override, decides for itself what to do with it; otherwise
+    `role_for` returns `"neutral"`, since "favorable" has no definition
+    without a reference.
+    """
     if ctx.color_rule is not None:
         return ctx.color_rule(value, low, high, ref)
     return role_for(low, high, ref, ctx.direction)

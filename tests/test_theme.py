@@ -38,6 +38,11 @@ def test_reference_other_than_zero():
     assert role_for(0.5, 0.9, 1.0, "higher_is_better") == "unfavorable"
 
 
+def test_role_for_ref_none_is_neutral_regardless_of_interval_or_direction():
+    assert role_for(1.0, 2.0, None, "higher_is_better") == "neutral"
+    assert role_for(None, -1.0, None, "lower_is_better") == "neutral"
+
+
 def test_color_returns_the_slot_for_each_role():
     for role in ("favorable", "unfavorable", "inconclusive", "neutral"):
         assert DEFAULT.color(role).startswith("#")

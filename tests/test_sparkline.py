@@ -9,6 +9,7 @@ import pytest
 from coeftable.format import CIStyle, DateAxis
 from coeftable.frame import resolve
 from coeftable.spec import (
+    Cell,
     CoefTable,
     ColumnNotFoundError,
     Sparkline,
@@ -16,6 +17,7 @@ from coeftable.spec import (
     _bucket_domain,
     _clamp_domain,
     _pad_domain,
+    _resolve_role,
     _robust_domain,
     validate_columns,
 )
@@ -594,6 +596,36 @@ def test_robust_domain_ref_none_fences_outliers_and_excludes_zero():
 def test_clamp_domain_requires_ref():
     with pytest.raises(ValueError):
         _clamp_domain((-3.0, 4.0), ref=None, max_domain=1.0)
+
+
+def _stub_cell(*, direction="higher_is_better", color_rule=None):
+    return Cell(
+        prepared=None,  # ty: ignore[invalid-argument-type]
+        index=0,
+        row_key=None,
+        group=None,
+        split=None,
+        direction=direction,
+        color_rule=color_rule,
+        theme=DEFAULT,
+    )
+
+
+def test_resolve_role_ref_none_without_color_rule_is_neutral():
+    ctx = _stub_cell()
+    assert _resolve_role(ctx, 1.0, 0.5, 1.5, None) == "neutral"
+
+
+def test_resolve_role_ref_none_forwards_to_color_rule_override():
+    seen_refs = []
+
+    def rule(value, low, high, ref):
+        seen_refs.append(ref)
+        return "unfavorable"
+
+    ctx = _stub_cell(color_rule=rule)
+    assert _resolve_role(ctx, 1.0, 0.5, 1.5, None) == "unfavorable"
+    assert seen_refs == [None]
 
 
 def test_bucket_domain_tight_is_the_default_and_matches_pad_domain():
