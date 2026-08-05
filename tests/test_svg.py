@@ -1659,6 +1659,48 @@ def test_sparkline_multi_misaligned_gaps_break_each_traces_runs_independently():
     assert svg.count("<polyline") == 4
 
 
+def test_sparkline_multi_show_endpoint_draws_one_label_per_traced_line():
+    x = [0.0, 1.0, 2.0]
+    a = _trace(x, [1.0, 1.2, 0.9], [None] * 3, [None] * 3, "#E69F00")
+    b = _trace(x, [0.5, 0.6, 0.4], [None] * 3, [None] * 3, "#56B4E9")
+    svg = sparkline_multi(
+        [a, b],
+        x_domain=(0.0, 2.0),
+        domain=(0.0, 2.0),
+        ref=None,
+        ref_color="#000",
+        fmt=Number(decimals=1),
+        show_endpoint=True,
+    )
+    labels = re.findall(r'<text[^>]*fill="([^"]+)"[^>]*>([^<]*)</text>', svg)
+    assert {color for color, _ in labels} == {"#E69F00", "#56B4E9"}
+    assert [text for _, text in labels] == ["0.9", "0.4"]
+
+
+def test_sparkline_multi_ribbon_clip_across_two_traces_clips_each_independently():
+    # One trace clips high, the other clips low, both with show_ribbon=True
+    # -- each trace's ribbon must clip to its own true crossing, not bleed
+    # into or merge with the other trace's clip.
+    x = [0.0, 1.0, 2.0]
+    a = _trace(x, [1.0, 300.0, 1.0], [0.5, 299.0, 0.5], [1.5, 301.0, 1.5], "#E69F00")
+    b = _trace(x, [1.0, -300.0, 1.0], [-301.0, -301.0, 0.5], [1.5, -299.0, 1.5], "#56B4E9")
+    svg = sparkline_multi(
+        [a, b],
+        x_domain=(0.0, 2.0),
+        domain=(0.0, 2.0),
+        ref=None,
+        ref_color="#000",
+        fmt=Number(decimals=1),
+    )
+    # Each clipping trace draws a ghost (true trajectory) polygon plus a
+    # clipped, opaque real polygon -- 2 per trace, 2 traces.
+    assert svg.count("<polygon") == 4
+    assert svg.count("<clipPath") == 1  # geometry-only clip id, shared
+    cap_lines = re.findall(r'<line[^>]*stroke-opacity="0.45"[^>]*/>', svg)
+    colors = {re.search(r'stroke="([^"]+)"', line).group(1) for line in cap_lines}  # ty: ignore[unresolved-attribute]
+    assert colors == {"#E69F00", "#56B4E9"}
+
+
 def test_sparkline_bar_output_is_byte_identical_to_pre_multi_trace_fixture():
     x = [0.0, 1.0, 2.0]
     y = [1.0, 1.2, 0.9]

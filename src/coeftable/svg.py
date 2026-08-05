@@ -1178,7 +1178,13 @@ def sparkline_multi(
     width, height, inset
         Geometry in pixels.
     show_endpoint
-        Draw each trace's endpoint value label.
+        Draw each trace's endpoint value label. Every label anchors at
+        the same `x=right_edge`; with several traces this is
+        all-or-nothing and uncoordinated across traces -- two traces
+        ending at nearby y-values render overlapping text, with no
+        automatic vertical nudge (unlike `sparkline_axis`'s two-tier
+        collision handling). Keep endpoints apart in the data, or turn
+        this off, when traces crowd near the same value.
     endpoint_width
         Fixed pixel reserve carved out of `width` for endpoint labels,
         independent of any label's length. `sparkline_axis` must be given
