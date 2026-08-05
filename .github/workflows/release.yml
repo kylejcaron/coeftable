@@ -90,10 +90,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release create "${{ steps.version.outputs.tag }}" --generate-notes
 
-  publish:
-    # Called directly rather than left to the tag-push trigger on the publish
-    # workflow: the tag above is pushed with the workflow token, and GitHub
-    # does not raise workflow-triggering events for it.
+  build:
+    # Called reusably for the build step only: `publish.yml`'s own
+    # `publish` job is gated on `startsWith(github.ref, 'refs/tags')`,
+    # which is false here (`github.ref` reflects this run's own
+    # branch/dispatch ref, not the `ref:` input below), so it no-ops --
+    # only `build-package` executes.
     needs: tag
     uses: ./.github/workflows/publish.yml
     permissions:
@@ -102,7 +104,30 @@ jobs:
       id-token: write
     with:
       ref: ${{ needs.tag.outputs.tag }}
-      publish: true
+
+  publish:
+    # A real top-level job, not delegated via `uses:`: PyPI Trusted
+    # Publishing does not support reusable workflows -- the OIDC
+    # certificate's Build Config URI reflects the top-level caller
+    # (release.yml) for a `uses:`-invoked job, which then fails to match
+    # a Trusted Publisher entry registered for the *called* workflow.
+    # See https://github.com/pypa/gh-action-pypi-publish/issues/166 and
+    # the "Non-goals" section of that action's README: "keep the job
+    # calling pypi-publish in a top-level [workflow]". `build-package`
+    # itself has no such restriction and stays reusable above.
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: publish
+      url: https://pypi.org/p/coeftable
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: Packages
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
 
   changelog:
     # Same reason as the publish job above: the release is created with the

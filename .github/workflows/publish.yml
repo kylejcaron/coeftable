@@ -11,11 +11,6 @@ on:
         description: "Git ref to build. Defaults to the triggering ref."
         required: false
         type: string
-      publish:
-        description: "Upload the built package to PyPI."
-        required: false
-        default: false
-        type: boolean
   workflow_dispatch:
 
 jobs:
@@ -40,20 +35,17 @@ jobs:
 
   publish:
     runs-on: ubuntu-latest
-    # PyPI must have a trusted publisher registered for BOTH entry points,
-    # each with environment "publish": this workflow, for a manual run or a
-    # hand-pushed tag, and release.yml, for an automated release. Upload
-    # authentication matches on the reusable workflow, but the build
-    # provenance attestation carries the TOP-LEVEL workflow, so an automated
-    # release presents release.yml and is rejected with "does not match
-    # expected Trusted Publisher" unless that entry point is registered too.
-    #
-    # A tag pushed by a workflow using the default token does not raise a
-    # push event, so a release cut by automation asks for the upload
-    # explicitly. Any other run sitting on a tag -- a hand-pushed tag, or a
-    # manual run selecting one, which is how a stranded release gets
-    # published -- is also a release build. A run on a branch never is.
-    if: inputs.publish || startsWith(github.ref, 'refs/tags')
+    # PyPI Trusted Publishing does not support reusable workflows
+    # (https://github.com/pypa/gh-action-pypi-publish/issues/166): a
+    # `workflow_call` invocation of this job would present the *caller's*
+    # workflow identity, not this one, and fail to match the Trusted
+    # Publisher entry registered for this workflow. So this job never
+    # publishes when called reusably -- release.yml calls this workflow
+    # for `build-package` only and does its own top-level publish. This
+    # job runs only for a direct trigger of this workflow sitting on a
+    # tag: a tag push, or a manual run selecting a tag ref (how a
+    # stranded release gets republished). A run on a branch never does.
+    if: startsWith(github.ref, 'refs/tags')
     environment:
       name: publish
       url: https://pypi.org/p/coeftable
