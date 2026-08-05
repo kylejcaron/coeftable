@@ -628,6 +628,61 @@ def test_resolve_role_ref_none_forwards_to_color_rule_override():
     assert seen_refs == [None]
 
 
+# Absolute-valued series, two row groups, no value anywhere near 0 -- the
+# motivating case for ref=None: with a forced-zero domain this data would
+# be compressed into a sliver of each cell.
+_ABS_GROUP_RAW = {
+    "area": ["Core", "Core", "Ops", "Ops"],
+    "metric": ["Revenue", "Users", "Latency", "Errors"],
+    "value": [
+        [282.3, 300.1, 320.0],
+        [350.0, 360.0, 378.2],
+        [900.0, 910.0, 920.0],
+        [950.0, 960.0, 970.0],
+    ],
+}
+
+
+def test_sparkline_ref_none_end_to_end_draws_no_line_and_colours_neutral():
+    ref_none = CoefTable(pl.DataFrame(_ABS_GROUP_RAW), rows="metric", groups="area").sparkline(
+        "Trend", value="value", ref=None, scale="row_group", show_axis=False
+    )
+    ref_zero = CoefTable(pl.DataFrame(_ABS_GROUP_RAW), rows="metric", groups="area").sparkline(
+        "Trend", value="value", ref=0.0, scale="row_group", show_axis=False
+    )
+    none_plots = nw.from_native(resolve(ref_none).frame)["Trend"].to_list()
+    zero_plots = nw.from_native(resolve(ref_zero).frame)["Trend"].to_list()
+
+    # ref=None: no dashed reference line anywhere, and every cell resolves
+    # neutral -- "favorable" has no meaning without a reference.
+    assert all("stroke-dasharray" not in p for p in none_plots)
+    assert all(DEFAULT.color("neutral") in p for p in none_plots)
+    assert all(DEFAULT.color("favorable") not in p for p in none_plots)
+    assert all(DEFAULT.color("unfavorable") not in p for p in none_plots)
+
+    # ref=0.0 still forces the domain to include 0 and draws the line --
+    # unaffected by the widened type.
+    assert all("stroke-dasharray" in p for p in zero_plots)
+
+
+def test_sparkline_ref_none_color_rule_override_still_resolves():
+    def rule(value, low, high, ref):
+        return "unfavorable"
+
+    table = CoefTable(
+        pl.DataFrame(_ABS_GROUP_RAW), rows="metric", groups="area", color_rule=rule
+    ).sparkline("Trend", value="value", ref=None, show_axis=False)
+    plots = nw.from_native(resolve(table).frame)["Trend"].to_list()
+    assert all(DEFAULT.color("unfavorable") in p for p in plots)
+
+
+def test_sparkline_max_ylim_with_ref_none_raises_spec_error():
+    with pytest.raises(SpecError, match="Trend"):
+        CoefTable(pl.DataFrame(_ABS_GROUP_RAW), rows="metric", groups="area").sparkline(
+            "Trend", value="value", ref=None, max_ylim=20.0
+        )
+
+
 def test_bucket_domain_tight_is_the_default_and_matches_pad_domain():
     plain = _bucket_domain(_SPIKE_LIFT, 1.0, override=None, max_domain=None)
     assert plain == _pad_domain(_SPIKE_LIFT, 1.0)

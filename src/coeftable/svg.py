@@ -1106,7 +1106,7 @@ def sparkline_bar(
     *,
     x_domain: tuple[float, float],
     domain: tuple[float, float],
-    ref: float,
+    ref: float | None,
     color: str,
     fmt: Format,
     width: int = 220,
@@ -1163,7 +1163,8 @@ def sparkline_bar(
     domain
         Shared y-domain for `y`, `lower`, `upper` and `ref`.
     ref
-        Reference value for the horizontal dashed line.
+        Reference value for the horizontal dashed line, or `None` to
+        draw no reference line.
     color
         Line, ribbon, endpoint, reference-line, ghost-trace and clip-cap
         colour, resolved from the last point's interval by the caller.
@@ -1224,7 +1225,7 @@ def sparkline_bar(
 
     line_runs = _line_runs(x, y)
 
-    if (line_runs or band_runs) and low <= ref <= high:
+    if ref is not None and (line_runs or band_runs) and low <= ref <= high:
         ref_y = project_y(ref)
         parts.append(
             f'<line x1="{inset}" y1="{ref_y:.2f}" x2="{right_edge}" y2="{ref_y:.2f}" '

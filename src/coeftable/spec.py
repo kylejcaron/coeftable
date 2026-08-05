@@ -645,7 +645,11 @@ class Sparkline:
         columns on it instead of list-valued columns on the main frame.
     ref
         Reference value for the dashed horizontal line and role
-        resolution.
+        resolution. `None` means the series has no reference: no dashed
+        line, no forced domain inclusion, and every cell resolves
+        `theme.neutral` (a `color_rule`, if set, still decides for
+        itself). Rejected together with `max_ylim`, which has no anchor
+        to clamp around without a reference.
     scale
         Which set of rows share a y-domain. Defaults to `"row"`, the
         opposite of `Forest`'s `"table"` default -- sparkline rows are
@@ -659,7 +663,8 @@ class Sparkline:
         bucket whose natural domain already fits inside the ceiling
         renders unchanged. Applies per `scale` bucket, composing with it
         rather than overriding it. Ignored when `ylim` is set --
-        `ylim` is an absolute override and always wins.
+        `ylim` is an absolute override and always wins. Requires `ref`
+        to be set; raises `SpecError` when `ref is None`.
     autoscale
         Strategy for the auto-computed domain when `ylim` is not set.
         `"tight"` (default) fits tightly to the exact min/max of the
@@ -710,7 +715,7 @@ class Sparkline:
     ci: tuple[str, str] | None = None
     x: str | None = None
     data: Any | None = None
-    ref: float = 0.0
+    ref: float | None = 0.0
     scale: Scale = "row"
     ylim: tuple[float, float] | None = None
     max_ylim: float | None = None
@@ -881,8 +886,8 @@ def validate_columns(columns: tuple[Column, ...]) -> None:
         When no columns are declared, labels collide, a `Forest` names an
         undeclared estimate, a `Forest` is bound to a CI-less estimate, a
         `Sparkline`'s `ci` is not a `(lower, upper)` pair, an explicit
-        `domain` is not strictly increasing, or a `Sparkline`'s
-        `max_domain` is not positive.
+        `domain` is not strictly increasing, a `Sparkline`'s `max_domain`
+        is not positive, or a `Sparkline` sets `max_ylim` with `ref=None`.
     """
     if not columns:
         raise SpecError("Table has no columns; declare at least one.")
@@ -928,6 +933,12 @@ def validate_columns(columns: tuple[Column, ...]) -> None:
         if isinstance(column, Sparkline) and column.max_ylim is not None and column.max_ylim <= 0:
             raise SpecError(
                 f"Sparkline column {column.label!r} max_ylim must be > 0; got {column.max_ylim!r}."
+            )
+        if isinstance(column, Sparkline) and column.max_ylim is not None and column.ref is None:
+            raise SpecError(
+                f"Sparkline column {column.label!r} sets max_ylim with ref=None; "
+                "max_ylim is a half-width ceiling around ref, so it requires a "
+                "reference to clamp around."
             )
 
 
@@ -1147,7 +1158,7 @@ class CoefTable:
         ci: tuple[str, str] | None = None,
         x: str | None = None,
         data: Any | None = None,
-        ref: float = 0.0,
+        ref: float | None = 0.0,
         scale: Scale = "row",
         ylim: tuple[float, float] | None = None,
         max_ylim: float | None = None,
@@ -1182,7 +1193,10 @@ class CoefTable:
             main frame.
         ref
             Reference value for the dashed horizontal line and role
-            resolution.
+            resolution. `None` means the series has no reference: no
+            dashed line, no forced domain inclusion, and every cell
+            resolves `theme.neutral` (a `color_rule`, if set, still
+            decides for itself). Rejected together with `max_ylim`.
         scale
             Which set of rows share a y-domain.
         ylim
@@ -1191,7 +1205,8 @@ class CoefTable:
             Half-width ceiling around `ref` for the auto-computed domain,
             e.g. `max_ylim=20` clamps to `(ref - 20, ref + 20)`. Only
             narrows -- a row whose natural domain already fits inside the
-            ceiling is unaffected. Ignored when `ylim` is set.
+            ceiling is unaffected. Ignored when `ylim` is set. Requires
+            `ref` to be set; raises `SpecError` when `ref is None`.
         autoscale
             Strategy for the auto-computed domain when `ylim` is not set.
             `"tight"` (default) fits tightly to the pooled values, same as

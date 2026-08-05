@@ -57,6 +57,20 @@ def test_one_line_table_renders():
     assert "<table" in html
 
 
+def test_sparkline_ref_none_renders_via_public_api():
+    raw = {
+        "metric": ["Revenue", "Latency"],
+        "series": [[3.4, 4.1, 5.7], [0.5, 0.8, 2.0]],
+    }
+    html = (
+        ct.CoefTable(pl.DataFrame(raw), rows="metric")
+        .sparkline("Trend", value="series", ref=None)
+        .gt()
+        .as_raw_html()
+    )
+    assert "<svg" in html
+
+
 def test_every_public_symbol_is_exported():
     expected = {
         "CoefTable",

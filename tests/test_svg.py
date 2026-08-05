@@ -291,6 +291,57 @@ def test_sparkline_bar_draws_reference_line_only_when_inside_domain():
     assert "stroke-dasharray" not in outside
 
 
+def test_sparkline_bar_ref_none_draws_no_reference_line():
+    x = [0.0, 1.0, 2.0]
+    y = [1.0, 1.2, 0.9]
+    lower = [0.8, 1.0, 0.7]
+    upper = [1.2, 1.4, 1.1]
+    no_ref = sparkline_bar(
+        x,
+        y,
+        lower,
+        upper,
+        x_domain=(0.0, 2.0),
+        domain=(0.0, 2.0),
+        ref=None,
+        color="#000",
+        fmt=Number(decimals=1),
+    )
+    with_ref = sparkline_bar(
+        x,
+        y,
+        lower,
+        upper,
+        x_domain=(0.0, 2.0),
+        domain=(0.0, 2.0),
+        ref=0.5,
+        color="#000",
+        fmt=Number(decimals=1),
+    )
+    assert "stroke-dasharray" not in no_ref
+    assert "stroke-dasharray" in with_ref
+
+
+def test_sparkline_bar_ref_none_still_clips_points_outside_the_domain():
+    # Clipping and the hard-clip safety net key off `domain` alone, never
+    # `ref` -- proven by reproducing the hard-clip fixture with no
+    # reference at all.
+    svg = sparkline_bar(
+        [0.0, 1.0, 2.0],
+        [1.0, 300.0, 1.0],
+        [None] * 3,
+        [None] * 3,
+        x_domain=(0.0, 2.0),
+        domain=(0.0, 20.0),
+        ref=None,
+        color="#000",
+        fmt=Number(decimals=1),
+    )
+    assert "stroke-dasharray" not in svg
+    assert "<clipPath" in svg
+    assert 'clip-path="url(#' in svg
+
+
 def test_sparkline_bar_hides_endpoint_label_when_disabled():
     x = [0.0, 1.0, 2.0]
     y = [1.0, 1.2, 0.9]
