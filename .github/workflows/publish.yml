@@ -16,6 +16,7 @@ on:
         required: false
         default: false
         type: boolean
+  workflow_dispatch:
 
 jobs:
   build-package:
@@ -39,11 +40,11 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     # A tag pushed by a workflow using the default token does not raise a
-    # push event, so a release cut by automation must ask for the upload
-    # explicitly rather than relying on the tag trigger below.
-    if: >-
-      inputs.publish ||
-      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags'))
+    # push event, so a release cut by automation asks for the upload
+    # explicitly. Any other run sitting on a tag -- a hand-pushed tag, or a
+    # manual run selecting one, which is how a stranded release gets
+    # published -- is also a release build. A run on a branch never is.
+    if: inputs.publish || startsWith(github.ref, 'refs/tags')
     environment:
       name: publish
       url: https://pypi.org/p/coeftable
