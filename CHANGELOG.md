@@ -1,3 +1,22 @@
+<a id="v0.3.0"></a>
+# [v0.3.0](https://github.com/kylejcaron/coeftable/releases/tag/v0.3.0) - 2026-08-05
+
+<!-- Release notes generated using configuration in .github/release.yml at v0.3.0 -->
+
+## What's Changed
+### Maintenance
+* Update changelog for v0.2.1 by [@github-actions](https://github.com/github-actions)[bot] in [#13](https://github.com/kylejcaron/coeftable/pull/13)
+* Document the PyPI trusted-publisher requirement for both entry points by [@kylejcaron](https://github.com/kylejcaron) in [#14](https://github.com/kylejcaron/coeftable/pull/14)
+* Add collapsible group sections by [@kylejcaron](https://github.com/kylejcaron) in [#18](https://github.com/kylejcaron/coeftable/pull/18)
+* Allow ref=None on Sparkline to drop the reference line and its domain constraint by [@kylejcaron](https://github.com/kylejcaron) in [#19](https://github.com/kylejcaron/coeftable/pull/19)
+* Support multiple overlaid series in one sparkline cell by [@kylejcaron](https://github.com/kylejcaron) in [#20](https://github.com/kylejcaron/coeftable/pull/20)
+
+
+**Full Changelog**: https://github.com/kylejcaron/coeftable/compare/v0.2.1...v0.3.0
+
+[Changes][v0.3.0]
+
+
 <a id="v0.2.1"></a>
 # [v0.2.1](https://github.com/kylejcaron/coeftable/releases/tag/v0.2.1) - 2026-08-05
 
@@ -54,6 +73,7 @@
 [Changes][v0.1.0]
 
 
+[v0.3.0]: https://github.com/kylejcaron/coeftable/compare/v0.2.1...v0.3.0
 [v0.2.1]: https://github.com/kylejcaron/coeftable/compare/v0.2.0...v0.2.1
 [v0.2.0]: https://github.com/kylejcaron/coeftable/compare/v0.1.0...v0.2.0
 [v0.1.0]: https://github.com/kylejcaron/coeftable/tree/v0.1.0
