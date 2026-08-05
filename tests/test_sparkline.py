@@ -676,6 +676,20 @@ def test_sparkline_ref_none_color_rule_override_still_resolves():
     assert all(DEFAULT.color("unfavorable") in p for p in plots)
 
 
+def test_sparkline_ref_none_end_to_end_with_autoscale_robust():
+    # ref=None's domain path (_pad_domain -> _robust_domain -> _bucket_domain)
+    # is unit-tested directly; this proves the composition survives through
+    # the full Sparkline.prepare/cell wiring too. Values sit far from 0
+    # (~279-285) with one outlier the fence should discount.
+    raw = {"metric": ["A"], "lift": [[282.3, 285.0, 279.0, 900.0, 281.0, 283.0]]}
+    table = CoefTable(pl.DataFrame(raw), rows="metric").sparkline(
+        "Trend", value="lift", ref=None, autoscale="robust", show_axis=False
+    )
+    plot = nw.from_native(resolve(table).frame)["Trend"].to_list()[0]
+    assert "stroke-dasharray" not in plot
+    assert DEFAULT.color("neutral") in plot
+
+
 def test_sparkline_max_ylim_with_ref_none_raises_spec_error():
     with pytest.raises(SpecError, match="Trend"):
         CoefTable(pl.DataFrame(_ABS_GROUP_RAW), rows="metric", groups="area").sparkline(
@@ -752,6 +766,29 @@ def test_sparkline_max_ylim_with_show_ref_false_raises_the_same_spec_error_as_re
             "Trend", value="value", ref=0.0, show_ref=False, max_ylim=20.0
         )
     assert str(none_exc.value) == str(show_ref_exc.value)
+
+
+def test_sparkline_max_ylim_with_ref_none_raises_even_when_ylim_makes_it_inert():
+    # ylim is an absolute override -- _bucket_domain returns it before
+    # max_ylim's ceiling is ever consulted, so max_ylim has no runtime
+    # effect here. It is still rejected: the spec is contradictory on its
+    # face, regardless of whether ylim happens to make the contradiction
+    # inert.
+    with pytest.raises(SpecError, match="Trend"):
+        CoefTable(pl.DataFrame(_ABS_GROUP_RAW), rows="metric", groups="area").sparkline(
+            "Trend", value="value", ref=None, ylim=(0.0, 500.0), max_ylim=20.0
+        )
+
+
+def test_clamp_domain_would_invert_without_the_anchored_domain_guard():
+    # Documents *why* validate_columns rejects max_ylim + an unanchored
+    # domain (ref=None or show_ref=False): _clamp_domain assumes ref sits
+    # inside domain (guaranteed when _pad_domain/_robust_domain anchor to
+    # it). Feed it a domain that never had ref forced in -- exactly what
+    # an unanchored max_ylim would produce -- and the ceiling clamp
+    # inverts instead of narrowing.
+    low, high = _clamp_domain((900.0, 970.0), ref=0.0, max_domain=20.0)
+    assert low > high
 
 
 def test_bucket_domain_tight_is_the_default_and_matches_pad_domain():

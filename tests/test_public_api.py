@@ -57,28 +57,21 @@ def test_one_line_table_renders():
     assert "<table" in html
 
 
-def test_sparkline_ref_none_renders_via_public_api():
+@pytest.mark.parametrize(
+    "kwargs", [{"ref": None}, {"ref": 0.0, "show_ref": False}], ids=["ref_none", "show_ref_false"]
+)
+def test_sparkline_reference_opt_outs_render_via_public_api(kwargs):
+    # ref=None and show_ref=False are both proven end-to-end at the
+    # CoefTable/spec level in test_sparkline.py; this only needs to
+    # confirm the top-level public `coeftable` import wires each kwarg
+    # through .sparkline() without error.
     raw = {
         "metric": ["Revenue", "Latency"],
         "series": [[3.4, 4.1, 5.7], [0.5, 0.8, 2.0]],
     }
     html = (
         ct.CoefTable(pl.DataFrame(raw), rows="metric")
-        .sparkline("Trend", value="series", ref=None)
-        .gt()
-        .as_raw_html()
-    )
-    assert "<svg" in html
-
-
-def test_sparkline_show_ref_false_renders_via_public_api():
-    raw = {
-        "metric": ["Revenue", "Latency"],
-        "series": [[3.4, 4.1, 5.7], [0.5, 0.8, 2.0]],
-    }
-    html = (
-        ct.CoefTable(pl.DataFrame(raw), rows="metric")
-        .sparkline("Trend", value="series", ref=0.0, show_ref=False)
+        .sparkline("Trend", value="series", **kwargs)
         .gt()
         .as_raw_html()
     )

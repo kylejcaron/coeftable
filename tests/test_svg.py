@@ -292,34 +292,21 @@ def test_sparkline_bar_draws_reference_line_only_when_inside_domain():
 
 
 def test_sparkline_bar_ref_none_draws_no_reference_line():
-    x = [0.0, 1.0, 2.0]
-    y = [1.0, 1.2, 0.9]
-    lower = [0.8, 1.0, 0.7]
-    upper = [1.2, 1.4, 1.1]
-    no_ref = sparkline_bar(
-        x,
-        y,
-        lower,
-        upper,
+    svg = sparkline_bar(
+        [0.0, 1.0, 2.0],
+        [1.0, 1.2, 0.9],
+        [0.8, 1.0, 0.7],
+        [1.2, 1.4, 1.1],
         x_domain=(0.0, 2.0),
         domain=(0.0, 2.0),
         ref=None,
         color="#000",
         fmt=Number(decimals=1),
     )
-    with_ref = sparkline_bar(
-        x,
-        y,
-        lower,
-        upper,
-        x_domain=(0.0, 2.0),
-        domain=(0.0, 2.0),
-        ref=0.5,
-        color="#000",
-        fmt=Number(decimals=1),
-    )
-    assert "stroke-dasharray" not in no_ref
-    assert "stroke-dasharray" in with_ref
+    # ref inside the domain drawing a line is already covered by
+    # test_sparkline_bar_draws_reference_line_only_when_inside_domain
+    # above; this only needs to prove ref=None draws none at all.
+    assert "stroke-dasharray" not in svg
 
 
 def test_sparkline_bar_ref_none_still_clips_points_outside_the_domain():

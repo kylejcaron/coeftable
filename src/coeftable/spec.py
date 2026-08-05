@@ -288,7 +288,9 @@ def _pad_domain(
     `ref=None` means there is no reference to anchor the domain to: the
     domain fits `values` alone, with no forced inclusion of any point.
     `symmetric=True` requires a reference to centre on and raises
-    `ValueError` when `ref is None`.
+    `ValueError` when `ref is None`; the later `ref is not None` guard on
+    the `symmetric` branch below is runtime-unreachable given that raise,
+    but stays for the type checker to narrow `ref` before the arithmetic.
     """
     if symmetric and ref is None:
         raise ValueError("_pad_domain: symmetric=True requires ref to be set, got ref=None")
@@ -661,11 +663,12 @@ class Sparkline:
         Half-width ceiling around `ref` for the auto-computed domain --
         `max_ylim=20` clamps to `(ref - 20, ref + 20)`. Only narrows: a
         bucket whose natural domain already fits inside the ceiling
-        renders unchanged. Applies per `scale` bucket, composing with it
-        rather than overriding it. Ignored when `ylim` is set --
-        `ylim` is an absolute override and always wins. Requires an
-        anchored domain; raises `SpecError` when `ref is None` or
-        `show_ref=False`.
+        renders unchanged. Has no effect when `ylim` is set -- `ylim` is
+        an absolute override and always wins -- but combining it with
+        `ref=None` or `show_ref=False` still raises `SpecError`, even
+        then: there is no anchor for `max_ylim` to mean anything, so the
+        spec is rejected as contradictory rather than silently accepted
+        because `ylim` happens to make it inert.
     autoscale
         Strategy for the auto-computed domain when `ylim` is not set.
         `"tight"` (default) fits tightly to the exact min/max of the
@@ -947,17 +950,20 @@ def validate_columns(columns: tuple[Column, ...]) -> None:
                 f"{kind} column {column.label!r} ylim must be strictly increasing "
                 f"(low, high); got {column.ylim!r}."
             )
-        if isinstance(column, Sparkline) and column.max_ylim is not None and column.max_ylim <= 0:
-            raise SpecError(
-                f"Sparkline column {column.label!r} max_ylim must be > 0; got {column.max_ylim!r}."
-            )
         if isinstance(column, Sparkline) and column.max_ylim is not None:
-            unanchored = column.ref is None or not column.show_ref
-            if unanchored:
+            if column.max_ylim <= 0:
                 raise SpecError(
-                    f"Sparkline column {column.label!r} sets max_ylim without an "
-                    "anchored domain (ref=None or show_ref=False); max_ylim is a "
-                    "half-width ceiling around ref, so it requires one."
+                    f"Sparkline column {column.label!r} max_ylim must be > 0; "
+                    f"got {column.max_ylim!r}."
+                )
+            if column.ref is None or not column.show_ref:
+                raise SpecError(
+                    f"Sparkline column {column.label!r} sets max_ylim with no domain "
+                    "anchor: ref=None has no reference, and show_ref=False keeps ref "
+                    "set but hides it from the plot. max_ylim is a half-width ceiling "
+                    "around ref -- without an anchor it can exclude the data entirely "
+                    "rather than merely narrow it. Rejected even when ylim would make "
+                    "max_ylim inert, the same as an out-of-range max_ylim."
                 )
 
 
@@ -985,9 +991,16 @@ class CoefTable:
         Sugar declaring a single `Estimate` labelled ``"Estimate"``, prepended
         before any `columns` entries.
     direction
-        Which side of a reference counts as favorable, table-wide or per row key.
+        Which side of a reference counts as favorable, table-wide or per
+        row key. Silently has no effect on a `Sparkline` column resolved
+        with `ref=None`, which always colours `"neutral"` regardless of
+        `direction` -- there is no reference for "favorable" to mean
+        anything against.
     color_rule
-        Callable overriding role resolution entirely.
+        Callable overriding role resolution entirely. Must accept a
+        `None` reference: a `Sparkline` column using `ref=None` calls it
+        with `ref=None`, same as any other value -- it decides what that
+        means, since the built-in `role_for` cannot.
     theme
         Colour and typography.
     title, subtitle
@@ -1236,9 +1249,11 @@ class CoefTable:
             Half-width ceiling around `ref` for the auto-computed domain,
             e.g. `max_ylim=20` clamps to `(ref - 20, ref + 20)`. Only
             narrows -- a row whose natural domain already fits inside the
-            ceiling is unaffected. Ignored when `ylim` is set. Requires
-            an anchored domain; raises `SpecError` when `ref is None` or
-            `show_ref=False`.
+            ceiling is unaffected. Has no effect when `ylim` is set --
+            `ylim` always wins -- but combining it with `ref=None` or
+            `show_ref=False` still raises `SpecError`: the spec is
+            rejected as contradictory even when `ylim` happens to make
+            `max_ylim` inert.
         autoscale
             Strategy for the auto-computed domain when `ylim` is not set.
             `"tight"` (default) fits tightly to the pooled values, same as

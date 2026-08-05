@@ -124,8 +124,7 @@ methods = pl.DataFrame(
 (
     ct.CoefTable(
         methods, rows="metric", split_columns="method", estimate="est", ci=("lb", "ub")
-    )
-    .header("Cohort Revenue by Method")
+    ).header("Cohort Revenue by Method")
 )
 ```
 
@@ -136,11 +135,11 @@ Four built-in themes are available from `coeftable.theme`:
 ```python
 from coeftable.theme import BLUE, COLORBLIND, DEFAULT, MONO, TEXTUAL
 
-DEFAULT       # Alias for TEXTUAL -- what CoefTable uses if you don't set a theme
-TEXTUAL       # Minimal, publication-style: muted colours, light chrome
-BLUE          # The original blue-grey palette
-COLORBLIND    # Colourblind-safe palette
-MONO          # Grayscale for mono journals
+DEFAULT  # Alias for TEXTUAL -- what CoefTable uses if you don't set a theme
+TEXTUAL  # Minimal, publication-style: muted colours, light chrome
+BLUE  # The original blue-grey palette
+COLORBLIND  # Colourblind-safe palette
+MONO  # Grayscale for mono journals
 ```
 
 Apply one with `.with_theme(...)`:
@@ -161,9 +160,8 @@ Use `with_direction` to mark rows where lower values are favourable (reusing
 the `df` frame from [Quick start](#quick-start)):
 
 ```python
-table = (
-    ct.CoefTable(df, rows="metric", estimate="est", ci=("lb", "ub"))
-    .with_direction({"Latency": "lower_is_better"})
+table = ct.CoefTable(df, rows="metric", estimate="est", ci=("lb", "ub")).with_direction(
+    {"Latency": "lower_is_better"}
 )
 ```
 
@@ -323,5 +321,31 @@ trend = pl.DataFrame(
     # ylim=(lo, hi) is an absolute override, replacing scale/autoscale/
     # max_ylim entirely.
     .sparkline("Override", value="lift", ref=1.0, ylim=(0.9, 1.1))
+)
+```
+
+**No reference, or a hidden one.** `ref` also drives the dashed line and
+colour resolution; two ways to opt out, for data with no meaningful
+zero (revenue, durations, absolute counts):
+
+```python
+absolute = pl.DataFrame(
+    {
+        "metric": ["Revenue", "Latency"],
+        "value": [[282.3, 300.1, 320.0], [900.0, 910.0, 920.0]],
+    }
+)
+
+(
+    ct.CoefTable(absolute, rows="metric")
+    # ref=None: no reference at all. No dashed line, no forced domain
+    # inclusion of 0, and every cell colours neutral -- "favorable" has
+    # no meaning without something to compare against.
+    .sparkline("No reference", value="value", ref=None)
+    # ref=0.0, show_ref=False: the reference is real and still drives
+    # colour (favorable/unfavorable against 0), it just isn't drawn or
+    # forced into the domain. Opt in deliberately: a mark can then claim
+    # "above the reference" while the reference sits off-canvas.
+    .sparkline("Hidden reference", value="value", ref=0.0, show_ref=False)
 )
 ```
