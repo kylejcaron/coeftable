@@ -275,23 +275,33 @@ def _resolve_role(
 
 
 def _pad_domain(
-    values: list[float], ref: float, *, symmetric: bool = False
+    values: list[float], ref: float | None, *, symmetric: bool = False
 ) -> tuple[float, float]:
+    """Pad `values` to a domain, forcing inclusion of `ref` unless `ref is None`.
+
+    `ref=None` means there is no reference to anchor the domain to: the
+    domain fits `values` alone, with no forced inclusion of any point.
+    `symmetric=True` requires a reference to centre on and raises
+    `ValueError` when `ref is None`.
+    """
+    if symmetric and ref is None:
+        raise ValueError("_pad_domain: symmetric=True requires ref to be set, got ref=None")
     if not values:
-        return (ref - 1.0, ref + 1.0)
+        return (-1.0, 1.0) if ref is None else (ref - 1.0, ref + 1.0)
     low, high = min(values), max(values)
-    low, high = min(low, ref), max(high, ref)
+    if ref is not None:
+        low, high = min(low, ref), max(high, ref)
     if low == high:
         return (low - 1.0, high + 1.0)
     margin = (high - low) * 0.08
     low, high = low - margin, high + margin
-    if symmetric:
+    if symmetric and ref is not None:
         half = max(ref - low, high - ref)
         return (ref - half, ref + half)
     return (low, high)
 
 
-def _robust_domain(values: list[float], ref: float) -> tuple[float, float]:
+def _robust_domain(values: list[float], ref: float | None) -> tuple[float, float]:
     """Pad an IQR/Tukey-fenced domain to `values`, discounting outliers.
 
     Falls back to `_pad_domain`'s plain min/max fit entirely -- not a
@@ -318,24 +328,29 @@ def _robust_domain(values: list[float], ref: float) -> tuple[float, float]:
 
 
 def _clamp_domain(
-    domain: tuple[float, float], ref: float, max_domain: float
+    domain: tuple[float, float], ref: float | None, max_domain: float
 ) -> tuple[float, float]:
     """Narrow `domain` to fit inside `ref - max_domain, ref + max_domain`; never widens it.
 
     Requires `ref` inside `domain` -- guaranteed by `_bucket_domain`'s one
     call site, which only ever clamps a `_pad_domain` or `_robust_domain`
-    result (both always forced to contain `ref`). `max_domain >= 0` is a
-    documented but unenforced precondition: nothing validates the sign of
-    `Sparkline`'s `max_domain` field, and a negative value inverts the
-    result (`low > high`) rather than raising.
+    result (both always forced to contain `ref`). Raises `ValueError` when
+    `ref is None`: an unanchored domain has no ceiling to clamp to. Callers
+    reject `ref=None` combined with a `max_domain` earlier and more
+    legibly (`validate_columns`); this is a defensive invariant only.
+    `max_domain >= 0` is a documented but unenforced precondition: nothing
+    validates the sign of `Sparkline`'s `max_domain` field, and a negative
+    value inverts the result (`low > high`) rather than raising.
     """
+    if ref is None:
+        raise ValueError("_clamp_domain: max_domain requires ref to be set, got ref=None")
     low, high = domain
     return (max(low, ref - max_domain), min(high, ref + max_domain))
 
 
 def _bucket_domain(
     values: list[float],
-    ref: float,
+    ref: float | None,
     *,
     override: tuple[float, float] | None,
     max_domain: float | None,

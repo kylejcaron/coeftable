@@ -558,6 +558,44 @@ def test_robust_domain_forces_ref_into_the_domain():
     assert low <= 0.0 <= high
 
 
+def test_pad_domain_ref_none_excludes_zero_when_data_is_far_from_it():
+    low, high = _pad_domain([282.3, 378.2], ref=None)
+    assert (low, high) == pytest.approx(
+        (282.3 - (378.2 - 282.3) * 0.08, 378.2 + (378.2 - 282.3) * 0.08)
+    )
+    assert not (low <= 0.0 <= high)
+
+
+def test_pad_domain_ref_zero_still_forces_inclusion():
+    low, high = _pad_domain([282.3, 378.2], ref=0.0)
+    assert low <= 0.0 <= high
+
+
+def test_pad_domain_ref_none_empty_values_falls_back_to_unit_domain():
+    assert _pad_domain([], ref=None) == (-1.0, 1.0)
+
+
+def test_pad_domain_ref_none_single_value_pads_by_one():
+    assert _pad_domain([5.0], ref=None) == (4.0, 6.0)
+
+
+def test_pad_domain_symmetric_requires_ref():
+    with pytest.raises(ValueError):
+        _pad_domain([1.0, 2.0], ref=None, symmetric=True)
+
+
+def test_robust_domain_ref_none_fences_outliers_and_excludes_zero():
+    values = [282.3, 378.2, 300.1, 350.0, 900.0]  # 900.0 is the outlier
+    low, high = _robust_domain(values, ref=None)
+    assert not (900.0 <= high)
+    assert not (low <= 0.0 <= high)
+
+
+def test_clamp_domain_requires_ref():
+    with pytest.raises(ValueError):
+        _clamp_domain((-3.0, 4.0), ref=None, max_domain=1.0)
+
+
 def test_bucket_domain_tight_is_the_default_and_matches_pad_domain():
     plain = _bucket_domain(_SPIKE_LIFT, 1.0, override=None, max_domain=None)
     assert plain == _pad_domain(_SPIKE_LIFT, 1.0)
