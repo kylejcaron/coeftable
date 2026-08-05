@@ -75,15 +75,19 @@ class Theme:
     na_text: str = "\u2014"
     border_style: Literal["boxed", "minimal"] = "boxed"
     border_color: str | None = None
+    # tab10 (D3/matplotlib's default qualitative palette): high-contrast,
+    # well-tested for line charts at small sizes.
     series_palette: tuple[str, ...] = (
-        "#3B4CC0",
-        "#DD8452",
-        "#8172B3",
-        "#937860",
-        "#DA8BC3",
-        "#64B5CD",
-        "#CCB974",
-        "#5A5A5A",
+        "#1f77b4",
+        "#ff7f0e",
+        "#2ca02c",
+        "#d62728",
+        "#9467bd",
+        "#8c564b",
+        "#e377c2",
+        "#7f7f7f",
+        "#bcbd22",
+        "#17becf",
     )
 
     def color(self, role: Role) -> str:
@@ -243,13 +247,17 @@ TEXTUAL = Theme(
     text="#212121",
     border_style="minimal",
     border_color="#A8A8A8",
+    # ColorBrewer Set2: softer/pastel than tab10, so overlaid ribbons
+    # don't fight the muted publication aesthetic for attention.
     series_palette=(
-        "#37474F",
-        "#8D6E63",
-        "#5C6BC0",
-        "#7CB342",
-        "#AB47BC",
-        "#546E7A",
+        "#66c2a5",
+        "#fc8d62",
+        "#8da0cb",
+        "#e78ac3",
+        "#a6d854",
+        "#ffd92f",
+        "#e5c494",
+        "#b3b3b3",
     ),
 )
 
