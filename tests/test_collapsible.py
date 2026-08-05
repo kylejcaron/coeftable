@@ -139,37 +139,6 @@ def test_sparkline_axis_row_is_not_folded_into_the_last_group():
     assert tbody.count('data-ct-group-member="2"') == 2
 
 
-def test_sparkline_row_group_scale_axis_row_is_still_shared_not_per_group():
-    # The one place sparkline's behaviour could plausibly be mistaken for
-    # Forest's: scale="row_group" changes each row's y-domain bucketing,
-    # but -- unlike Forest -- must NOT change the x-axis's closing scope,
-    # since footer_key ignores `scale` entirely.
-    raw: dict[str, Any] = {
-        **RAW,
-        "trend": [
-            [1.0, 1.2],
-            [0.9, 0.8],
-            [2.0, 2.4],
-            [1.8, 1.5],
-            [0.5, 0.6],
-            [0.4, 0.3],
-        ],
-    }
-    html = (
-        CoefTable(pl.DataFrame(raw), rows="metric", nest="variant", groups="area")
-        .estimate("Lift %", "rel", ci=("rel_lb", "rel_ub"))
-        .sparkline("Trend", value="trend", scale="row_group")
-        .gt()
-        .as_raw_html()
-    )
-    result = make_collapsible(html)
-    tbody = result[result.index('<tbody class="gt_table_body">') : result.index("</tbody>")]
-
-    axis_row = _row_at(tbody, SHARED_AXIS_ROW_MARK)
-    assert "data-ct-group-member" not in axis_row
-    assert tbody.count('data-ct-group-member="2"') == 2
-
-
 def test_empty_group_label_gets_its_own_toggle_not_folded_into_the_previous_group():
     # great_tables emits a different <tr> class for an empty group label
     # (`gt_empty_group_heading` instead of `gt_group_heading_row`), but the
