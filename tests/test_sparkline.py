@@ -1073,3 +1073,236 @@ def test_sparkline_ci_must_be_a_pair():
 
 def test_sparkline_without_ci_is_valid():
     validate_columns((Sparkline("Trend", value="lift"),))
+
+
+def _series_companion(*, with_ci: bool = False) -> pd.DataFrame:
+    raw = {
+        "metric": ["Revenue", "Revenue", "Revenue", "Revenue", "Latency", "Latency"],
+        "arm": ["control", "control", "treatment", "treatment", "control", "treatment"],
+        "day": [0, 1, 0, 1, 0, 0],
+        "lift": [1.0, 2.0, 3.0, 4.0, 10.0, 20.0],
+    }
+    if with_ci:
+        raw["lb"] = [0.5, 1.5, 2.5, 3.5, 9.0, 19.0]
+        raw["ub"] = [1.5, 2.5, 3.5, 4.5, 11.0, 21.0]
+    return pd.DataFrame(raw)
+
+
+def test_series_overlay_renders_two_polylines_in_palette_colors():
+    raw = {"metric": ["Revenue"]}
+    table = CoefTable(pl.DataFrame(raw), rows="metric").sparkline(
+        "Trend", value="lift", x="day", data=_series_companion(), series="arm"
+    )
+    out = resolve(table)
+    plot = nw.from_native(out.frame)["Trend"].to_list()[0]
+    assert plot.count("<polyline") == 2
+    # series_keys sorts ascending: "control" < "treatment".
+    assert DEFAULT.series_color(0) in plot
+    assert DEFAULT.series_color(1) in plot
+
+
+def test_series_overlay_metric_by_arm_companion_yields_one_series_per_arm_per_row():
+    raw = {"metric": ["Revenue", "Latency"]}
+    table = CoefTable(pl.DataFrame(raw), rows="metric").sparkline(
+        "Trend", value="lift", x="day", data=_series_companion(), series="arm"
+    )
+    out = resolve(table)
+    plots = nw.from_native(out.frame)["Trend"].to_list()
+    data_rows = [p for i, p in enumerate(plots) if i not in out.axis_rows]
+    assert len(data_rows) == 2
+    # Revenue has both arms (2 lines); Latency has one point per arm too.
+    assert all(p.count("<polyline") == 2 for p in data_rows)
+
+
+def test_series_overlay_pools_both_arms_into_the_row_y_domain():
+    raw = {"metric": ["A"]}
+    only_control = pd.DataFrame(
+        {"metric": ["A", "A"], "arm": ["control", "control"], "day": [0, 1], "lift": [10.0, 20.0]}
+    )
+    both_arms = pd.DataFrame(
+        {
+            "metric": ["A"] * 4,
+            "arm": ["control", "control", "treatment", "treatment"],
+            "day": [0, 1, 0, 1],
+            "lift": [10.0, 20.0, 0.0, 100.0],
+        }
+    )
+    alone = CoefTable(pl.DataFrame(raw), rows="metric").sparkline(
+        "Trend", value="lift", x="day", data=only_control, series="arm", ref=None
+    )
+    overlaid = CoefTable(pl.DataFrame(raw), rows="metric").sparkline(
+        "Trend", value="lift", x="day", data=both_arms, series="arm", ref=None
+    )
+    alone_plot = nw.from_native(resolve(alone).frame)["Trend"].to_list()[0]
+    overlaid_plot = nw.from_native(resolve(overlaid).frame)["Trend"].to_list()[0]
+    # control's polyline is drawn first (series_keys ascending). Its own
+    # values (10, 20) sit near the middle of its alone domain but only a
+    # narrow band once treatment's (0, 100) widen the shared domain, so
+    # its points move measurably toward the vertical centre.
+    assert _polyline_ys(overlaid_plot) != _polyline_ys(alone_plot)
+
+
+def test_series_overlay_row_group_scale_pools_wider_than_row_scale():
+    raw = {"metric": ["A", "B"], "area": ["X", "X"]}
+    companion = pd.DataFrame(
+        {
+            "metric": ["A", "A", "B", "B"],
+            "arm": ["control", "treatment", "control", "treatment"],
+            "day": [0, 0, 0, 0],
+            "lift": [10.0, 20.0, 0.0, 100.0],
+        }
+    )
+    per_row = CoefTable(pl.DataFrame(raw), rows="metric", groups="area").sparkline(
+        "Trend", value="lift", x="day", data=companion, series="arm", ref=None, scale="row"
+    )
+    per_group = CoefTable(pl.DataFrame(raw), rows="metric", groups="area").sparkline(
+        "Trend", value="lift", x="day", data=companion, series="arm", ref=None, scale="row_group"
+    )
+    row_plots = nw.from_native(resolve(per_row).frame)["Trend"].to_list()
+    group_plots = nw.from_native(resolve(per_group).frame)["Trend"].to_list()
+    # Row A's control value (10.0) alone shares a domain only with its own
+    # treatment arm (20.0); row_group additionally pools in row B's much
+    # wider spread (0.0, 100.0), so row A's rendered points must differ.
+    assert _polyline_ys(group_plots[0]) != _polyline_ys(row_plots[0])
+
+
+def test_series_colors_pins_named_arm_and_leaves_other_on_palette():
+    raw = {"metric": ["Revenue"]}
+    table = CoefTable(pl.DataFrame(raw), rows="metric").sparkline(
+        "Trend",
+        value="lift",
+        x="day",
+        data=_series_companion(),
+        series="arm",
+        series_colors={"control": "#111111"},
+    )
+    out = resolve(table)
+    plot = nw.from_native(out.frame)["Trend"].to_list()[0]
+    assert "#111111" in plot
+    # "treatment" falls back to the theme palette at its own sorted index (1).
+    assert DEFAULT.series_color(1) in plot
+
+
+def test_series_overlay_same_arm_gets_the_same_color_in_every_row():
+    raw = {"metric": ["Revenue", "Latency"]}
+    table = CoefTable(pl.DataFrame(raw), rows="metric").sparkline(
+        "Trend", value="lift", x="day", data=_series_companion(), series="arm"
+    )
+    out = resolve(table)
+    plots = nw.from_native(out.frame)["Trend"].to_list()
+    data_rows = [p for i, p in enumerate(plots) if i not in out.axis_rows]
+    assert all(DEFAULT.series_color(0) in p for p in data_rows)
+    assert all(DEFAULT.series_color(1) in p for p in data_rows)
+
+
+def test_series_overlay_ribbons_absent_by_default_present_with_show_ribbon_true():
+    raw = {"metric": ["Revenue"]}
+    default = CoefTable(pl.DataFrame(raw), rows="metric").sparkline(
+        "Trend",
+        value="lift",
+        ci=("lb", "ub"),
+        x="day",
+        data=_series_companion(with_ci=True),
+        series="arm",
+    )
+    forced = CoefTable(pl.DataFrame(raw), rows="metric").sparkline(
+        "Trend",
+        value="lift",
+        ci=("lb", "ub"),
+        x="day",
+        data=_series_companion(with_ci=True),
+        series="arm",
+        show_ribbon=True,
+    )
+    default_plot = nw.from_native(resolve(default).frame)["Trend"].to_list()[0]
+    forced_plot = nw.from_native(resolve(forced).frame)["Trend"].to_list()[0]
+    assert "<polygon" not in default_plot
+    assert forced_plot.count("<polygon") == 2
+
+
+def test_single_series_show_ribbon_false_hides_the_ribbon():
+    raw = {"metric": ["A"], "lift": [[1.0, 2.0]], "lb": [[0.5, 1.5]], "ub": [[1.5, 2.5]]}
+    table = CoefTable(pl.DataFrame(raw), rows="metric").sparkline(
+        "Trend", value="lift", ci=("lb", "ub"), show_ribbon=False
+    )
+    plot = nw.from_native(resolve(table).frame)["Trend"].to_list()[0]
+    assert "<polygon" not in plot
+
+
+def test_single_series_show_ribbon_true_is_a_noop_when_ci_is_already_shown():
+    raw = {"metric": ["A"], "lift": [[1.0, 2.0]], "lb": [[0.5, 1.5]], "ub": [[1.5, 2.5]]}
+    table = CoefTable(pl.DataFrame(raw), rows="metric").sparkline(
+        "Trend", value="lift", ci=("lb", "ub"), show_ribbon=True
+    )
+    plot = nw.from_native(resolve(table).frame)["Trend"].to_list()[0]
+    assert plot.count("<polygon") == 1
+
+
+def test_series_overlay_skips_an_arm_with_no_data_in_this_row():
+    # "Latency" has only a "control" row in the companion frame -- the
+    # "treatment" arm must be silently skipped for it, not raise or draw
+    # an empty trace, while "Revenue" (which has both arms) still gets 2.
+    raw = {"metric": ["Revenue", "Latency"]}
+    companion = pd.DataFrame(
+        {
+            "metric": ["Revenue", "Revenue", "Latency"],
+            "arm": ["control", "treatment", "control"],
+            "day": [0, 0, 0],
+            "lift": [1.0, 2.0, 10.0],
+        }
+    )
+    table = CoefTable(pl.DataFrame(raw), rows="metric").sparkline(
+        "Trend", value="lift", x="day", data=companion, series="arm"
+    )
+    out = resolve(table)
+    plots = nw.from_native(out.frame)["Trend"].to_list()
+    data_rows = [p for i, p in enumerate(plots) if i not in out.axis_rows]
+    assert data_rows[0].count("<polyline") == 2
+    assert data_rows[1].count("<polyline") == 1
+
+
+def test_series_overlay_row_with_no_arms_at_all_renders_a_blank_cell():
+    raw = {"metric": ["Revenue", "Ghost"]}
+    companion = pd.DataFrame(
+        {"metric": ["Revenue"], "arm": ["control"], "day": [0], "lift": [1.0]}
+    )
+    table = CoefTable(pl.DataFrame(raw), rows="metric").sparkline(
+        "Trend", value="lift", x="day", data=companion, series="arm"
+    )
+    out = resolve(table)
+    plots = nw.from_native(out.frame)["Trend"].to_list()
+    data_rows = [p for i, p in enumerate(plots) if i not in out.axis_rows]
+    assert data_rows[1] == ""
+
+
+def test_series_colliding_with_rows_raises_spec_error():
+    raw = {"metric": ["Revenue"]}
+    table = CoefTable(pl.DataFrame(raw), rows="metric").sparkline(
+        "Trend", value="lift", data=_series_companion(), series="metric"
+    )
+    with pytest.raises(SpecError, match="metric"):
+        resolve(table)
+
+
+def test_series_colliding_with_groups_raises_spec_error():
+    raw = {"metric": ["Revenue"], "area": ["X"]}
+    table = CoefTable(pl.DataFrame(raw), rows="metric", groups="area").sparkline(
+        "Trend", value="lift", data=_series_companion(), series="area"
+    )
+    with pytest.raises(SpecError, match="area"):
+        resolve(table)
+
+
+def test_series_without_data_raises_spec_error():
+    with pytest.raises(SpecError, match="series"):
+        validate_columns((Sparkline("Trend", value="lift", series="arm"),))
+
+
+def test_series_absent_from_companion_frame_raises_column_not_found_error():
+    raw = {"metric": ["Revenue"]}
+    companion = pd.DataFrame({"metric": ["Revenue"], "lift": [1.0]})
+    table = CoefTable(pl.DataFrame(raw), rows="metric").sparkline(
+        "Trend", value="lift", data=companion, series="arm"
+    )
+    with pytest.raises(ColumnNotFoundError, match="arm"):
+        resolve(table)

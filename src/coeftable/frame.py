@@ -125,6 +125,23 @@ def resolve(table: CoefTable) -> Resolved:
                 f"(rows/nest/groups key {column.label!r}); choose a different label."
             )
 
+    # The overlaid `series` dimension cannot also be a table axis: the
+    # table's row structure already spends whichever of these an
+    # identity maps to, so naming the same column both ways is
+    # ambiguous about which grouping wins.
+    axis_keys = {n for n in (table.rows, table.nest, table.groups, table.split_columns) if n}
+    for column in table.columns:
+        if (
+            isinstance(column, Sparkline)
+            and column.series is not None
+            and column.series in axis_keys
+        ):
+            raise SpecError(
+                f"Sparkline column {column.label!r} series={column.series!r} collides "
+                "with a table layout key (rows/nest/groups/split_columns); the "
+                "overlaid dimension cannot also be a table axis."
+            )
+
     frame = nw.from_native(table.data, eager_only=True)
     _check_columns(frame, table)
 

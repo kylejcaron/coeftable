@@ -21,7 +21,14 @@ from coeftable.format import (
     is_missing,
     render_interval,
 )
-from coeftable.svg import forest_axis, forest_bar, sparkline_axis, sparkline_bar
+from coeftable.svg import (
+    Trace,
+    forest_axis,
+    forest_bar,
+    sparkline_axis,
+    sparkline_bar,
+    sparkline_multi,
+)
 from coeftable.theme import DEFAULT, ColorRule, Direction, Role, Theme, role_for
 
 if TYPE_CHECKING:
@@ -581,7 +588,9 @@ class Passthrough:
 
 @dataclass(frozen=True)
 class _SparklineState:
-    series: list[Series]
+    series: list[list[Series]]
+    series_keys: list[Any]
+    series_labels: list[str]
     domains: dict[Any, tuple[float, float]]
     x_domain: tuple[float, float]
     x_temporal: bool
@@ -725,6 +734,32 @@ class Sparkline:
         fainter "ghost" trace of the true trajectory is always drawn,
         regardless of this setting -- turning it off removes only the cap
         marks, never the clipping or the ghost.
+    series
+        A `data` column overlaying one line per distinct value in the
+        same cell, e.g. one arm per treatment group. Companion-frame
+        only -- `SpecError` when `data` is `None`. Must not name a
+        column already used by `rows`/`nest`/`groups`/`split_columns`:
+        the overlaid dimension cannot also be a table axis. `None` (the
+        default) plots a single series and colours it by `role_for`
+        against `ref`, exactly as before this parameter existed;
+        `role_for`/`color_rule` apply only on that single-series path --
+        with `series` set, colour is categorical (see `series_colors`),
+        never a value judgement about one arm.
+    series_colors
+        Explicit colour per arm, keyed by the raw `series` value, e.g.
+        `{"control": "#111111"}`. An arm absent from the mapping falls
+        back to `theme.series_color` at its ascending, table-wide sorted
+        position among every arm the column resolves (`None` last). The
+        same arm always gets the same colour, in every row and split.
+        Ignored when `series` is `None`.
+    show_ribbon
+        Draw each arm's uncertainty ribbon. `None` (the default) is
+        auto: ribbons on when `series` is `None` (today's behaviour,
+        unchanged), off when `series` is set -- N overlapping ribbons at
+        default opacity read as mud, so overlay opts out by default
+        rather than reducing opacity as an unpredictable function of
+        arm count. `True`/`False` force every arm's ribbon on/off
+        regardless of `series`.
     """
 
     label: str
@@ -746,6 +781,9 @@ class Sparkline:
     fmt: Format = _DEFAULT_FMT
     axis_fmt: Format | TimeFormat | None = None
     show_clip_indicators: bool = True
+    series: str | None = None
+    series_colors: Mapping[Any, str] | None = None
+    show_ribbon: bool | None = None
 
     def sources(self) -> Iterable[str]:
         """Frame columns this column reads, or none when `data` supplies them."""
@@ -759,23 +797,29 @@ class Sparkline:
         return names
 
     def prepare(self, scan: Scan) -> Prepared:
-        """Resolve each row's series, bucket y-domains, and size the row height."""
+        """Resolve each row's series (or overlaid arms), bucket domains, size the row height."""
         from coeftable.series import (
+            Series,
             _nan_to_none,
             resolve_companion_series,
             resolve_list_series,
         )
 
+        series_keys: list[Any] = []
         if self.data is None:
-            series_list = resolve_list_series(
-                scan.frame, scan.row_keys, value=self.value, ci=self.ci, x=self.x
-            )
+            series_list: list[list[Series]] = [
+                [s]
+                for s in resolve_list_series(
+                    scan.frame, scan.row_keys, value=self.value, ci=self.ci, x=self.x
+                )
+            ]
         else:
             companion = nw.from_native(self.data, eager_only=True)
             needed = [
                 self.value,
                 *(self.ci or ()),
                 *((self.x,) if self.x else ()),
+                *((self.series,) if self.series else ()),
                 *((scan.rows,) if scan.rows else ()),
                 *((scan.nest,) if scan.nest else ()),
                 *((scan.split_columns,) if scan.split_columns else ()),
@@ -794,27 +838,51 @@ class Sparkline:
                     strict=True,
                 )
             )
-            by_identity = resolve_companion_series(
-                self.data,
-                identities,
-                rows=scan.rows,
-                nest=scan.nest,
-                split_columns=scan.split_columns,
-                value=self.value,
-                ci=self.ci,
-                x=self.x,
-            )
-            series_list = [by_identity[identity] for identity in identities]
+            if self.series is None:
+                by_identity = resolve_companion_series(
+                    self.data,
+                    identities,
+                    rows=scan.rows,
+                    nest=scan.nest,
+                    split_columns=scan.split_columns,
+                    value=self.value,
+                    ci=self.ci,
+                    x=self.x,
+                )
+                series_list = [[by_identity[identity]] for identity in identities]
+            else:
+                series_keys = sorted(
+                    dict.fromkeys(_nan_to_none(companion[self.series].to_list())),
+                    key=lambda v: (v is None, v),
+                )
+                arms_by_identity = resolve_companion_series(
+                    self.data,
+                    identities,
+                    rows=scan.rows,
+                    nest=scan.nest,
+                    split_columns=scan.split_columns,
+                    value=self.value,
+                    ci=self.ci,
+                    x=self.x,
+                    series=self.series,
+                )
+                empty = Series(x=[], y=[], lower=[], upper=[], x_temporal=False)
+                series_list = [
+                    [dict(arms_by_identity[identity]).get(key, empty) for key in series_keys]
+                    for identity in identities
+                ]
 
         buckets: dict[Any, list[float]] = {}
         x_values: list[float] = []
         x_temporal = False
         for i in range(len(scan.row_keys)):
-            series = series_list[i]
             key = _domain_key(self, scan.row_keys[i], scan.group_keys[i], scan.split_keys[i])
-            buckets.setdefault(key, []).extend(_finite([*series.y, *series.lower, *series.upper]))
-            x_values.extend(_finite(series.x))
-            x_temporal = x_temporal or series.x_temporal
+            for series in series_list[i]:
+                buckets.setdefault(key, []).extend(
+                    _finite([*series.y, *series.lower, *series.upper])
+                )
+                x_values.extend(_finite(series.x))
+                x_temporal = x_temporal or series.x_temporal
 
         plot_ref = self.ref if self.show_ref else None
         domains = {
@@ -835,6 +903,8 @@ class Sparkline:
         return Prepared(
             payload=_SparklineState(
                 series=series_list,
+                series_keys=series_keys,
+                series_labels=[str(k) for k in series_keys],
                 domains=domains,
                 x_domain=x_domain,
                 x_temporal=x_temporal,
@@ -848,24 +918,88 @@ class Sparkline:
         )
 
     def cell(self, ctx: Cell) -> str:
-        """Render one series as a line plot, coloured by its last point's role."""
+        """Render one row as a line plot: one series by role, or N arms by palette."""
         state: _SparklineState = ctx.prepared.payload
-        series = state.series[ctx.index]
-        last = _last_point(series)
-        if last is None:
-            return ""
-        value, low, high = last
+        arms = state.series[ctx.index]
         key = _domain_key(self, ctx.row_key, ctx.group, ctx.split)
-        role = _resolve_role(ctx, value, low, high, self.ref)
-        return sparkline_bar(
-            series.x,
-            series.y,
-            series.lower,
-            series.upper,
+        domain = state.domains[key]
+        ref = self.ref if self.show_ref else None
+
+        if self.series is None:
+            series = arms[0]
+            last = _last_point(series)
+            if last is None:
+                return ""
+            value, low, high = last
+            role = _resolve_role(ctx, value, low, high, self.ref)
+            color = ctx.theme.color(role)
+            if self.show_ribbon is None:
+                # No explicit override: byte-identical to the pre-`series`
+                # single-trace path.
+                return sparkline_bar(
+                    series.x,
+                    series.y,
+                    series.lower,
+                    series.upper,
+                    x_domain=state.x_domain,
+                    domain=domain,
+                    ref=ref,
+                    color=color,
+                    fmt=self.fmt,
+                    width=self.width,
+                    height=state.height,
+                    show_endpoint=self.show_endpoint,
+                    endpoint_width=self.endpoint_width,
+                    show_clip_indicators=self.show_clip_indicators,
+                )
+            trace = Trace(
+                x=series.x,
+                y=series.y,
+                lower=series.lower,
+                upper=series.upper,
+                color=color,
+                show_ribbon=self.show_ribbon,
+                label="",
+            )
+            return sparkline_multi(
+                [trace],
+                x_domain=state.x_domain,
+                domain=domain,
+                ref=ref,
+                ref_color=color,
+                fmt=self.fmt,
+                width=self.width,
+                height=state.height,
+                show_endpoint=self.show_endpoint,
+                endpoint_width=self.endpoint_width,
+                show_clip_indicators=self.show_clip_indicators,
+            )
+
+        show_ribbon = self.show_ribbon is True
+        traces = []
+        for order_index, (arm_key, series) in enumerate(zip(state.series_keys, arms, strict=True)):
+            if _last_point(series) is None:
+                continue
+            color = (self.series_colors or {}).get(arm_key, ctx.theme.series_color(order_index))
+            traces.append(
+                Trace(
+                    x=series.x,
+                    y=series.y,
+                    lower=series.lower,
+                    upper=series.upper,
+                    color=color,
+                    show_ribbon=show_ribbon,
+                    label=str(arm_key),
+                )
+            )
+        if not traces:
+            return ""
+        return sparkline_multi(
+            traces,
             x_domain=state.x_domain,
-            domain=state.domains[key],
-            ref=self.ref if self.show_ref else None,
-            color=ctx.theme.color(role),
+            domain=domain,
+            ref=ref,
+            ref_color=ctx.theme.muted,
             fmt=self.fmt,
             width=self.width,
             height=state.height,
@@ -904,7 +1038,8 @@ def validate_columns(columns: tuple[Column, ...]) -> None:
     SpecError
         When no columns are declared, labels collide, a `Forest` names an
         undeclared estimate, a `Forest` is bound to a CI-less estimate, a
-        `Sparkline`'s `ci` is not a `(lower, upper)` pair, an explicit
+        `Sparkline`'s `ci` is not a `(lower, upper)` pair, a `Sparkline` sets
+        `series` without `data`, an explicit
         `domain` is not strictly increasing, a `Sparkline`'s `max_domain`
         is not positive, or a `Sparkline` sets `max_ylim` without an
         anchored domain (`ref=None` or `show_ref=False`).
@@ -939,6 +1074,11 @@ def validate_columns(columns: tuple[Column, ...]) -> None:
             raise SpecError(
                 f"Sparkline column {column.label!r} ci must be a (lower, upper) pair; "
                 f"got {column.ci!r}."
+            )
+        if isinstance(column, Sparkline) and column.series is not None and column.data is None:
+            raise SpecError(
+                f"Sparkline column {column.label!r} sets series={column.series!r} "
+                "without data=; series is companion-frame only."
             )
 
     for column in columns:
@@ -1204,6 +1344,9 @@ class CoefTable:
         fmt: Format = _DEFAULT_FMT,
         axis_fmt: Format | TimeFormat | None = None,
         show_clip_indicators: bool = True,
+        series: str | None = None,
+        series_colors: Mapping[Any, str] | None = None,
+        show_ribbon: bool | None = None,
     ) -> CoefTable:
         """Append a sparkline column plotting a series with uncertainty.
 
@@ -1290,6 +1433,21 @@ class CoefTable:
             a fainter ghost of the true trajectory is always drawn,
             regardless of this setting -- this only controls the cap
             marks.
+        series
+            A `data` column overlaying one line per distinct value in the
+            same cell, e.g. one arm per treatment group. Companion-frame
+            only. Must not name a column already used by
+            `rows`/`nest`/`groups`/`split_columns`. `None` (the default)
+            plots a single series coloured by `role_for`, exactly as
+            before this parameter existed.
+        series_colors
+            Explicit colour per arm, keyed by the raw `series` value. An
+            arm absent from the mapping falls back to the theme's
+            categorical palette. Ignored when `series` is `None`.
+        show_ribbon
+            Draw each arm's uncertainty ribbon. `None` (the default) is
+            auto: on when `series` is `None`, off when `series` is set.
+            `True`/`False` force every arm's ribbon on/off.
 
         Returns
         -------
@@ -1317,6 +1475,9 @@ class CoefTable:
                 fmt=fmt,
                 axis_fmt=axis_fmt,
                 show_clip_indicators=show_clip_indicators,
+                series=series,
+                series_colors=series_colors,
+                show_ribbon=show_ribbon,
             )
         )
 
