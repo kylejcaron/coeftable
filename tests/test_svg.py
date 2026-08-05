@@ -1802,6 +1802,44 @@ def test_sparkline_axis_no_legend_when_none():
     assert "<rect" not in svg
 
 
+def test_sparkline_axis_legend_composes_with_the_temporal_two_tier_super_row():
+    # `legend=` wraps the axis body in a translate-down <g> regardless of
+    # which return path produced it; this pins the temporal path
+    # specifically, where the body is already the two-tier canvas
+    # (`height + _SUPER_ROW_OFFSET`) before the legend adds its own
+    # offset on top.
+    low = datetime(2024, 1, 1, tzinfo=UTC).timestamp()
+    high = datetime(2025, 3, 1, tzinfo=UTC).timestamp()
+    plain = sparkline_axis(
+        x_domain=(low, high), fmt=DateAxis(), theme=DEFAULT, temporal=True, target_ticks=14
+    )
+    with_legend = sparkline_axis(
+        x_domain=(low, high),
+        fmt=DateAxis(),
+        theme=DEFAULT,
+        temporal=True,
+        target_ticks=14,
+        legend=[("control", "#111111"), ("treatment", "#E69F00")],
+    )
+    # Both still render the two-tier calendar content untouched.
+    assert "2024" in with_legend
+    assert "2025" in with_legend
+    # Legend chips are present, in their own colours.
+    assert with_legend.count("<rect") == 2
+    assert ">control<" in with_legend
+    assert ">treatment<" in with_legend
+    assert 'fill="#E69F00"' in with_legend
+    # Total height grows by exactly the legend offset on top of the
+    # already-offset two-tier canvas.
+    plain_height = int(re.search(r'height="(\d+)"', plain).group(1))  # ty: ignore[unresolved-attribute]
+    legend_height = int(re.search(r'height="(\d+)"', with_legend).group(1))  # ty: ignore[unresolved-attribute]
+    assert legend_height == plain_height + int(_LEGEND_OFFSET)
+    # Tick positions are unaffected by the wrap -- same translate-only <g>.
+    tick_re = re.compile(r'<line x1="([-\d.]+)" y1="4.00" x2="[-\d.]+" y2="7.00"')
+    assert tick_re.findall(plain) == tick_re.findall(with_legend)
+    assert tick_re.findall(plain)
+
+
 def test_sparkline_axis_legend_escapes_ampersand_and_angle_brackets_in_labels():
     svg = sparkline_axis(
         x_domain=(0.0, 2.0),
