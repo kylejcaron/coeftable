@@ -1,3 +1,21 @@
+<a id="v0.2.1"></a>
+# [v0.2.1](https://github.com/kylejcaron/coeftable/releases/tag/v0.2.1) - 2026-08-05
+
+<!-- Release notes generated using configuration in .github/release.yml at v0.2.1 -->
+
+## What's Changed
+### Maintenance
+* Update changelog for v0.2.0 by [@github-actions](https://github.com/github-actions)[bot] in [#11](https://github.com/kylejcaron/coeftable/pull/11)
+* Publish releases to PyPI automatically by [@kylejcaron](https://github.com/kylejcaron) in [#12](https://github.com/kylejcaron/coeftable/pull/12)
+
+## New Contributors
+* [@github-actions](https://github.com/github-actions)[bot] made their first contribution in [#11](https://github.com/kylejcaron/coeftable/pull/11)
+
+**Full Changelog**: https://github.com/kylejcaron/coeftable/compare/v0.2.0...v0.2.1
+
+[Changes][v0.2.1]
+
+
 <a id="v0.2.0"></a>
 # [v0.2.0](https://github.com/kylejcaron/coeftable/releases/tag/v0.2.0) - 2026-08-04
 
@@ -36,6 +54,7 @@
 [Changes][v0.1.0]
 
 
+[v0.2.1]: https://github.com/kylejcaron/coeftable/compare/v0.2.0...v0.2.1
 [v0.2.0]: https://github.com/kylejcaron/coeftable/compare/v0.1.0...v0.2.0
 [v0.1.0]: https://github.com/kylejcaron/coeftable/tree/v0.1.0
 
