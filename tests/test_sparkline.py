@@ -1306,3 +1306,34 @@ def test_series_absent_from_companion_frame_raises_column_not_found_error():
     )
     with pytest.raises(ColumnNotFoundError, match="arm"):
         resolve(table)
+
+
+def test_series_overlay_axis_row_shows_both_arm_names_in_matching_colors():
+    raw = {"metric": ["Revenue"]}
+    table = CoefTable(pl.DataFrame(raw), rows="metric").sparkline(
+        "Trend", value="lift", x="day", data=_series_companion(), series="arm"
+    )
+    out = resolve(table)
+    plots = nw.from_native(out.frame)["Trend"].to_list()
+    data_cell = plots[0]
+    axis_cell = plots[out.axis_rows[0]]
+    assert axis_cell.count(">control<") == 1
+    assert axis_cell.count(">treatment<") == 1
+    # The legend swatches use the same resolved colours as the data row's
+    # polylines -- series_keys sorts "control" (index 0) before
+    # "treatment" (index 1).
+    assert DEFAULT.series_color(0) in axis_cell
+    assert DEFAULT.series_color(1) in axis_cell
+    assert DEFAULT.series_color(0) in data_cell
+    assert DEFAULT.series_color(1) in data_cell
+
+
+def test_series_overlay_show_axis_false_emits_no_legend_and_no_axis_row():
+    raw = {"metric": ["Revenue"]}
+    table = CoefTable(pl.DataFrame(raw), rows="metric").sparkline(
+        "Trend", value="lift", x="day", data=_series_companion(), series="arm", show_axis=False
+    )
+    out = resolve(table)
+    assert out.axis_rows == []
+    plots = nw.from_native(out.frame)["Trend"].to_list()
+    assert all("<rect" not in p for p in plots)

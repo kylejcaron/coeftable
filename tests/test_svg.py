@@ -8,6 +8,7 @@ from coeftable.format import DateAxis, Number
 from coeftable.svg import (
     _CALENDAR_TICK_FLOOR,
     _CHAR_WIDTH_RATIO,
+    _LEGEND_OFFSET,
     _MIN_LABEL_GAP,
     _SUPER_ROW_OFFSET,
     Trace,
@@ -1730,3 +1731,71 @@ def test_sparkline_bar_output_is_byte_identical_to_pre_multi_trace_fixture():
         '<text x="217" y="19.20" fill="#55A868" font-size="9" text-anchor="end">0.9</text>'
         "</svg>"
     )
+
+
+def test_sparkline_axis_legend_adds_one_swatch_and_label_per_entry():
+    svg = sparkline_axis(
+        x_domain=(0.0, 2.0),
+        fmt=Number(decimals=0),
+        theme=DEFAULT,
+        legend=[("control", "#111111"), ("treatment", "#E69F00")],
+    )
+    assert svg.count("<rect") == 2
+    assert svg.count("<text") >= 2  # plus tick labels
+    assert '<rect x="3.00" y="6.00" width="8.00" height="8.00" fill="#111111"/>' in svg
+    assert ">control<" in svg
+    assert ">treatment<" in svg
+    assert 'fill="#E69F00"' in svg
+
+
+def test_sparkline_axis_legend_grows_height_by_the_reserved_offset():
+    plain = sparkline_axis(x_domain=(0.0, 2.0), fmt=Number(decimals=0), theme=DEFAULT)
+    with_legend = sparkline_axis(
+        x_domain=(0.0, 2.0),
+        fmt=Number(decimals=0),
+        theme=DEFAULT,
+        legend=[("control", "#111111")],
+    )
+    plain_height = int(re.search(r'height="(\d+)"', plain).group(1))  # ty: ignore[unresolved-attribute]
+    legend_height = int(re.search(r'height="(\d+)"', with_legend).group(1))  # ty: ignore[unresolved-attribute]
+    assert legend_height == plain_height + _LEGEND_OFFSET
+
+
+def test_sparkline_axis_legend_leaves_tick_positions_unchanged():
+    plain = sparkline_axis(x_domain=(0.0, 2.0), fmt=Number(decimals=0), theme=DEFAULT)
+    with_legend = sparkline_axis(
+        x_domain=(0.0, 2.0),
+        fmt=Number(decimals=0),
+        theme=DEFAULT,
+        legend=[("control", "#111111")],
+    )
+    tick_re = re.compile(r'<line x1="([-\d.]+)" y1="4.00" x2="[-\d.]+" y2="7.00"')
+    assert tick_re.findall(plain) == tick_re.findall(with_legend)
+    assert tick_re.findall(plain)  # sanity: the domain actually produced ticks
+
+
+def test_sparkline_axis_legend_ellipsizes_a_long_label_instead_of_overflowing():
+    svg = sparkline_axis(
+        x_domain=(0.0, 2.0),
+        fmt=Number(decimals=0),
+        theme=DEFAULT,
+        legend=[("A" * 60, "#111111")],
+    )
+    text = re.search(r"<text[^>]*>([^<]*)</text>", svg).group(1)  # ty: ignore[unresolved-attribute]
+    assert text != "A" * 60
+    assert text.endswith("\u2026")
+
+
+def test_sparkline_axis_legend_drops_chips_that_do_not_fit_rather_than_overflowing():
+    entries = [(f"series-{i}", "#111111") for i in range(30)]
+    svg = sparkline_axis(
+        x_domain=(0.0, 2.0), fmt=Number(decimals=0), theme=DEFAULT, legend=entries
+    )
+    swatch_xs = [float(x) for x in re.findall(r'<rect x="([-\d.]+)"', svg)]
+    assert len(swatch_xs) < len(entries)
+    assert all(x <= 220 - 3 for x in swatch_xs)
+
+
+def test_sparkline_axis_no_legend_when_none():
+    svg = sparkline_axis(x_domain=(0.0, 2.0), fmt=Number(decimals=0), theme=DEFAULT, legend=None)
+    assert "<rect" not in svg

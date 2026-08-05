@@ -1009,8 +1009,16 @@ class Sparkline:
         )
 
     def footer(self, ctx: Footer) -> str | None:
-        """Render the shared x-axis for the whole column."""
+        """Render the shared x-axis for the whole column, with a series legend when overlaid."""
         state: _SparklineState = ctx.prepared.payload
+        legend = None
+        if self.series is not None and state.series_keys:
+            legend = [
+                (label, (self.series_colors or {}).get(key, ctx.theme.series_color(i)))
+                for i, (key, label) in enumerate(
+                    zip(state.series_keys, state.series_labels, strict=True)
+                )
+            ]
         return sparkline_axis(
             x_domain=state.x_domain,
             fmt=self.axis_fmt or (DateAxis() if state.x_temporal else self.fmt),
@@ -1019,6 +1027,7 @@ class Sparkline:
             width=self.width,
             show_endpoint=self.show_endpoint,
             endpoint_width=self.endpoint_width,
+            legend=legend,
         )
 
 

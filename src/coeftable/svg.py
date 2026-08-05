@@ -1410,6 +1410,73 @@ def sparkline_bar(
     )
 
 
+_LEGEND_OFFSET = 20.0
+# Vertical space reserved above the axis spine for the swatch+label chip
+# row when `sparkline_axis` is given `legend=`. The existing axis content
+# (ticks, temporal two-tier rows) renders unchanged, wrapped in a
+# translate-down `<g>`, rather than every internal y-coordinate being
+# recomputed against a shifted baseline.
+_LEGEND_SWATCH = 8.0
+_LEGEND_SWATCH_GAP = 4.0
+_LEGEND_CHIP_GAP = 14.0
+_LEGEND_MAX_LABEL_WIDTH = 60.0
+
+
+def _render_legend(
+    entries: Sequence[tuple[str, str]], *, width: int, inset: int, theme: Theme
+) -> list[str]:
+    """Render one swatch+label chip per `(label, color)` entry, left to right.
+
+    Each label is ellipsized to `_LEGEND_MAX_LABEL_WIDTH` so one long name
+    cannot dominate the row; a chip that still would not fit the remaining
+    width -- including every chip after it -- is dropped entirely rather
+    than overflowing the canvas.
+    """
+    parts: list[str] = []
+    x = float(inset)
+    right = width - inset
+    y_swatch = (_LEGEND_OFFSET - _LEGEND_SWATCH) / 2
+    y_text = _LEGEND_OFFSET / 2 + 3.0
+    for label, color in entries:
+        text = _clip_label(label, _LEGEND_MAX_LABEL_WIDTH, 9.0)
+        text_width = len(text) * 9.0 * _CHAR_WIDTH_RATIO
+        chip_width = _LEGEND_SWATCH + _LEGEND_SWATCH_GAP + text_width
+        if x + chip_width > right:
+            break
+        parts.append(
+            f'<rect x="{x:.2f}" y="{y_swatch:.2f}" width="{_LEGEND_SWATCH:.2f}" '
+            f'height="{_LEGEND_SWATCH:.2f}" fill="{color}"/>'
+        )
+        text_x = x + _LEGEND_SWATCH + _LEGEND_SWATCH_GAP
+        parts.append(
+            f'<text x="{text_x:.2f}" y="{y_text:.2f}" fill="{theme.text}" '
+            f'font-size="9" text-anchor="start">{text}</text>'
+        )
+        x += chip_width + _LEGEND_CHIP_GAP
+    return parts
+
+
+def _wrap_axis_with_legend(
+    width: int,
+    content_height: int,
+    body: str,
+    *,
+    legend: Sequence[tuple[str, str]] | None,
+    inset: int,
+    theme: Theme,
+) -> str:
+    """Finish `sparkline_axis`: prepend a legend row and grow `height`, or return `body` as-is."""
+    if not legend:
+        return _svg(width, content_height, body)
+    chips = _render_legend(legend, width=width, inset=inset, theme=theme)
+    offset = _LEGEND_OFFSET
+    return _svg(
+        width,
+        content_height + int(offset),
+        "".join(chips) + f'<g transform="translate(0, {offset:.2f})">{body}</g>',
+    )
+
+
 def sparkline_axis(
     *,
     x_domain: tuple[float, float],
@@ -1422,6 +1489,7 @@ def sparkline_axis(
     target_ticks: int = 4,
     show_endpoint: bool = True,
     endpoint_width: int = 44,
+    legend: Sequence[tuple[str, str]] | None = None,
 ) -> str:
     """Render the shared x-axis footer for a column of sparkline rows.
 
@@ -1456,6 +1524,13 @@ def sparkline_axis(
         Must be given the same values passed to `sparkline_bar` for the same
         rows: both carve the same fixed reserve out of `width` so ticks
         project over the identical inner width and land under their points.
+    legend
+        `(label, color)` pairs for a series-overlay column, drawn as a
+        swatch+label chip row above the axis spine; `height` grows by the
+        reserved offset when set. `None` (the default) omits the row
+        entirely and leaves `height` unchanged. Ticks project over the
+        same inner width either way -- the legend only adds vertical
+        space, never changes horizontal geometry.
 
     Returns
     -------
@@ -1508,7 +1583,14 @@ def sparkline_axis(
                             theme=theme,
                         )
                     )
-                    return _svg(width, height + int(_SUPER_ROW_OFFSET), "".join(parts))
+                    return _wrap_axis_with_legend(
+                        width,
+                        height + int(_SUPER_ROW_OFFSET),
+                        "".join(parts),
+                        legend=legend,
+                        inset=inset,
+                        theme=theme,
+                    )
                 # No super row could be built -- nothing coarser for a
                 # year-granular sub-row, or (in principle) a collision
                 # `_resolve_collisions` can't clear by dropping an edge.
@@ -1540,4 +1622,6 @@ def sparkline_axis(
             theme=theme,
         )
     )
-    return _svg(width, height, "".join(parts))
+    return _wrap_axis_with_legend(
+        width, height, "".join(parts), legend=legend, inset=inset, theme=theme
+    )
