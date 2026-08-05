@@ -683,6 +683,77 @@ def test_sparkline_max_ylim_with_ref_none_raises_spec_error():
         )
 
 
+def _strip_stroke_color(svg: str) -> str:
+    """Normalize a rendered SVG's stroke colour so geometry-only diffs are comparable."""
+    return re.sub(r'stroke="#[0-9A-Fa-f]{6}"', 'stroke="X"', svg)
+
+
+def test_sparkline_show_ref_false_domain_matches_ref_none_domain():
+    # show_ref=False routes the same ref=None domain path as Task 1 --
+    # geometry (everything but colour) must be identical to ref=None.
+    show_ref_false = CoefTable(
+        pl.DataFrame(_ABS_GROUP_RAW), rows="metric", groups="area"
+    ).sparkline(
+        "Trend", value="value", ref=0.0, show_ref=False, scale="row_group", show_axis=False
+    )
+    ref_none = CoefTable(pl.DataFrame(_ABS_GROUP_RAW), rows="metric", groups="area").sparkline(
+        "Trend", value="value", ref=None, scale="row_group", show_axis=False
+    )
+    show_ref_false_plots = nw.from_native(resolve(show_ref_false).frame)["Trend"].to_list()
+    ref_none_plots = nw.from_native(resolve(ref_none).frame)["Trend"].to_list()
+    assert [_strip_stroke_color(p) for p in show_ref_false_plots] == [
+        _strip_stroke_color(p) for p in ref_none_plots
+    ]
+
+
+def test_sparkline_show_ref_false_still_colours_against_ref():
+    # Unlike ref=None, show_ref=False keeps ref as a colour anchor: "Up"'s
+    # last point sits clearly above ref=0.0, so it still resolves
+    # favorable, not neutral.
+    table = CoefTable(pl.DataFrame(ROLE_RAW), rows="metric").sparkline(
+        "Trend", value="lift", ci=("lift_lb", "lift_ub"), ref=0.0, show_ref=False
+    )
+    plots = nw.from_native(resolve(table).frame)["Trend"].to_list()
+    assert DEFAULT.color("favorable") in plots[0]
+    assert DEFAULT.color("neutral") not in plots[0]
+
+
+def test_sparkline_show_ref_true_default_is_unchanged():
+    explicit = CoefTable(pl.DataFrame(ROLE_RAW), rows="metric").sparkline(
+        "Trend", value="lift", ci=("lift_lb", "lift_ub"), ref=0.0, show_ref=True
+    )
+    default = role_table()
+    assert (
+        nw.from_native(resolve(explicit).frame)["Trend"].to_list()
+        == nw.from_native(resolve(default).frame)["Trend"].to_list()
+    )
+
+
+def test_sparkline_show_ref_false_is_a_noop_when_ref_is_none():
+    with_show_ref_false = CoefTable(
+        pl.DataFrame(_ABS_GROUP_RAW), rows="metric", groups="area"
+    ).sparkline("Trend", value="value", ref=None, show_ref=False, show_axis=False)
+    without = CoefTable(pl.DataFrame(_ABS_GROUP_RAW), rows="metric", groups="area").sparkline(
+        "Trend", value="value", ref=None, show_ref=True, show_axis=False
+    )
+    assert (
+        nw.from_native(resolve(with_show_ref_false).frame)["Trend"].to_list()
+        == nw.from_native(resolve(without).frame)["Trend"].to_list()
+    )
+
+
+def test_sparkline_max_ylim_with_show_ref_false_raises_the_same_spec_error_as_ref_none():
+    with pytest.raises(SpecError, match="Trend") as none_exc:
+        CoefTable(pl.DataFrame(_ABS_GROUP_RAW), rows="metric", groups="area").sparkline(
+            "Trend", value="value", ref=None, max_ylim=20.0
+        )
+    with pytest.raises(SpecError, match="Trend") as show_ref_exc:
+        CoefTable(pl.DataFrame(_ABS_GROUP_RAW), rows="metric", groups="area").sparkline(
+            "Trend", value="value", ref=0.0, show_ref=False, max_ylim=20.0
+        )
+    assert str(none_exc.value) == str(show_ref_exc.value)
+
+
 def test_bucket_domain_tight_is_the_default_and_matches_pad_domain():
     plain = _bucket_domain(_SPIKE_LIFT, 1.0, override=None, max_domain=None)
     assert plain == _pad_domain(_SPIKE_LIFT, 1.0)

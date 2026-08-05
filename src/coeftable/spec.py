@@ -648,7 +648,8 @@ class Sparkline:
         line, no forced domain inclusion, and every cell resolves
         `theme.neutral` (a `color_rule`, if set, still decides for
         itself). Rejected together with `max_ylim`, which has no anchor
-        to clamp around without a reference.
+        to clamp around without a reference. See `show_ref` for keeping
+        `ref` as a colour anchor while dropping it from the plot itself.
     scale
         Which set of rows share a y-domain. Defaults to `"row"`, the
         opposite of `Forest`'s `"table"` default -- sparkline rows are
@@ -662,8 +663,9 @@ class Sparkline:
         bucket whose natural domain already fits inside the ceiling
         renders unchanged. Applies per `scale` bucket, composing with it
         rather than overriding it. Ignored when `ylim` is set --
-        `ylim` is an absolute override and always wins. Requires `ref`
-        to be set; raises `SpecError` when `ref is None`.
+        `ylim` is an absolute override and always wins. Requires an
+        anchored domain; raises `SpecError` when `ref is None` or
+        `show_ref=False`.
     autoscale
         Strategy for the auto-computed domain when `ylim` is not set.
         `"tight"` (default) fits tightly to the exact min/max of the
@@ -689,6 +691,19 @@ class Sparkline:
         Emit a footer axis row for the column. x is always shared
         table-wide, so at most one axis row is ever emitted for the whole
         column, regardless of `scale`.
+    show_ref
+        Whether `ref` drives the rendered plot, not just colour. Three
+        resulting states: `ref=0.0` (default) draws the dashed line and
+        forces the domain to contain it; `ref=0.0, show_ref=False` draws
+        no line and frees the domain, while colour still resolves
+        against `0.0`; `ref=None` has no reference at all, so colour is
+        always neutral. `show_ref=False` is a deliberate trade: a mark
+        can claim "entirely above the reference" while the reference
+        sits off-canvas, so the reader cannot verify the claim from the
+        plot alone -- opt in only when that's acceptable. No-op when
+        `ref is None`, since there is nothing to show either way.
+        Raises `SpecError` together with `max_ylim`, for the same reason
+        `ref=None` does: no anchored domain to clamp around.
     show_endpoint
         Draw the last point's value as a text label.
     endpoint_width
@@ -715,6 +730,7 @@ class Sparkline:
     x: str | None = None
     data: Any | None = None
     ref: float | None = 0.0
+    show_ref: bool = True
     scale: Scale = "row"
     ylim: tuple[float, float] | None = None
     max_ylim: float | None = None
@@ -797,10 +813,11 @@ class Sparkline:
             x_values.extend(_finite(series.x))
             x_temporal = x_temporal or series.x_temporal
 
+        plot_ref = self.ref if self.show_ref else None
         domains = {
             key: _bucket_domain(
                 vals,
-                self.ref,
+                plot_ref,
                 override=self.ylim,
                 max_domain=self.max_ylim,
                 autoscale=self.autoscale,
@@ -844,7 +861,7 @@ class Sparkline:
             series.upper,
             x_domain=state.x_domain,
             domain=state.domains[key],
-            ref=self.ref,
+            ref=self.ref if self.show_ref else None,
             color=ctx.theme.color(role),
             fmt=self.fmt,
             width=self.width,
@@ -886,7 +903,8 @@ def validate_columns(columns: tuple[Column, ...]) -> None:
         undeclared estimate, a `Forest` is bound to a CI-less estimate, a
         `Sparkline`'s `ci` is not a `(lower, upper)` pair, an explicit
         `domain` is not strictly increasing, a `Sparkline`'s `max_domain`
-        is not positive, or a `Sparkline` sets `max_ylim` with `ref=None`.
+        is not positive, or a `Sparkline` sets `max_ylim` without an
+        anchored domain (`ref=None` or `show_ref=False`).
     """
     if not columns:
         raise SpecError("Table has no columns; declare at least one.")
@@ -933,12 +951,14 @@ def validate_columns(columns: tuple[Column, ...]) -> None:
             raise SpecError(
                 f"Sparkline column {column.label!r} max_ylim must be > 0; got {column.max_ylim!r}."
             )
-        if isinstance(column, Sparkline) and column.max_ylim is not None and column.ref is None:
-            raise SpecError(
-                f"Sparkline column {column.label!r} sets max_ylim with ref=None; "
-                "max_ylim is a half-width ceiling around ref, so it requires a "
-                "reference to clamp around."
-            )
+        if isinstance(column, Sparkline) and column.max_ylim is not None:
+            unanchored = column.ref is None or not column.show_ref
+            if unanchored:
+                raise SpecError(
+                    f"Sparkline column {column.label!r} sets max_ylim without an "
+                    "anchored domain (ref=None or show_ref=False); max_ylim is a "
+                    "half-width ceiling around ref, so it requires one."
+                )
 
 
 class CoefTable:
@@ -1158,6 +1178,7 @@ class CoefTable:
         x: str | None = None,
         data: Any | None = None,
         ref: float | None = 0.0,
+        show_ref: bool = True,
         scale: Scale = "row",
         ylim: tuple[float, float] | None = None,
         max_ylim: float | None = None,
@@ -1195,7 +1216,18 @@ class CoefTable:
             resolution. `None` means the series has no reference: no
             dashed line, no forced domain inclusion, and every cell
             resolves `theme.neutral` (a `color_rule`, if set, still
-            decides for itself). Rejected together with `max_ylim`.
+            decides for itself). Rejected together with `max_ylim`. See
+            `show_ref` for keeping `ref` as a colour anchor while
+            dropping it from the plot itself.
+        show_ref
+            Whether `ref` drives the rendered plot, not just colour.
+            `ref=0.0, show_ref=False` draws no dashed line and frees the
+            domain, while colour still resolves against `0.0` -- unlike
+            `ref=None`, which colours neutral. A deliberate trade: a mark
+            can then claim "entirely above the reference" while the
+            reference sits off-canvas, so the reader cannot verify the
+            claim from the plot alone. No-op when `ref is None`. Rejected
+            together with `max_ylim`, for the same reason `ref=None` is.
         scale
             Which set of rows share a y-domain.
         ylim
@@ -1205,7 +1237,8 @@ class CoefTable:
             e.g. `max_ylim=20` clamps to `(ref - 20, ref + 20)`. Only
             narrows -- a row whose natural domain already fits inside the
             ceiling is unaffected. Ignored when `ylim` is set. Requires
-            `ref` to be set; raises `SpecError` when `ref is None`.
+            an anchored domain; raises `SpecError` when `ref is None` or
+            `show_ref=False`.
         autoscale
             Strategy for the auto-computed domain when `ylim` is not set.
             `"tight"` (default) fits tightly to the pooled values, same as
@@ -1256,6 +1289,7 @@ class CoefTable:
                 x=x,
                 data=data,
                 ref=ref,
+                show_ref=show_ref,
                 scale=scale,
                 ylim=ylim,
                 max_ylim=max_ylim,
