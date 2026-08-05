@@ -10,6 +10,12 @@ from __future__ import annotations
 
 import re
 
+SHARED_AXIS_ROW_MARK = "--ct-axis-row:1"
+"""CSS custom property `render.py` stamps on a table-wide axis/footer row
+(`scale in {"table", "split_column"}`) so this module can recognise it and
+leave it untagged. A single string literal, imported by both the producer
+and the consumer, so the two can never drift apart."""
+
 _TBODY_OPEN_RE = re.compile(r'<tbody\s+class="gt_table_body"[^>]*>')
 _WRAPPER_DIV_ID_RE = re.compile(r'<div\s+id="([^"]+)"')
 _ROW_TOKEN_RE = re.compile(r"<tr(?=[\s>])|</tr>")
@@ -89,14 +95,15 @@ def make_collapsible(html: str) -> str:
     Locates the `<tbody class="gt_table_body">...</tbody>` slice and walks
     its rows with a depth-tracking scan (not a naive split, which would
     also match `<tr>` tags nested inside a markdown/passthrough cell).
-    Each `gt_group_heading_row` gets a `data-ct-group="n"` attribute, its
-    heading text is wrapped in a `<label>`/`<input type="checkbox">` pair,
-    and every following row up to the next heading gets
-    `data-ct-group-member="n"` -- except a shared forest/sparkline axis
-    row (marked by `render.py` with a `--ct-axis-row:1` CSS custom
-    property), which stays untagged so it never disappears into whichever
-    group happens to precede it. A `<style>` block using `:has()` is
-    appended after the wrapper `</div>` to do the actual hiding.
+    Each group heading row (identified by its `<th class="gt_group_heading">`,
+    present whether the label is empty or not) gets a `data-ct-group="n"`
+    attribute, its heading text is wrapped in a `<label>`/`<input
+    type="checkbox">` pair, and every following row up to the next heading
+    gets `data-ct-group-member="n"` -- except a shared forest/sparkline
+    axis row (marked by `render.py` with the `SHARED_AXIS_ROW_MARK` CSS
+    custom property), which stays untagged so it never disappears into
+    whichever group happens to precede it. A `<style>` block using `:has()`
+    is appended after the wrapper `</div>` to do the actual hiding.
 
     Returns `html` unchanged if the tbody is not found, or if no group
     heading row (empty- or non-empty-label) is present.
@@ -129,13 +136,16 @@ def make_collapsible(html: str) -> str:
             n += 1
             pieces.append(_tag_heading_row(row, uid=uid, n=n))
             group_ids.append(f"ct-{uid}-g{n}")
-        elif "--ct-axis-row:1" in row:
-            # A shared forest/sparkline axis row (great_tables schedules it
-            # once per shared domain, which for the default `scale="table"`
-            # is once for the whole column). It is not this group's data
-            # and must stay visible no matter which group collapses --
-            # leave it untagged rather than folding it into whichever
-            # group happens to precede it in row order.
+        elif SHARED_AXIS_ROW_MARK in row:
+            # A forest/sparkline axis row whose domain is table-wide
+            # (scale in {"table", "split_column"}; render.py stamps only
+            # these). It is not any single group's data and must stay
+            # visible no matter which group collapses -- leave it
+            # untagged rather than folding it into whichever group
+            # happens to precede it in row order. A per-group axis row
+            # (scale="row_group"/"row") carries no marker and falls
+            # through to the ordinary member-row branch below, so it
+            # correctly collapses with its own group.
             pieces.append(row)
         elif n >= 0:
             pieces.append(_tag_member_row(row, n=n))

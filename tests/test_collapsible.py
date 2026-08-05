@@ -4,7 +4,7 @@ from typing import Any
 
 import polars as pl
 
-from coeftable.collapsible import make_collapsible
+from coeftable.collapsible import SHARED_AXIS_ROW_MARK, make_collapsible
 from coeftable.spec import CoefTable
 
 RAW = {
@@ -27,6 +27,20 @@ def _wrapper_id(html: str) -> str:
     match = re.search(r'<div\s+id="([^"]+)"', html)
     assert match is not None
     return match.group(1)
+
+
+def _row_at(tbody: str, needle: str) -> str:
+    """Return the full `<tr>...</tr>` span containing the first `needle`.
+
+    `needle` may sit inside a `<td>`'s style attribute (as the axis-row
+    marker does), so a plain `tbody[tbody.index(needle):]` slice would
+    start after the `<tr ...>` opening tag and could never see an
+    attribute injected there -- this walks back to the row's actual start.
+    """
+    idx = tbody.index(needle)
+    start = tbody.rindex("<tr", 0, idx)
+    end = tbody.index("</tr>", idx) + len("</tr>")
+    return tbody[start:end]
 
 
 def test_three_groups_get_three_distinct_group_ids_with_correct_membership():
@@ -71,15 +85,34 @@ def test_forest_axis_row_is_not_folded_into_the_last_group():
     tbody = result[result.index('<tbody class="gt_table_body">') : result.index("</tbody>")]
 
     assert tbody.count("<svg") == 7  # 6 data rows + 1 shared axis row
-    axis_row = tbody[tbody.index("--ct-axis-row:1") :]
-    axis_row = axis_row[: axis_row.index("</tr>") + len("</tr>")]
+    axis_row = _row_at(tbody, SHARED_AXIS_ROW_MARK)
     assert "data-ct-group-member" not in axis_row
 
     # Every other row is still correctly tagged.
     assert tbody.count('data-ct-group-member="2"') == 2
 
 
+def test_row_group_scale_axis_rows_stay_tied_to_their_own_group():
+    # Unlike the shared scale="table" axis above, scale="row_group" closes
+    # its domain once per group -- that axis row genuinely belongs to the
+    # group it follows and must collapse with it, not stay permanently
+    # visible like a table-wide axis would.
+    html = table(groups="area").forest("Plot", of="Lift %", scale="row_group").gt().as_raw_html()
+    result = make_collapsible(html)
+    tbody = result[result.index('<tbody class="gt_table_body">') : result.index("</tbody>")]
+
+    assert SHARED_AXIS_ROW_MARK not in tbody
+    for n in range(3):
+        # 2 data rows + this group's own axis row.
+        assert tbody.count(f'data-ct-group-member="{n}"') == 3
+
+
 def test_sparkline_axis_row_is_not_folded_into_the_last_group():
+    # Sparkline's x-axis footer_key is a constant ("x",) -- unlike
+    # Forest's, it does NOT depend on `scale` (which only buckets each
+    # row's own y-domain). The x-axis is always table-wide, so this must
+    # hold at sparkline's own default scale, not just an explicit
+    # scale="table".
     raw: dict[str, Any] = {
         **RAW,
         "trend": [
@@ -101,8 +134,38 @@ def test_sparkline_axis_row_is_not_folded_into_the_last_group():
     result = make_collapsible(html)
     tbody = result[result.index('<tbody class="gt_table_body">') : result.index("</tbody>")]
 
-    axis_row = tbody[tbody.index("--ct-axis-row:1") :]
-    axis_row = axis_row[: axis_row.index("</tr>") + len("</tr>")]
+    axis_row = _row_at(tbody, SHARED_AXIS_ROW_MARK)
+    assert "data-ct-group-member" not in axis_row
+    assert tbody.count('data-ct-group-member="2"') == 2
+
+
+def test_sparkline_row_group_scale_axis_row_is_still_shared_not_per_group():
+    # The one place sparkline's behaviour could plausibly be mistaken for
+    # Forest's: scale="row_group" changes each row's y-domain bucketing,
+    # but -- unlike Forest -- must NOT change the x-axis's closing scope,
+    # since footer_key ignores `scale` entirely.
+    raw: dict[str, Any] = {
+        **RAW,
+        "trend": [
+            [1.0, 1.2],
+            [0.9, 0.8],
+            [2.0, 2.4],
+            [1.8, 1.5],
+            [0.5, 0.6],
+            [0.4, 0.3],
+        ],
+    }
+    html = (
+        CoefTable(pl.DataFrame(raw), rows="metric", nest="variant", groups="area")
+        .estimate("Lift %", "rel", ci=("rel_lb", "rel_ub"))
+        .sparkline("Trend", value="trend", scale="row_group")
+        .gt()
+        .as_raw_html()
+    )
+    result = make_collapsible(html)
+    tbody = result[result.index('<tbody class="gt_table_body">') : result.index("</tbody>")]
+
+    axis_row = _row_at(tbody, SHARED_AXIS_ROW_MARK)
     assert "data-ct-group-member" not in axis_row
     assert tbody.count('data-ct-group-member="2"') == 2
 
@@ -126,6 +189,12 @@ def test_empty_group_label_gets_its_own_toggle_not_folded_into_the_previous_grou
     assert 'class="gt_empty_group_heading"' in tbody
     headings = re.findall(r'data-ct-group="(\d+)"', tbody)
     assert headings == ["0", "1", "2"]
+    # The toggle itself -- not just the attribute -- must exist for the
+    # empty-label group too. `data-ct-group` is added unconditionally by
+    # `_insert_tr_attr`; the checkbox/label pair only appears if
+    # `_GROUP_HEADING_TH_RE` actually matched the `<th>`, which is the
+    # real thing that must hold for the empty group's toggle to work.
+    assert tbody.count('class="ct-group-toggle"') == 3
 
     heading_0 = tbody.index('data-ct-group="0"')
     heading_1 = tbody.index('data-ct-group="1"')

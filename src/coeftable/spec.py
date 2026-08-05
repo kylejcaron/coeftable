@@ -85,11 +85,20 @@ class Prepared:
     `resolve()` and to `grid.py`. `footer_key`, when set, maps this column's
     `(row key, row-group value, split)` for one output row to an opaque
     domain key, driving the shared footer-scheduling pass in `grid.py`;
-    `None` means this column has nothing to schedule.
+    `None` means this column has nothing to schedule. `shared_footer`
+    tells `resolve()` whether that domain key is table-wide (the same key
+    for every row, so the footer closes once at the very end regardless of
+    row/group -- e.g. `Sparkline`'s x-axis, always `("x",)`) as opposed to
+    scoped to a group/row/split (closes once per scope, e.g. `Forest` with
+    `scale="row_group"`). Only the column knows which its own `footer_key`
+    is -- it must not be inferred from an unrelated attribute like
+    `scale`, which for `Sparkline` governs y-domain bucketing, not the
+    x-axis's (always table-wide) closing scope.
     """
 
     payload: Any
     footer_key: Callable[[Any, Any, Any], Any] | None = None
+    shared_footer: bool = False
 
 
 @dataclass(frozen=True)
@@ -477,6 +486,7 @@ class Forest:
         return Prepared(
             payload=_ForestState(domains=domains, source=source, value=value, low=low, high=high),
             footer_key=footer_key if self.show_axis else None,
+            shared_footer=self.scale in ("table", "split_column"),
         )
 
     def cell(self, ctx: Cell) -> str:
@@ -785,6 +795,10 @@ class Sparkline:
                 height=_plot_height(scan.columns, self.height),
             ),
             footer_key=footer_key if self.show_axis else None,
+            # footer_key is a constant ("x",) regardless of `scale` --
+            # `scale` only buckets each row's own y-domain, never the
+            # shared x-axis's closing scope, so this is always shared.
+            shared_footer=True,
         )
 
     def cell(self, ctx: Cell) -> str:
