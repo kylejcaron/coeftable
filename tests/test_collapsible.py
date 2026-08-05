@@ -1,5 +1,6 @@
 import random
 import re
+from typing import Any
 
 import polars as pl
 
@@ -57,6 +58,53 @@ def test_three_groups_get_three_distinct_group_ids_with_correct_membership():
     assert ops_slice.count('data-ct-group-member="1"') == 2
     assert ops_slice.count('data-ct-group-member="0"') == 0
     assert sales_slice.count('data-ct-group-member="2"') == 2
+
+
+def test_forest_axis_row_is_not_folded_into_the_last_group():
+    # The shared forest axis (default scale="table") is scheduled once,
+    # after the last data row across the whole column -- not per group.
+    # Tagging it data-ct-group-member would hide the axis whenever that
+    # last group collapses, even though earlier groups' rows (still
+    # visible) reference the same shared scale.
+    html = table(groups="area").forest("Plot", of="Lift %").gt().as_raw_html()
+    result = make_collapsible(html)
+    tbody = result[result.index('<tbody class="gt_table_body">') : result.index("</tbody>")]
+
+    assert tbody.count("<svg") == 7  # 6 data rows + 1 shared axis row
+    axis_row = tbody[tbody.index("--ct-axis-row:1") :]
+    axis_row = axis_row[: axis_row.index("</tr>") + len("</tr>")]
+    assert "data-ct-group-member" not in axis_row
+
+    # Every other row is still correctly tagged.
+    assert tbody.count('data-ct-group-member="2"') == 2
+
+
+def test_sparkline_axis_row_is_not_folded_into_the_last_group():
+    raw: dict[str, Any] = {
+        **RAW,
+        "trend": [
+            [1.0, 1.2],
+            [0.9, 0.8],
+            [2.0, 2.4],
+            [1.8, 1.5],
+            [0.5, 0.6],
+            [0.4, 0.3],
+        ],
+    }
+    html = (
+        CoefTable(pl.DataFrame(raw), rows="metric", nest="variant", groups="area")
+        .estimate("Lift %", "rel", ci=("rel_lb", "rel_ub"))
+        .sparkline("Trend", value="trend")
+        .gt()
+        .as_raw_html()
+    )
+    result = make_collapsible(html)
+    tbody = result[result.index('<tbody class="gt_table_body">') : result.index("</tbody>")]
+
+    axis_row = tbody[tbody.index("--ct-axis-row:1") :]
+    axis_row = axis_row[: axis_row.index("</tr>") + len("</tr>")]
+    assert "data-ct-group-member" not in axis_row
+    assert tbody.count('data-ct-group-member="2"') == 2
 
 
 def test_empty_group_label_gets_its_own_toggle_not_folded_into_the_previous_group():

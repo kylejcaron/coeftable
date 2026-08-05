@@ -92,7 +92,10 @@ def make_collapsible(html: str) -> str:
     Each `gt_group_heading_row` gets a `data-ct-group="n"` attribute, its
     heading text is wrapped in a `<label>`/`<input type="checkbox">` pair,
     and every following row up to the next heading gets
-    `data-ct-group-member="n"`. A `<style>` block using `:has()` is
+    `data-ct-group-member="n"` -- except a shared forest/sparkline axis
+    row (marked by `render.py` with a `--ct-axis-row:1` CSS custom
+    property), which stays untagged so it never disappears into whichever
+    group happens to precede it. A `<style>` block using `:has()` is
     appended after the wrapper `</div>` to do the actual hiding.
 
     Returns `html` unchanged if the tbody is not found, or if no group
@@ -126,6 +129,14 @@ def make_collapsible(html: str) -> str:
             n += 1
             pieces.append(_tag_heading_row(row, uid=uid, n=n))
             group_ids.append(f"ct-{uid}-g{n}")
+        elif "--ct-axis-row:1" in row:
+            # A shared forest/sparkline axis row (great_tables schedules it
+            # once per shared domain, which for the default `scale="table"`
+            # is once for the whole column). It is not this group's data
+            # and must stay visible no matter which group collapses --
+            # leave it untagged rather than folding it into whichever
+            # group happens to precede it in row order.
+            pieces.append(row)
         elif n >= 0:
             pieces.append(_tag_member_row(row, n=n))
         else:

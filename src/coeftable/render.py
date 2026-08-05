@@ -85,6 +85,12 @@ def to_gt(table: CoefTable) -> GT:
                 style.fill(color=theme.surface),
                 style.borders(sides="top", color=theme.rule, weight="1px"),
                 style.borders(sides="bottom", color=theme.surface, weight="0px"),
+                # Marks this as a shared axis/footer row rather than a
+                # per-group data row: `collapsible.py` reads this to keep
+                # the row visible regardless of which group precedes it,
+                # since a `scale="table"` axis belongs to the whole column,
+                # not to whichever group happens to render last.
+                style.css("--ct-axis-row:1"),
             ],
             locations=loc.body(rows=resolved.axis_rows),
         )
