@@ -115,6 +115,40 @@ def test_groups_column_is_reported():
     assert out.group_column == "area"
 
 
+def test_row_label_survives_groupname_col_reordering_a_row_keys_nest_values():
+    # `great_tables`' `groupname_col` collects rows into contiguous
+    # per-group blocks for display, but `grid.ordered` is row-key-major
+    # (all of "Revenue" together, then all of "Latency"). "Revenue" spans
+    # both "US" and "EU" groups here, so its two group-blocks are not
+    # adjacent in row-key-major order: the row-label blanking decision
+    # must be scoped per rendered group, not per pre-group physical
+    # adjacency, or the second group's occurrence blanks out entirely
+    # even though it starts a brand new section.
+    raw = pd.DataFrame(
+        [
+            {"metric": "Revenue", "variant": "v1", "region": "US", "val": 1.0},
+            {"metric": "Revenue", "variant": "v2", "region": "US", "val": 2.0},
+            {"metric": "Revenue", "variant": "v3", "region": "EU", "val": 3.0},
+            {"metric": "Latency", "variant": "v4", "region": "US", "val": 4.0},
+        ]
+    )
+    table = CoefTable(raw, rows="metric", nest="variant", groups="region").passthrough(
+        "Val", "val"
+    )
+    out = resolve(table)
+    frame = nw.from_native(out.frame)
+    # Physical order stays row-key-major: (Revenue,v1) (Revenue,v2)
+    # (Revenue,v3) (Latency,v4). The second Revenue row (v2) is a
+    # legitimate same-group repeat and still blanks; the third (v3)
+    # starts a NEW group (EU) and must show its label.
+    assert frame["metric"].to_list() == [
+        "<b>Revenue</b>",
+        "",
+        "<b>Revenue</b>",
+        "<b>Latency</b>",
+    ]
+
+
 def test_missing_value_column_raises_with_available_columns():
     table = CoefTable(pl.DataFrame(RAW), rows="metric").estimate("A", "nope")
     with pytest.raises(ColumnNotFoundError, match="nope"):
