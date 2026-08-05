@@ -27,6 +27,8 @@ concurrency:
 jobs:
   tag:
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -87,3 +89,28 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release create "${{ steps.version.outputs.tag }}" --generate-notes
+
+  publish:
+    # Called directly rather than left to the tag-push trigger on the publish
+    # workflow: the tag above is pushed with the workflow token, and GitHub
+    # does not raise workflow-triggering events for it.
+    needs: tag
+    uses: ./.github/workflows/publish.yml
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
+    with:
+      ref: ${{ needs.tag.outputs.tag }}
+      publish: true
+
+  changelog:
+    # Same reason as the publish job above: the release is created with the
+    # workflow token, so its published event never reaches the changelog
+    # workflow. Runs after the release exists, since the changelog is built
+    # from the published release notes.
+    needs: tag
+    uses: ./.github/workflows/post-release.yml
+    permissions:
+      contents: write
+      pull-requests: write
