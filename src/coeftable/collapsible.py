@@ -95,8 +95,8 @@ def make_collapsible(html: str) -> str:
     `data-ct-group-member="n"`. A `<style>` block using `:has()` is
     appended after the wrapper `</div>` to do the actual hiding.
 
-    Returns `html` unchanged if the tbody is not found, or if no
-    `gt_group_heading_row` is present.
+    Returns `html` unchanged if the tbody is not found, or if no group
+    heading row (empty- or non-empty-label) is present.
     """
     tbody_open = _TBODY_OPEN_RE.search(html)
     if tbody_open is None:
@@ -107,7 +107,7 @@ def make_collapsible(html: str) -> str:
 
     body = html[tbody_open.end() : tbody_close]
     spans = _top_level_row_spans(body)
-    if not any("gt_group_heading_row" in body[s:e] for s, e in spans):
+    if not any('class="gt_group_heading"' in body[s:e] for s, e in spans):
         return html
 
     uid_match = _WRAPPER_DIV_ID_RE.search(html)
@@ -122,7 +122,7 @@ def make_collapsible(html: str) -> str:
     for start, end in spans:
         pieces.append(body[cursor:start])
         row = body[start:end]
-        if "gt_group_heading_row" in row:
+        if 'class="gt_group_heading"' in row:
             n += 1
             pieces.append(_tag_heading_row(row, uid=uid, n=n))
             group_ids.append(f"ct-{uid}-g{n}")

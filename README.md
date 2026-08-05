@@ -52,8 +52,10 @@ a `parameter` column.
 - `nest` — an optional secondary label stacked below each row.
 - `groups` — an optional column whose values produce section headers. Pass
   `collapsible_groups=True` to make those sections collapsible in the rendered
-  HTML — a pure CSS toggle, no JavaScript, sections start expanded. Applies to
-  `as_raw_html()`/`_repr_html_`; `.gt()` is unaffected.
+  HTML — a pure CSS toggle (relies on `:has()`, Baseline since late 2023; on an
+  older browser without it the toggle no-ops and sections stay expanded), no
+  JavaScript, sections start expanded. Applies to `as_raw_html()`/`_repr_html_`;
+  `.gt()` is unaffected.
 - `split_columns` — an optional column whose values produce repeated column
   groups side by side, useful for comparing methods.
 

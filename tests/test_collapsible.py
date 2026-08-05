@@ -59,6 +59,37 @@ def test_three_groups_get_three_distinct_group_ids_with_correct_membership():
     assert sales_slice.count('data-ct-group-member="2"') == 2
 
 
+def test_empty_group_label_gets_its_own_toggle_not_folded_into_the_previous_group():
+    # great_tables emits a different <tr> class for an empty group label
+    # (`gt_empty_group_heading` instead of `gt_group_heading_row`), but the
+    # same `<th class="gt_group_heading">` marker either way. Detecting on
+    # the `<tr>` class alone misses this and silently folds the empty-label
+    # group's heading and rows into the previous group's toggle.
+    raw = dict(RAW)
+    raw["area"] = ["Core", "Core", "", "", "Sales", "Sales"]
+    html = make_collapsible(
+        CoefTable(pl.DataFrame(raw), rows="metric", nest="variant", groups="area")
+        .estimate("Lift %", "rel", ci=("rel_lb", "rel_ub"))
+        .gt()
+        .as_raw_html()
+    )
+    tbody = html[html.index('<tbody class="gt_table_body">') : html.index("</tbody>")]
+
+    assert 'class="gt_empty_group_heading"' in tbody
+    headings = re.findall(r'data-ct-group="(\d+)"', tbody)
+    assert headings == ["0", "1", "2"]
+
+    heading_0 = tbody.index('data-ct-group="0"')
+    heading_1 = tbody.index('data-ct-group="1"')
+    heading_2 = tbody.index('data-ct-group="2"')
+    core_slice = tbody[heading_0:heading_1]
+    empty_slice = tbody[heading_1:heading_2]
+    sales_slice = tbody[heading_2:]
+    assert core_slice.count('data-ct-group-member="0"') == 2
+    assert empty_slice.count('data-ct-group-member="1"') == 2
+    assert sales_slice.count('data-ct-group-member="2"') == 2
+
+
 def test_injects_exactly_one_style_block_with_one_toggle_per_group():
     html = table(groups="area").gt().as_raw_html()
     result = make_collapsible(html)
