@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from great_tables import GT, loc, style
 
+from coeftable.collapsible import SHARED_AXIS_ROW_MARK
 from coeftable.frame import resolve
 from coeftable.spec import CoefTable
 
@@ -87,6 +88,18 @@ def to_gt(table: CoefTable) -> GT:
                 style.borders(sides="bottom", color=theme.surface, weight="0px"),
             ],
             locations=loc.body(rows=resolved.axis_rows),
+        )
+    if resolved.shared_axis_rows:
+        # Marks this as a table-wide axis/footer row rather than a
+        # per-group one: `collapsible.py` reads this to keep the row
+        # visible regardless of which group precedes it, since a
+        # `scale="table"`/`"split_column"` axis belongs to the whole
+        # column, not to whichever group happens to render last. A
+        # `scale="row_group"`/`"row"` axis row is *not* in this set --
+        # it genuinely belongs to one group and stays a normal member.
+        gt = gt.tab_style(
+            style=style.css(SHARED_AXIS_ROW_MARK),
+            locations=loc.body(rows=resolved.shared_axis_rows),
         )
     if resolved.group_column:
         gt = gt.tab_style(

@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 import narwhals as nw
 
+from coeftable.collapsible import make_collapsible
 from coeftable.format import (
     CIStyle,
     DateAxis,
@@ -84,11 +85,20 @@ class Prepared:
     `resolve()` and to `grid.py`. `footer_key`, when set, maps this column's
     `(row key, row-group value, split)` for one output row to an opaque
     domain key, driving the shared footer-scheduling pass in `grid.py`;
-    `None` means this column has nothing to schedule.
+    `None` means this column has nothing to schedule. `shared_footer`
+    tells `resolve()` whether that domain key is table-wide (the same key
+    for every row, so the footer closes once at the very end regardless of
+    row/group -- e.g. `Sparkline`'s x-axis, always `("x",)`) as opposed to
+    scoped to a group/row/split (closes once per scope, e.g. `Forest` with
+    `scale="row_group"`). Only the column knows which its own `footer_key`
+    is -- it must not be inferred from an unrelated attribute like
+    `scale`, which for `Sparkline` governs y-domain bucketing, not the
+    x-axis's (always table-wide) closing scope.
     """
 
     payload: Any
     footer_key: Callable[[Any, Any, Any], Any] | None = None
+    shared_footer: bool = False
 
 
 @dataclass(frozen=True)
@@ -476,6 +486,7 @@ class Forest:
         return Prepared(
             payload=_ForestState(domains=domains, source=source, value=value, low=low, high=high),
             footer_key=footer_key if self.show_axis else None,
+            shared_footer=self.scale in ("table", "split_column"),
         )
 
     def cell(self, ctx: Cell) -> str:
@@ -784,6 +795,10 @@ class Sparkline:
                 height=_plot_height(scan.columns, self.height),
             ),
             footer_key=footer_key if self.show_axis else None,
+            # footer_key is a constant ("x",) regardless of `scale` --
+            # `scale` only buckets each row's own y-domain, never the
+            # shared x-axis's closing scope, so this is always shared.
+            shared_footer=True,
         )
 
     def cell(self, ctx: Cell) -> str:
@@ -927,6 +942,10 @@ class CoefTable:
         Header text.
     sort_rows
         Sort row keys lexically instead of by first appearance.
+    collapsible_groups
+        Make each `groups` section collapsible via a CSS-only toggle, no
+        JavaScript. Has no effect on `.gt()`; use `as_raw_html()` or
+        `_repr_html_` (the notebook-display path) to get the transform.
     """
 
     def __init__(
@@ -946,6 +965,7 @@ class CoefTable:
         title: str = "",
         subtitle: str = "",
         sort_rows: bool = False,
+        collapsible_groups: bool = False,
     ) -> None:
         declared = tuple(columns)
         if estimate is not None:
@@ -962,6 +982,7 @@ class CoefTable:
         self.title = title
         self.subtitle = subtitle
         self.sort_rows = sort_rows
+        self.collapsible_groups = collapsible_groups
         if declared:
             validate_columns(declared)
 
@@ -978,6 +999,7 @@ class CoefTable:
             "title": self.title,
             "subtitle": self.subtitle,
             "sort_rows": self.sort_rows,
+            "collapsible_groups": self.collapsible_groups,
         }
         settings.update(changes)
         return CoefTable(self.data, **settings)
@@ -1280,6 +1302,10 @@ class CoefTable:
     def gt(self) -> GT:
         """Render to a `great_tables` object.
 
+        This is a pure `great_tables` escape hatch: `collapsible_groups`
+        does not apply to the returned object. Use `as_raw_html()` for an
+        HTML string with that transform applied.
+
         Returns
         -------
         GT
@@ -1289,5 +1315,21 @@ class CoefTable:
 
         return to_gt(self)
 
+    def _maybe_collapse(self, html: str) -> str:
+        return make_collapsible(html) if self.collapsible_groups else html
+
+    def as_raw_html(self) -> str:
+        """Render to an HTML string.
+
+        The non-notebook entry point: applies `collapsible_groups` when
+        set, unlike `.gt().as_raw_html()`.
+
+        Returns
+        -------
+        str
+            The rendered table as a standalone HTML fragment.
+        """
+        return self._maybe_collapse(self.gt().as_raw_html())
+
     def _repr_html_(self) -> str:
-        return self.gt()._repr_html_()
+        return self._maybe_collapse(self.gt()._repr_html_())

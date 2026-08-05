@@ -45,6 +45,12 @@ class Resolved:
         Name of the row-group column, if any.
     band_rows, divider_rows, axis_rows
         Zero-based row indices for banding, dividers and axis rows.
+    shared_axis_rows
+        Subset of `axis_rows` whose axis is table-wide (`scale in
+        {"table", "split_column"}`) rather than per-group or per-row-key
+        -- see `assemble_rows`. `render.py` marks only these for
+        `collapsible.py` to leave untagged; the rest stay tied to
+        whichever group they belong to.
     markdown_columns
         Output columns whose contents are HTML.
     plot_columns
@@ -61,6 +67,7 @@ class Resolved:
     band_rows: list[int] = field(default_factory=list)
     divider_rows: list[int] = field(default_factory=list)
     axis_rows: list[int] = field(default_factory=list)
+    shared_axis_rows: list[int] = field(default_factory=list)
     markdown_columns: list[str] = field(default_factory=list)
     plot_columns: list[str] = field(default_factory=list)
 
@@ -203,6 +210,14 @@ def resolve(table: CoefTable) -> Resolved:
                 [key_fn(row_key, group, split) for split in grid.splits]
                 for (row_key, _nest), group in zip(grid.ordered, grid.row_group, strict=True)
             ]
+    # A footer's domain is table-wide only when the column itself says so
+    # (see `Prepared.shared_footer`) -- inferring it from `scale` would be
+    # wrong for `Sparkline`, whose x-axis footer_key is always constant
+    # regardless of `scale` (that setting only buckets each row's own
+    # y-domain, never the shared axis's closing scope).
+    shared_footer_labels = {
+        label for label in footer_keys if prepared_by_label[label].shared_footer
+    }
 
     def render_footer(pending: dict[str, list[Any]]) -> dict[str, str]:
         out: dict[str, str] = {}
@@ -216,7 +231,9 @@ def resolve(table: CoefTable) -> Resolved:
                     out[output_name(column, split)] = text
         return out
 
-    assembled = assemble_rows(grid, display_columns, cell_values, footer_keys, render_footer)
+    assembled = assemble_rows(
+        grid, display_columns, cell_values, footer_keys, render_footer, shared_footer_labels
+    )
 
     data: dict[str, list[Any]] = {}
     if table.groups:
@@ -240,6 +257,7 @@ def resolve(table: CoefTable) -> Resolved:
         band_rows=assembled.band_rows,
         divider_rows=assembled.divider_rows,
         axis_rows=assembled.axis_rows,
+        shared_axis_rows=assembled.shared_axis_rows,
         markdown_columns=markdown,
         plot_columns=plot_columns,
     )

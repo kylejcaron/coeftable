@@ -8,7 +8,7 @@ kind (`Estimate`, `Forest`, `Passthrough`) it is laying out.
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Set
 from dataclasses import dataclass
 from typing import Any
 
@@ -153,6 +153,11 @@ class AssembledRows:
         Per-row values for the rows/nest/groups layout columns.
     band_rows, divider_rows, axis_rows
         Zero-based indices into the final row sequence.
+    shared_axis_rows
+        Subset of `axis_rows` where every column closing at that row has a
+        table-wide domain (`scale` in `{"table", "split_column"}`) rather
+        than a per-group or per-row-key one -- see `shared_footer_labels`
+        on `assemble_rows`.
     cells
         Rendered cell text per display column, one entry per final row.
     """
@@ -163,6 +168,7 @@ class AssembledRows:
     band_rows: list[int]
     divider_rows: list[int]
     axis_rows: list[int]
+    shared_axis_rows: list[int]
     cells: dict[str, list[str]]
 
 
@@ -172,6 +178,7 @@ def assemble_rows(
     cell_values: dict[str, list[str]],
     footer_keys: dict[str, list[list[Any]]],
     render_footer: Callable[[dict[str, list[Any]]], dict[str, str]],
+    shared_footer_labels: Set[str] = frozenset(),
 ) -> AssembledRows:
     """Interleave rendered cells with footer rows, and lay out band/dividers.
 
@@ -198,6 +205,15 @@ def assemble_rows(
     render_footer
         Called with the labels (with their keys) due at this row; returns
         the rendered footer text per display column.
+    shared_footer_labels
+        Labels (a subset of `footer_keys`' keys) whose footer closes once
+        for the whole table rather than once per group or row key. This
+        module is column-agnostic (see the module docstring), so the
+        caller decides membership -- `frame.py` populates it from each
+        column's own `Prepared.shared_footer`. An axis row is recorded in
+        `shared_axis_rows` only when every column closing at that row is
+        in this set; a row combining a shared and a per-group footer is
+        treated as per-group, since it is not safe to show unconditionally.
 
     Returns
     -------
@@ -211,6 +227,7 @@ def assemble_rows(
     band_rows: list[int] = []
     divider_rows: list[int] = []
     axis_rows: list[int] = []
+    shared_axis_rows: list[int] = []
     emitted: dict[str, set[Any]] = {label: set() for label in footer_keys}
 
     def blank_row() -> None:
@@ -252,6 +269,8 @@ def assemble_rows(
             layout_nest.append("")
             layout_group.append(layout_group[-1])
             axis_rows.append(len(layout_rows) - 1)
+            if set(pending) <= shared_footer_labels:
+                shared_axis_rows.append(len(layout_rows) - 1)
             for label, keys in pending.items():
                 emitted[label].update(keys)
             for name, text in render_footer(pending).items():
@@ -264,5 +283,6 @@ def assemble_rows(
         band_rows=band_rows,
         divider_rows=divider_rows,
         axis_rows=axis_rows,
+        shared_axis_rows=shared_axis_rows,
         cells=cells,
     )

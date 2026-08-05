@@ -1,4 +1,8 @@
+import random
+import re
+
 import polars as pl
+import pytest
 from great_tables import GT
 
 from coeftable.spec import CoefTable
@@ -140,3 +144,54 @@ def test_blue_theme_is_boxed():
     html = table().with_theme(BLUE).gt().as_raw_html()
     assert "border-left-style: solid" in html
     assert "border-right-style: solid" in html
+
+
+def test_collapsible_groups_reaches_as_raw_html_and_repr_html_but_not_gt():
+    grouped = table(groups="area", collapsible_groups=True)
+    assert "data-ct-group" in grouped.as_raw_html()
+    assert "data-ct-group" in grouped._repr_html_()
+    assert "data-ct-group" not in grouped.gt().as_raw_html()
+
+
+def test_collapsible_groups_without_groups_is_byte_identical():
+    # great_tables assigns a fresh random wrapper-div id per .gt() call, so
+    # seed around each render to compare the transform's effect in isolation.
+    random.seed(0)
+    off = table(collapsible_groups=False).as_raw_html()
+    random.seed(0)
+    on = table(collapsible_groups=True).as_raw_html()
+    assert on == off
+
+
+def test_collapsible_groups_false_matches_plain_gt_render_byte_identical():
+    grouped = table(groups="area")
+    random.seed(0)
+    with_flag = grouped.as_raw_html()
+    random.seed(0)
+    plain = grouped.gt().as_raw_html()
+    assert with_flag == plain
+
+
+def test_collapsible_transform_applied_exactly_once():
+    html = table(groups="area", collapsible_groups=True).as_raw_html()
+    assert html.count('<tr data-ct-group="1"') == 1
+
+
+def test_with_theme_round_trips_collapsible_groups_flag():
+    # Guards `_with`'s settings dict: a missing key here would silently
+    # drop collapsible_groups on the next chain call.
+    html = table(groups="area", collapsible_groups=True).with_theme(MONO).as_raw_html()
+    assert "data-ct-group" in html
+
+
+def test_repr_html_applies_transform_in_make_page_shape(monkeypatch: pytest.MonkeyPatch):
+    # Positron infers make_page=True, wrapping the fragment in a full
+    # <html><body> page rather than a bare <div>. The transform must still
+    # find the wrapper div and scope its selectors to that div's uid.
+    monkeypatch.setenv("POSITRON_VERSION", "1.0")
+    html = table(groups="area", collapsible_groups=True)._repr_html_()
+    match = re.search(r'<div\s+id="([^"]+)"', html)
+    assert match is not None
+    uid = match.group(1)
+    assert f"#{uid} .ct-group-state" in html
+    assert "data-ct-group" in html
