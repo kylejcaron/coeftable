@@ -115,15 +115,12 @@ def test_groups_column_is_reported():
     assert out.group_column == "area"
 
 
-def test_row_label_survives_groupname_col_reordering_a_row_keys_nest_values():
-    # `great_tables`' `groupname_col` collects rows into contiguous
-    # per-group blocks for display, but `grid.ordered` is row-key-major
-    # (all of "Revenue" together, then all of "Latency"). "Revenue" spans
-    # both "US" and "EU" groups here, so its two group-blocks are not
-    # adjacent in row-key-major order: the row-label blanking decision
-    # must be scoped per rendered group, not per pre-group physical
-    # adjacency, or the second group's occurrence blanks out entirely
-    # even though it starts a brand new section.
+def _group_spanning_row_key_table():
+    # "Revenue" spans both "US" and "EU" groups: its two group-blocks are
+    # not adjacent in row-key-major physical order (`grid.ordered`), which
+    # `great_tables`' `groupname_col` nonetheless renders as contiguous
+    # per-group blocks. Shared by both the row-label and divider tests
+    # below, which assert different facets of the same resolved table.
     raw = pd.DataFrame(
         [
             {"metric": "Revenue", "variant": "v1", "region": "US", "val": 1.0},
@@ -135,7 +132,15 @@ def test_row_label_survives_groupname_col_reordering_a_row_keys_nest_values():
     table = CoefTable(raw, rows="metric", nest="variant", groups="region").passthrough(
         "Val", "val"
     )
-    out = resolve(table)
+    return resolve(table)
+
+
+def test_row_label_survives_groupname_col_reordering_a_row_keys_nest_values():
+    # The row-label blanking decision must be scoped per rendered group,
+    # not per pre-group physical adjacency, or the second group's
+    # occurrence blanks out entirely even though it starts a brand new
+    # section.
+    out = _group_spanning_row_key_table()
     frame = nw.from_native(out.frame)
     # Physical order stays row-key-major: (Revenue,v1) (Revenue,v2)
     # (Revenue,v3) (Latency,v4). The second Revenue row (v2) is a
@@ -150,25 +155,13 @@ def test_row_label_survives_groupname_col_reordering_a_row_keys_nest_values():
 
 
 def test_dividers_land_on_true_within_group_key_transitions_not_group_boundaries():
-    # Same shape as the row-label test above. `divider_rows` is scoped
-    # per group the same way row-label blanking is: EU's first row
-    # (Revenue, v3) starts a brand new group block, so it gets no
-    # spurious divider (the group-heading chrome already marks that
-    # boundary) -- but Latency's row inside the *same* US group as the
-    # two Revenue rows before it is a genuine key transition and must
+    # `divider_rows` is scoped per group the same way row-label blanking
+    # is: EU's first row (Revenue, v3) starts a brand new group block, so
+    # it gets no spurious divider (the group-heading chrome already marks
+    # that boundary) -- but Latency's row inside the *same* US group as
+    # the two Revenue rows before it is a genuine key transition and must
     # still get one.
-    raw = pd.DataFrame(
-        [
-            {"metric": "Revenue", "variant": "v1", "region": "US", "val": 1.0},
-            {"metric": "Revenue", "variant": "v2", "region": "US", "val": 2.0},
-            {"metric": "Revenue", "variant": "v3", "region": "EU", "val": 3.0},
-            {"metric": "Latency", "variant": "v4", "region": "US", "val": 4.0},
-        ]
-    )
-    table = CoefTable(raw, rows="metric", nest="variant", groups="region").passthrough(
-        "Val", "val"
-    )
-    out = resolve(table)
+    out = _group_spanning_row_key_table()
     # Row 2 (index 2, the EU/Revenue row) gets no divider: it's a new
     # group's first row, not a within-group transition. Row 3 (Latency,
     # still within the US group) is a real transition and does.
