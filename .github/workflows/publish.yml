@@ -5,6 +5,17 @@ on:
     branches: [main]
     tags:
       - "v*"
+  workflow_call:
+    inputs:
+      ref:
+        description: "Git ref to build. Defaults to the triggering ref."
+        required: false
+        type: string
+      publish:
+        description: "Upload the built package to PyPI."
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   build-package:
@@ -15,6 +26,10 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          # The version is derived from the tag by hatch-vcs, so the build
+          # must happen on the tag itself -- building the branch head would
+          # produce a development version instead of the release version.
+          ref: ${{ inputs.ref }}
           fetch-depth: 0
           persist-credentials: false
       - uses: hynek/build-and-inspect-python-package@v2
@@ -23,7 +38,12 @@ jobs:
 
   publish:
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags')
+    # A tag pushed by a workflow using the default token does not raise a
+    # push event, so a release cut by automation must ask for the upload
+    # explicitly rather than relying on the tag trigger below.
+    if: >-
+      inputs.publish ||
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags'))
     environment:
       name: publish
       url: https://pypi.org/p/coeftable
