@@ -10,6 +10,7 @@ from coeftable.svg import (
     _CHAR_WIDTH_RATIO,
     _MIN_LABEL_GAP,
     _SUPER_ROW_OFFSET,
+    Trace,
     _bare_label,
     _calendar_groups,
     _fits,
@@ -25,6 +26,7 @@ from coeftable.svg import (
     nice_ticks,
     sparkline_axis,
     sparkline_bar,
+    sparkline_multi,
 )
 from coeftable.theme import DEFAULT
 
@@ -1542,3 +1544,147 @@ def test_sparkline_axis_two_tier_rows_never_collide():
                         f"collision: start={start.date()} days={days} width={width} "
                         f"show_endpoint={show_endpoint} row_y={y} labels={row}"
                     )
+
+
+def _trace(x, y, lower, upper, color, *, show_ribbon=True, label=""):
+    return Trace(
+        x=x, y=y, lower=lower, upper=upper, color=color, show_ribbon=show_ribbon, label=label
+    )
+
+
+def test_sparkline_multi_draws_one_polyline_per_trace_in_its_own_color():
+    x = [0.0, 1.0, 2.0]
+    a = _trace(x, [1.0, 1.2, 0.9], [None] * 3, [None] * 3, "#E69F00")
+    b = _trace(x, [0.5, 0.6, 0.4], [None] * 3, [None] * 3, "#56B4E9")
+    svg = sparkline_multi(
+        [a, b],
+        x_domain=(0.0, 2.0),
+        domain=(0.0, 2.0),
+        ref=None,
+        ref_color="#000",
+        fmt=Number(decimals=1),
+    )
+    assert svg.count("<polyline") == 2
+    assert 'stroke="#E69F00"' in svg
+    assert 'stroke="#56B4E9"' in svg
+
+
+def test_sparkline_multi_draws_exactly_one_reference_line_in_ref_color():
+    x = [0.0, 1.0, 2.0]
+    a = _trace(x, [1.0, 1.2, 0.9], [None] * 3, [None] * 3, "#E69F00")
+    b = _trace(x, [0.5, 0.6, 0.4], [None] * 3, [None] * 3, "#56B4E9")
+    svg = sparkline_multi(
+        [a, b],
+        x_domain=(0.0, 2.0),
+        domain=(0.0, 2.0),
+        ref=0.7,
+        ref_color="#123456",
+        fmt=Number(decimals=1),
+    )
+    assert svg.count("stroke-dasharray") == 1
+    dashed = re.search(r"<line[^>]*stroke-dasharray[^>]*/>", svg)
+    assert dashed
+    assert 'stroke="#123456"' in dashed.group(0)
+    assert "#E69F00" not in dashed.group(0)
+    assert "#56B4E9" not in dashed.group(0)
+
+
+def test_sparkline_multi_emits_at_most_one_clip_path_when_both_traces_clip():
+    x = [0.0, 1.0, 2.0]
+    a = _trace(x, [1.0, 300.0, 1.0], [None] * 3, [None] * 3, "#E69F00")
+    b = _trace(x, [1.0, -300.0, 1.0], [None] * 3, [None] * 3, "#56B4E9")
+    svg = sparkline_multi(
+        [a, b],
+        x_domain=(0.0, 2.0),
+        domain=(0.0, 2.0),
+        ref=None,
+        ref_color="#000",
+        fmt=Number(decimals=1),
+    )
+    assert svg.count("<clipPath") == 1
+
+
+def test_sparkline_multi_overlapping_clip_caps_render_two_colors_not_merged():
+    # Both traces peak out-of-bounds on the same "high" edge at the same x
+    # -- global `_merge_spans` over a combined span list would fuse these
+    # into one cap pair in one trace's colour. Per-trace merging must not.
+    x = [0.0, 1.0, 2.0]
+    a = _trace(x, [1.0, 300.0, 1.0], [None] * 3, [None] * 3, "#E69F00")
+    b = _trace(x, [1.0, 300.0, 1.0], [None] * 3, [None] * 3, "#56B4E9")
+    svg = sparkline_multi(
+        [a, b],
+        x_domain=(0.0, 2.0),
+        domain=(0.0, 2.0),
+        ref=None,
+        ref_color="#000",
+        fmt=Number(decimals=1),
+    )
+    cap_lines = re.findall(r'<line[^>]*stroke-opacity="0.45"[^>]*/>', svg)
+    colors = {re.search(r'stroke="([^"]+)"', line).group(1) for line in cap_lines}  # ty: ignore[unresolved-attribute]
+    assert colors == {"#E69F00", "#56B4E9"}
+    # 2 dy offsets per merged span, 1 span per trace here.
+    assert len(cap_lines) == 4
+
+
+def test_sparkline_multi_show_ribbon_false_drops_only_that_traces_polygon():
+    x = [0.0, 1.0, 2.0]
+    a = _trace(x, [1.0, 1.2, 0.9], [0.8, 1.0, 0.7], [1.2, 1.4, 1.1], "#E69F00", show_ribbon=True)
+    b = _trace(x, [0.5, 0.6, 0.4], [0.3, 0.4, 0.2], [0.7, 0.8, 0.6], "#56B4E9", show_ribbon=False)
+    svg = sparkline_multi(
+        [a, b],
+        x_domain=(0.0, 2.0),
+        domain=(0.0, 2.0),
+        ref=None,
+        ref_color="#000",
+        fmt=Number(decimals=1),
+    )
+    assert svg.count("<polygon") == 1
+    assert svg.count("<polyline") == 2
+
+
+def test_sparkline_multi_misaligned_gaps_break_each_traces_runs_independently():
+    x = [0.0, 1.0, 2.0, 3.0]
+    a = _trace(x, [1.0, float("nan"), 0.9, 1.1], [None] * 4, [None] * 4, "#E69F00")
+    b = _trace(x, [0.5, 0.6, float("nan"), 0.4], [None] * 4, [None] * 4, "#56B4E9")
+    svg = sparkline_multi(
+        [a, b],
+        x_domain=(0.0, 3.0),
+        domain=(0.0, 2.0),
+        ref=None,
+        ref_color="#000",
+        fmt=Number(decimals=1),
+    )
+    # Each trace has one gap -> two runs each -> four polylines total, none
+    # bridging the other trace's intact point at its own gap position.
+    assert svg.count("<polyline") == 4
+
+
+def test_sparkline_bar_output_is_byte_identical_to_pre_multi_trace_fixture():
+    x = [0.0, 1.0, 2.0]
+    y = [1.0, 1.2, 0.9]
+    lower = [0.8, 1.0, 0.7]
+    upper = [1.2, 1.4, 1.1]
+    svg = sparkline_bar(
+        x,
+        y,
+        lower,
+        upper,
+        x_domain=(0.0, 2.0),
+        domain=(0.0, 2.0),
+        ref=0.5,
+        color="#55A868",
+        fmt=Number(decimals=1),
+    )
+    assert svg == (
+        '<svg width="220" height="30" viewBox="0 0 220 30" '
+        'xmlns="http://www.w3.org/2000/svg" style="display:block;margin:0 auto">'
+        '<polygon points="3.00,12.60 88.00,10.20 173.00,13.80 173.00,18.60 88.00,15.00 '
+        '3.00,17.40" '
+        'fill="#55A868" fill-opacity="0.15"/>'
+        '<line x1="3" y1="21.00" x2="217" y2="21.00" stroke="#55A868" stroke-width="1" '
+        'stroke-dasharray="2,2"/>'
+        '<polyline points="3.00,15.00 88.00,12.60 173.00,16.20" fill="none" stroke="#55A868" '
+        'stroke-width="1.5"/>'
+        '<text x="217" y="19.20" fill="#55A868" font-size="9" text-anchor="end">0.9</text>'
+        "</svg>"
+    )
