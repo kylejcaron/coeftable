@@ -103,3 +103,14 @@ jobs:
     with:
       ref: ${{ needs.tag.outputs.tag }}
       publish: true
+
+  changelog:
+    # Same reason as the publish job above: the release is created with the
+    # workflow token, so its published event never reaches the changelog
+    # workflow. Runs after the release exists, since the changelog is built
+    # from the published release notes.
+    needs: tag
+    uses: ./.github/workflows/post-release.yml
+    permissions:
+      contents: write
+      pull-requests: write
