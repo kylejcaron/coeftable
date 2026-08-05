@@ -272,3 +272,82 @@ def test_timezone_aware_x_normalises_through_utc(make):
     assert x0 is not None
     assert x1 is not None
     assert x0 - x1 == 3600.0
+
+
+def test_series_arg_groups_each_identity_into_per_arm_series(make):
+    raw = {
+        "metric": ["Revenue", "Revenue", "Revenue", "Revenue"],
+        "arm": ["control", "control", "treatment", "treatment"],
+        "day": [0, 1, 0, 1],
+        "y": [1.0, 2.0, 10.0, 20.0],
+    }
+    result = resolve_companion_series(
+        make(raw),
+        [("Revenue", None, None)],
+        rows="metric",
+        nest=None,
+        split_columns=None,
+        value="y",
+        x="day",
+        series="arm",
+    )
+    arms = dict(result[("Revenue", None, None)])
+    assert arms["control"].y == [1.0, 2.0]
+    assert arms["treatment"].y == [10.0, 20.0]
+
+
+def test_series_arg_sorts_arms_ascending_with_none_last(make):
+    raw = {
+        "metric": ["Revenue"] * 4,
+        "arm": ["b", None, "a", "c"],
+        "y": [2.0, 4.0, 1.0, 3.0],
+    }
+    result = resolve_companion_series(
+        make(raw),
+        [("Revenue", None, None)],
+        rows="metric",
+        nest=None,
+        split_columns=None,
+        value="y",
+        series="arm",
+    )
+    arm_keys = [key for key, _ in result[("Revenue", None, None)]]
+    assert arm_keys == ["a", "b", "c", None]
+
+
+def test_series_arg_independent_gaps_per_arm(make):
+    # control has a gap at day 1; treatment has no gaps -- each arm's own
+    # `Series` must reflect only its own missing points.
+    raw = {
+        "metric": ["Revenue"] * 6,
+        "arm": ["control", "control", "control", "treatment", "treatment", "treatment"],
+        "day": [0, 1, 2, 0, 1, 2],
+        "y": [1.0, None, 3.0, 10.0, 20.0, 30.0],
+    }
+    result = resolve_companion_series(
+        make(raw),
+        [("Revenue", None, None)],
+        rows="metric",
+        nest=None,
+        split_columns=None,
+        value="y",
+        x="day",
+        series="arm",
+    )
+    arms = dict(result[("Revenue", None, None)])
+    assert arms["control"].y == [1.0, None, 3.0]
+    assert arms["treatment"].y == [10.0, 20.0, 30.0]
+
+
+def test_series_arg_identity_with_no_rows_resolves_empty_list(make):
+    raw = {"metric": ["Revenue"], "arm": ["control"], "y": [1.0]}
+    result = resolve_companion_series(
+        make(raw),
+        [("Revenue", None, None), ("Ghost", None, None)],
+        rows="metric",
+        nest=None,
+        split_columns=None,
+        value="y",
+        series="arm",
+    )
+    assert result[("Ghost", None, None)] == []

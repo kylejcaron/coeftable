@@ -115,6 +115,59 @@ def test_groups_column_is_reported():
     assert out.group_column == "area"
 
 
+def _group_spanning_row_key_table():
+    # "Revenue" spans both "US" and "EU" groups: its two group-blocks are
+    # not adjacent in row-key-major physical order (`grid.ordered`), which
+    # `great_tables`' `groupname_col` nonetheless renders as contiguous
+    # per-group blocks. Shared by both the row-label and divider tests
+    # below, which assert different facets of the same resolved table.
+    raw = pd.DataFrame(
+        [
+            {"metric": "Revenue", "variant": "v1", "region": "US", "val": 1.0},
+            {"metric": "Revenue", "variant": "v2", "region": "US", "val": 2.0},
+            {"metric": "Revenue", "variant": "v3", "region": "EU", "val": 3.0},
+            {"metric": "Latency", "variant": "v4", "region": "US", "val": 4.0},
+        ]
+    )
+    table = CoefTable(raw, rows="metric", nest="variant", groups="region").passthrough(
+        "Val", "val"
+    )
+    return resolve(table)
+
+
+def test_row_label_survives_groupname_col_reordering_a_row_keys_nest_values():
+    # The row-label blanking decision must be scoped per rendered group,
+    # not per pre-group physical adjacency, or the second group's
+    # occurrence blanks out entirely even though it starts a brand new
+    # section.
+    out = _group_spanning_row_key_table()
+    frame = nw.from_native(out.frame)
+    # Physical order stays row-key-major: (Revenue,v1) (Revenue,v2)
+    # (Revenue,v3) (Latency,v4). The second Revenue row (v2) is a
+    # legitimate same-group repeat and still blanks; the third (v3)
+    # starts a NEW group (EU) and must show its label.
+    assert frame["metric"].to_list() == [
+        "<b>Revenue</b>",
+        "",
+        "<b>Revenue</b>",
+        "<b>Latency</b>",
+    ]
+
+
+def test_dividers_land_on_true_within_group_key_transitions_not_group_boundaries():
+    # `divider_rows` is scoped per group the same way row-label blanking
+    # is: EU's first row (Revenue, v3) starts a brand new group block, so
+    # it gets no spurious divider (the group-heading chrome already marks
+    # that boundary) -- but Latency's row inside the *same* US group as
+    # the two Revenue rows before it is a genuine key transition and must
+    # still get one.
+    out = _group_spanning_row_key_table()
+    # Row 2 (index 2, the EU/Revenue row) gets no divider: it's a new
+    # group's first row, not a within-group transition. Row 3 (Latency,
+    # still within the US group) is a real transition and does.
+    assert out.divider_rows == [3]
+
+
 def test_missing_value_column_raises_with_available_columns():
     table = CoefTable(pl.DataFrame(RAW), rows="metric").estimate("A", "nope")
     with pytest.raises(ColumnNotFoundError, match="nope"):

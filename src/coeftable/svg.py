@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import math
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
@@ -756,6 +757,18 @@ def _clip_label(text: str, max_width: float, font_size: float) -> str:
     return text[: budget - 1] + "\u2026"
 
 
+def _esc(text: str) -> str:
+    """Escape `&`, `<` and `>` for safe embedding as `<text>` element content.
+
+    Every tick, endpoint and legend label ultimately traces back to
+    caller-controlled data (a `Format` callable's output, or a raw
+    `series=` value via `str()`) -- unescaped, a label containing `&`/`<`/`>`
+    would emit malformed SVG. Quotes are left alone; nothing here writes
+    label text into an attribute value.
+    """
+    return html.escape(text, quote=False)
+
+
 def forest_bar(
     estimate: float | None,
     lower: float | None,
@@ -878,9 +891,10 @@ def _render_tick_axis(
             f'y2="{baseline + 3:.2f}" stroke="{theme.axis}" stroke-width="0.75"/>'
         )
         if text:
+            anchor = _tick_anchor(tick_x, text, width)
             parts.append(
                 f'<text x="{tick_x:.2f}" y="{height - 2:.2f}" fill="{theme.axis}" '
-                f'font-size="9" text-anchor="{_tick_anchor(tick_x, text, width)}">{text}</text>'
+                f'font-size="9" text-anchor="{anchor}">{_esc(text)}</text>'
             )
     return parts
 
@@ -951,7 +965,7 @@ def _render_two_tier_axis(
         if text:
             parts.append(
                 f'<text x="{x:.2f}" y="{super_y:.2f}" fill="{theme.muted}" '
-                f'font-size="9" text-anchor="{_tick_anchor(x, text, width)}">{text}</text>'
+                f'font-size="9" text-anchor="{_tick_anchor(x, text, width)}">{_esc(text)}</text>'
             )
     return parts
 
@@ -1098,6 +1112,206 @@ def _render_line_run(
     return ghost, real, spans
 
 
+class Trace(NamedTuple):
+    """One overlaid series inside a multi-series sparkline cell.
+
+    Parameters
+    ----------
+    x, y
+        Parallel point positions and estimates, equal length.
+    lower, upper
+        Parallel interval bounds, equal length to `x`/`y`.
+    color
+        Line, ribbon, endpoint, ghost-trace and clip-cap colour for this
+        trace alone. The reference line uses `sparkline_multi`'s
+        `ref_color`, not any trace's `color`.
+    show_ribbon
+        Draw this trace's uncertainty ribbon. `False` still draws the
+        line; it only withholds the ribbon polygon.
+    label
+        Series identity, for the caller's legend. Unused by rendering.
+    """
+
+    x: Sequence[float | None]
+    y: Sequence[float | None]
+    lower: Sequence[float | None]
+    upper: Sequence[float | None]
+    color: str
+    show_ribbon: bool
+    label: str
+
+
+def sparkline_multi(
+    traces: Sequence[Trace],
+    *,
+    x_domain: tuple[float, float],
+    domain: tuple[float, float],
+    ref: float | None,
+    ref_color: str,
+    fmt: Format,
+    width: int = 220,
+    height: int = 30,
+    inset: int = 3,
+    show_endpoint: bool = True,
+    endpoint_width: int = 44,
+    show_clip_indicators: bool = True,
+) -> str:
+    """Render one or more overlaid series as an inline SVG line plot.
+
+    Generalises `sparkline_bar` to `N` traces sharing one `x_domain` and
+    `domain`. All ribbons draw first (each in its own trace colour, gated
+    by that trace's `show_ribbon`), then the single dashed reference line
+    in `ref_color`, then all series lines on top, then one endpoint label
+    per trace that has a line. Clipping, the ghost trace and the clip-cap
+    marks are computed independently per trace and drawn in that trace's
+    colour, so two traces clipping at overlapping x on the same edge
+    still produce two distinct cap pairs rather than one merged pair in
+    one trace's colour. The `<clipPath>` itself is geometry-derived
+    (`domain`/`height`/`width` only) and is therefore shared and emitted
+    at most once, regardless of how many traces clip.
+
+    Parameters
+    ----------
+    traces
+        One `Trace` per overlaid series. Each trace's gaps, out-of-domain
+        clipping and clip-cap merging are independent of every other
+        trace's -- misaligned gaps break each trace's own runs only.
+    x_domain
+        Shared x-domain for every trace's `x`. Always table-wide, never
+        padded per row.
+    domain
+        Shared y-domain for every trace's `y`/`lower`/`upper` and for
+        `ref`.
+    ref
+        Reference value for the horizontal dashed line, or `None` to
+        draw no reference line.
+    ref_color
+        Colour of the single shared reference line.
+    fmt
+        Formats each trace's endpoint value label.
+    width, height, inset
+        Geometry in pixels.
+    show_endpoint
+        Draw each trace's endpoint value label. Every label anchors at
+        the same `x=right_edge`; with several traces this is
+        all-or-nothing and uncoordinated across traces -- two traces
+        ending at nearby y-values render overlapping text, with no
+        automatic vertical nudge (unlike `sparkline_axis`'s two-tier
+        collision handling). Keep endpoints apart in the data, or turn
+        this off, when traces crowd near the same value.
+    endpoint_width
+        Fixed pixel reserve carved out of `width` for endpoint labels,
+        independent of any label's length. `sparkline_axis` must be given
+        the same `width`, `inset`, `show_endpoint` and `endpoint_width`
+        so its ticks project over the identical inner width and land
+        under their points.
+    show_clip_indicators
+        Draw the clip-cap marks. The line/ribbon clipping and the ghost
+        trace happen regardless of this flag -- turning it off only
+        removes the cap marks, never the underlying clipping or the
+        true-trajectory ghost.
+
+    Returns
+    -------
+    str
+        A complete ``<svg>`` element.
+    """
+    low, high = domain
+    right_edge = width - inset
+    plot_width = width - endpoint_width if show_endpoint else width
+    project_x = _projector(x_domain, plot_width, inset)
+    project_up = _projector(domain, height, inset)
+
+    def project_y(value: float) -> float:
+        return height - project_up(value)
+
+    top_edge = project_y(high)
+    bottom_edge = project_y(low)
+    clip_id = _hard_clip_id(width, top_edge, bottom_edge)
+
+    per_trace = [
+        (
+            trace,
+            _band_runs(trace.x, trace.y, trace.lower, trace.upper) if trace.show_ribbon else [],
+            _line_runs(trace.x, trace.y),
+        )
+        for trace in traces
+    ]
+    any_runs = any(band_runs or line_runs for _, band_runs, line_runs in per_trace)
+
+    ghost_parts: list[str] = []
+    parts: list[str] = []
+    trace_spans: list[list[tuple[float, float, str]]] = [[] for _ in per_trace]
+
+    for (trace, band_runs, _), spans in zip(per_trace, trace_spans, strict=True):
+        for run in band_runs:
+            ghost, real, run_spans = _render_band_run(
+                run,
+                low=low,
+                high=high,
+                project_x=project_x,
+                project_y=project_y,
+                color=trace.color,
+                clip_id=clip_id,
+            )
+            ghost_parts.extend(ghost)
+            parts.extend(real)
+            spans.extend(run_spans)
+
+    if ref is not None and any_runs and low <= ref <= high:
+        ref_y = project_y(ref)
+        parts.append(
+            f'<line x1="{inset}" y1="{ref_y:.2f}" x2="{right_edge}" y2="{ref_y:.2f}" '
+            f'stroke="{ref_color}" stroke-width="1" stroke-dasharray="2,2"/>'
+        )
+
+    for (trace, _, line_runs), spans in zip(per_trace, trace_spans, strict=True):
+        for run in line_runs:
+            ghost, real, run_spans = _render_line_run(
+                run,
+                low=low,
+                high=high,
+                project_x=project_x,
+                project_y=project_y,
+                color=trace.color,
+                clip_id=clip_id,
+            )
+            ghost_parts.extend(ghost)
+            parts.extend(real)
+            spans.extend(run_spans)
+
+    for trace, _, line_runs in per_trace:
+        if line_runs and show_endpoint:
+            _, ey = line_runs[-1][-1]
+            ey_px = project_y(_clamp(ey, low, high))
+            label = _clip_label(fmt(ey), max(endpoint_width - 4, 4), 9.0)
+            parts.append(
+                f'<text x="{right_edge}" y="{ey_px + 3:.2f}" fill="{trace.color}" '
+                f'font-size="9" text-anchor="end">{_esc(label)}</text>'
+            )
+
+    cap_parts: list[str] = []
+    for (trace, _, __), spans in zip(per_trace, trace_spans, strict=True):
+        if show_clip_indicators and spans:
+            for start_x, end_x, edge in _merge_spans(spans):
+                edge_y = top_edge if edge == "high" else bottom_edge
+                for dy in (-0.5, 0.5):
+                    cap_parts.append(
+                        f'<line x1="{start_x - 3.0:.2f}" y1="{edge_y + dy:.2f}" '
+                        f'x2="{end_x + 3.0:.2f}" y2="{edge_y + dy:.2f}" '
+                        f'stroke="{trace.color}" stroke-width="0.5" stroke-opacity="0.45"/>'
+                    )
+
+    body = ghost_parts + parts + cap_parts
+    if any(spans for spans in trace_spans):
+        body.insert(
+            0,
+            f'<clipPath id="{clip_id}"><rect x="0" y="{top_edge:.2f}" width="{width}" '
+            f'height="{bottom_edge - top_edge:.2f}"/></clipPath>',
+        )
+    return _svg(width, height, "".join(body))
+
+
 def sparkline_bar(
     x: Sequence[float | None],
     y: Sequence[float | None],
@@ -1152,6 +1366,9 @@ def sparkline_bar(
     stays inside it, since a ribbon can be clamped to a sliver of its true
     width while its point stays comfortably in view.
 
+    A one-trace delegate to `sparkline_multi`; kept for the ~20 existing
+    call sites that pass flat parallel arrays and a single `color`.
+
     Parameters
     ----------
     x, y
@@ -1191,89 +1408,87 @@ def sparkline_bar(
     str
         A complete ``<svg>`` element.
     """
-    low, high = domain
-    right_edge = width - inset
-    plot_width = width - endpoint_width if show_endpoint else width
-    project_x = _projector(x_domain, plot_width, inset)
-    project_up = _projector(domain, height, inset)
+    return sparkline_multi(
+        [Trace(x=x, y=y, lower=lower, upper=upper, color=color, show_ribbon=True, label="")],
+        x_domain=x_domain,
+        domain=domain,
+        ref=ref,
+        ref_color=color,
+        fmt=fmt,
+        width=width,
+        height=height,
+        inset=inset,
+        show_endpoint=show_endpoint,
+        endpoint_width=endpoint_width,
+        show_clip_indicators=show_clip_indicators,
+    )
 
-    def project_y(value: float) -> float:
-        return height - project_up(value)
 
-    top_edge = project_y(high)
-    bottom_edge = project_y(low)
-    clip_id = _hard_clip_id(width, top_edge, bottom_edge)
+_LEGEND_OFFSET = 20.0
+# Vertical space reserved above the axis spine for the swatch+label chip
+# row when `sparkline_axis` is given `legend=`. The existing axis content
+# (ticks, temporal two-tier rows) renders unchanged, wrapped in a
+# translate-down `<g>`, rather than every internal y-coordinate being
+# recomputed against a shifted baseline.
+_LEGEND_SWATCH = 8.0
+_LEGEND_SWATCH_GAP = 4.0
+_LEGEND_CHIP_GAP = 14.0
+_LEGEND_MAX_LABEL_WIDTH = 60.0
 
+
+def _render_legend(
+    entries: Sequence[tuple[str, str]], *, width: int, inset: int, theme: Theme
+) -> list[str]:
+    """Render one swatch+label chip per `(label, color)` entry, left to right.
+
+    Each label is ellipsized to `_LEGEND_MAX_LABEL_WIDTH` so one long name
+    cannot dominate the row; a chip that still would not fit the remaining
+    width -- including every chip after it -- is dropped entirely rather
+    than overflowing the canvas.
+    """
     parts: list[str] = []
-    ghost_parts: list[str] = []
-    raw_spans: list[tuple[float, float, str]] = []
-
-    band_runs = _band_runs(x, y, lower, upper)
-    for run in band_runs:
-        ghost, real, spans = _render_band_run(
-            run,
-            low=low,
-            high=high,
-            project_x=project_x,
-            project_y=project_y,
-            color=color,
-            clip_id=clip_id,
-        )
-        ghost_parts.extend(ghost)
-        parts.extend(real)
-        raw_spans.extend(spans)
-
-    line_runs = _line_runs(x, y)
-
-    if ref is not None and (line_runs or band_runs) and low <= ref <= high:
-        ref_y = project_y(ref)
+    x = float(inset)
+    right = width - inset
+    y_swatch = (_LEGEND_OFFSET - _LEGEND_SWATCH) / 2
+    y_text = _LEGEND_OFFSET / 2 + 3.0
+    for label, color in entries:
+        text = _clip_label(label, _LEGEND_MAX_LABEL_WIDTH, 9.0)
+        text_width = len(text) * 9.0 * _CHAR_WIDTH_RATIO
+        chip_width = _LEGEND_SWATCH + _LEGEND_SWATCH_GAP + text_width
+        if x + chip_width > right:
+            break
         parts.append(
-            f'<line x1="{inset}" y1="{ref_y:.2f}" x2="{right_edge}" y2="{ref_y:.2f}" '
-            f'stroke="{color}" stroke-width="1" stroke-dasharray="2,2"/>'
+            f'<rect x="{x:.2f}" y="{y_swatch:.2f}" width="{_LEGEND_SWATCH:.2f}" '
+            f'height="{_LEGEND_SWATCH:.2f}" fill="{color}"/>'
         )
-
-    for run in line_runs:
-        ghost, real, spans = _render_line_run(
-            run,
-            low=low,
-            high=high,
-            project_x=project_x,
-            project_y=project_y,
-            color=color,
-            clip_id=clip_id,
-        )
-        ghost_parts.extend(ghost)
-        parts.extend(real)
-        raw_spans.extend(spans)
-
-    if line_runs and show_endpoint:
-        _, ey = line_runs[-1][-1]
-        ey_px = project_y(_clamp(ey, low, high))
-        label = _clip_label(fmt(ey), max(endpoint_width - 4, 4), 9.0)
+        text_x = x + _LEGEND_SWATCH + _LEGEND_SWATCH_GAP
         parts.append(
-            f'<text x="{right_edge}" y="{ey_px + 3:.2f}" fill="{color}" '
-            f'font-size="9" text-anchor="end">{label}</text>'
+            f'<text x="{text_x:.2f}" y="{y_text:.2f}" fill="{theme.text}" '
+            f'font-size="9" text-anchor="start">{_esc(text)}</text>'
         )
+        x += chip_width + _LEGEND_CHIP_GAP
+    return parts
 
-    cap_parts: list[str] = []
-    if show_clip_indicators and raw_spans:
-        for start_x, end_x, edge in _merge_spans(raw_spans):
-            edge_y = top_edge if edge == "high" else bottom_edge
-            for dy in (-0.5, 0.5):
-                cap_parts.append(
-                    f'<line x1="{start_x - 3.0:.2f}" y1="{edge_y + dy:.2f}" '
-                    f'x2="{end_x + 3.0:.2f}" y2="{edge_y + dy:.2f}" '
-                    f'stroke="{color}" stroke-width="0.5" stroke-opacity="0.45"/>'
-                )
 
-    body = ghost_parts + parts + cap_parts
-    if raw_spans:
-        body.insert(
-            0,
-            f'<clipPath id="{clip_id}"><rect x="0" y="{top_edge:.2f}" width="{width}" '
-            f'height="{bottom_edge - top_edge:.2f}"/></clipPath>',
-        )
-    return _svg(width, height, "".join(body))
+def _wrap_axis_with_legend(
+    width: int,
+    content_height: int,
+    body: str,
+    *,
+    legend: Sequence[tuple[str, str]] | None,
+    inset: int,
+    theme: Theme,
+) -> str:
+    """Finish `sparkline_axis`: prepend a legend row and grow `height`, or return `body` as-is."""
+    if not legend:
+        return _svg(width, content_height, body)
+    chips = _render_legend(legend, width=width, inset=inset, theme=theme)
+    offset = _LEGEND_OFFSET
+    return _svg(
+        width,
+        content_height + int(offset),
+        "".join(chips) + f'<g transform="translate(0, {offset:.2f})">{body}</g>',
+    )
 
 
 def sparkline_axis(
@@ -1288,6 +1503,7 @@ def sparkline_axis(
     target_ticks: int = 4,
     show_endpoint: bool = True,
     endpoint_width: int = 44,
+    legend: Sequence[tuple[str, str]] | None = None,
 ) -> str:
     """Render the shared x-axis footer for a column of sparkline rows.
 
@@ -1322,6 +1538,13 @@ def sparkline_axis(
         Must be given the same values passed to `sparkline_bar` for the same
         rows: both carve the same fixed reserve out of `width` so ticks
         project over the identical inner width and land under their points.
+    legend
+        `(label, color)` pairs for a series-overlay column, drawn as a
+        swatch+label chip row above the axis spine; `height` grows by the
+        reserved offset when set. `None` (the default) omits the row
+        entirely and leaves `height` unchanged. Ticks project over the
+        same inner width either way -- the legend only adds vertical
+        space, never changes horizontal geometry.
 
     Returns
     -------
@@ -1374,7 +1597,14 @@ def sparkline_axis(
                             theme=theme,
                         )
                     )
-                    return _svg(width, height + int(_SUPER_ROW_OFFSET), "".join(parts))
+                    return _wrap_axis_with_legend(
+                        width,
+                        height + int(_SUPER_ROW_OFFSET),
+                        "".join(parts),
+                        legend=legend,
+                        inset=inset,
+                        theme=theme,
+                    )
                 # No super row could be built -- nothing coarser for a
                 # year-granular sub-row, or (in principle) a collision
                 # `_resolve_collisions` can't clear by dropping an edge.
@@ -1406,4 +1636,6 @@ def sparkline_axis(
             theme=theme,
         )
     )
-    return _svg(width, height, "".join(parts))
+    return _wrap_axis_with_legend(
+        width, height, "".join(parts), legend=legend, inset=inset, theme=theme
+    )

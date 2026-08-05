@@ -234,8 +234,20 @@ def assemble_rows(
         for name in display_columns:
             cells[name].append("")
 
-    previous_row_key: Any = None
+    previous_row_key_by_group: dict[Any, Any] = {}
     for position, (row_key, nest_key) in enumerate(grid.ordered):
+        group = grid.row_group[position]
+        # `great_tables`' `groupname_col` (see `render.py`) collects rows
+        # into contiguous per-group blocks for *display*, independent of
+        # this row-key-major physical order (`grid.ordered`). A row key
+        # spanning more than one group -- e.g. "Revenue" appearing under
+        # both "US" and "EU" -- is therefore not adjacent to its own
+        # prior occurrence once grouped; tracking "first occurrence"
+        # per group (rather than one running `previous_row_key`) keeps
+        # the label shown once per group block, matching what actually
+        # renders, instead of blanking every occurrence after the first
+        # anywhere in the table.
+        previous_row_key = previous_row_key_by_group.get(group)
         first_of_key = row_key != previous_row_key
         if first_of_key and previous_row_key is not None:
             divider_rows.append(len(layout_rows))
@@ -243,8 +255,8 @@ def assemble_rows(
             band_rows.append(len(layout_rows))
         layout_rows.append(f"<b>{row_key}</b>" if first_of_key else "")
         layout_nest.append("" if nest_key is None else str(nest_key))
-        layout_group.append(grid.row_group[position])
-        previous_row_key = row_key
+        layout_group.append(group)
+        previous_row_key_by_group[group] = row_key
 
         for name in display_columns:
             cells[name].append(cell_values[name][position])

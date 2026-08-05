@@ -123,3 +123,40 @@ def test_other_themes_have_no_border_color_override():
     assert BLUE.border_color is None
     assert COLORBLIND.border_color is None
     assert MONO.border_color is None
+
+
+def test_series_color_cycles_past_palette_end():
+    n = len(DEFAULT.series_palette)
+    assert DEFAULT.series_color(n) == DEFAULT.series_color(0)
+    assert DEFAULT.series_color(n + 2) == DEFAULT.series_color(2)
+
+
+def test_each_preset_series_palette_is_internally_distinct():
+    for theme in (BLUE, COLORBLIND, MONO, TEXTUAL):
+        assert len(set(theme.series_palette)) == len(theme.series_palette)
+
+
+def test_mono_series_palette_is_grayscale_only():
+    for hex_color in MONO.series_palette:
+        r, g, b = (int(hex_color[i : i + 2], 16) for i in (1, 3, 5))
+        assert r == g == b
+
+
+def test_series_palette_never_reuses_a_theme_own_role_colors():
+    # A multi-series sparkline arm rendered in a role colour would visually
+    # imply a value judgement about that arm -- exactly what the docstring
+    # says the series scale must not carry.
+    for theme in (BLUE, COLORBLIND, MONO, TEXTUAL):
+        role_colors = {theme.favorable, theme.unfavorable, theme.inconclusive, theme.neutral}
+        assert role_colors.isdisjoint(theme.series_palette)
+
+
+def test_series_color_rejects_empty_palette():
+    empty = dataclasses.replace(DEFAULT, series_palette=())
+    with pytest.raises(ValueError, match="must not be empty"):
+        empty.series_color(0)
+
+
+def test_series_color_rejects_negative_index():
+    with pytest.raises(ValueError, match="non-negative"):
+        DEFAULT.series_color(-1)
