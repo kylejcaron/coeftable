@@ -47,6 +47,11 @@ class Theme:
         banner light while still drawing visible chrome rules.  Does
         *not* affect ``rule``, which styles lighter dividers within the
         body-row region (nest-key separators, forest-plot axis lines).
+    series_palette
+        Categorical colours cycled across the arms of a multi-series
+        sparkline (see ``series_color``). Independent of ``Role``: a
+        role encodes a value judgement about one interval, this scale
+        encodes arm identity and carries no such judgement.
     """
 
     favorable: str = "#55A868"
@@ -70,6 +75,16 @@ class Theme:
     na_text: str = "\u2014"
     border_style: Literal["boxed", "minimal"] = "boxed"
     border_color: str | None = None
+    series_palette: tuple[str, ...] = (
+        "#4C72B0",
+        "#DD8452",
+        "#55A868",
+        "#C44E52",
+        "#8172B3",
+        "#937860",
+        "#DA8BC3",
+        "#8C8C8C",
+    )
 
     def color(self, role: Role) -> str:
         """Return the colour registered for `role`.
@@ -95,6 +110,25 @@ class Theme:
                 return self.neutral
             case _:
                 raise ValueError(f"Unknown role: {role!r}")
+
+    def series_color(self, index: int) -> str:
+        """Return the categorical colour for series `index`.
+
+        Cycles modulo ``len(series_palette)`` so an arbitrary number of
+        series always resolves to a colour.
+
+        Parameters
+        ----------
+        index
+            Zero-based, table-wide position of the series in its
+            resolved order.
+
+        Returns
+        -------
+        str
+            Hex colour string.
+        """
+        return self.series_palette[index % len(self.series_palette)]
 
 
 def role_for(
@@ -146,6 +180,16 @@ COLORBLIND = Theme(
     header_bg="#0072B2",
     column_label_bg="#7FB8DC",
     band="#EEF5FA",
+    # Okabe-Ito: colour-blind-safe under all common CVD types.
+    series_palette=(
+        "#E69F00",
+        "#56B4E9",
+        "#009E73",
+        "#F0E442",
+        "#0072B2",
+        "#D55E00",
+        "#CC79A7",
+    ),
 )
 
 MONO = Theme(
@@ -162,6 +206,14 @@ MONO = Theme(
     header_bg="#343538",
     column_label_bg="#72767E",
     band="#F4F4F4",
+    # Grayscale ramp -- MONO never sprouts hues, even for series identity.
+    series_palette=(
+        "#1A1A1A",
+        "#4D4D4D",
+        "#808080",
+        "#A6A6A6",
+        "#CCCCCC",
+    ),
 )
 
 TEXTUAL = Theme(
@@ -183,6 +235,14 @@ TEXTUAL = Theme(
     text="#212121",
     border_style="minimal",
     border_color="#A8A8A8",
+    series_palette=(
+        "#37474F",
+        "#8D6E63",
+        "#5C6BC0",
+        "#7CB342",
+        "#AB47BC",
+        "#546E7A",
+    ),
 )
 
 
