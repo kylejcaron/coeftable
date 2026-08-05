@@ -341,9 +341,10 @@ def _clamp_domain(
     Requires `ref` inside `domain` -- guaranteed by `_bucket_domain`'s one
     call site, which only ever clamps a `_pad_domain` or `_robust_domain`
     result (both always forced to contain `ref`). Raises `ValueError` when
-    `ref is None`: an unanchored domain has no ceiling to clamp to. Callers
-    reject `ref=None` combined with a `max_domain` earlier and more
-    legibly (`validate_columns`); this is a defensive invariant only.
+    `ref is None`: an unanchored domain has no ceiling to clamp to. No
+    public entry point can reach this combination today -- `Sparkline.ref`
+    is still `float`, not `float | None` -- so this is a defensive
+    invariant for the widened type, not a reachable runtime path yet.
     `max_domain >= 0` is a documented but unenforced precondition: nothing
     validates the sign of `Sparkline`'s `max_domain` field, and a negative
     value inverts the result (`low > high`) rather than raising.
