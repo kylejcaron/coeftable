@@ -9,6 +9,7 @@ import pytest
 from coeftable.format import CIStyle, DateAxis
 from coeftable.frame import resolve
 from coeftable.spec import (
+    Cell,
     CoefTable,
     ColumnNotFoundError,
     Sparkline,
@@ -16,6 +17,7 @@ from coeftable.spec import (
     _bucket_domain,
     _clamp_domain,
     _pad_domain,
+    _resolve_role,
     _robust_domain,
     validate_columns,
 )
@@ -556,6 +558,237 @@ def test_robust_domain_forces_ref_into_the_domain():
     values = [10.0, 10.5, 9.5, 10.2, 9.8, 10.1]
     low, high = _robust_domain(values, 0.0)
     assert low <= 0.0 <= high
+
+
+def test_pad_domain_ref_none_excludes_zero_when_data_is_far_from_it():
+    low, high = _pad_domain([282.3, 378.2], ref=None)
+    assert (low, high) == pytest.approx(
+        (282.3 - (378.2 - 282.3) * 0.08, 378.2 + (378.2 - 282.3) * 0.08)
+    )
+    assert not (low <= 0.0 <= high)
+
+
+def test_pad_domain_ref_zero_still_forces_inclusion():
+    low, high = _pad_domain([282.3, 378.2], ref=0.0)
+    assert low <= 0.0 <= high
+
+
+def test_pad_domain_ref_none_empty_values_falls_back_to_unit_domain():
+    assert _pad_domain([], ref=None) == (-1.0, 1.0)
+
+
+def test_pad_domain_ref_none_single_value_pads_by_one():
+    assert _pad_domain([5.0], ref=None) == (4.0, 6.0)
+
+
+def test_pad_domain_symmetric_requires_ref():
+    with pytest.raises(ValueError):
+        _pad_domain([1.0, 2.0], ref=None, symmetric=True)
+
+
+def test_robust_domain_ref_none_fences_outliers_and_excludes_zero():
+    values = [282.3, 378.2, 300.1, 350.0, 900.0]  # 900.0 is the outlier
+    low, high = _robust_domain(values, ref=None)
+    assert not (900.0 <= high)
+    assert not (low <= 0.0 <= high)
+
+
+def test_clamp_domain_requires_ref():
+    with pytest.raises(ValueError):
+        _clamp_domain((-3.0, 4.0), ref=None, max_domain=1.0)
+
+
+def _stub_cell(*, direction="higher_is_better", color_rule=None):
+    return Cell(
+        prepared=None,  # ty: ignore[invalid-argument-type]
+        index=0,
+        row_key=None,
+        group=None,
+        split=None,
+        direction=direction,
+        color_rule=color_rule,
+        theme=DEFAULT,
+    )
+
+
+def test_resolve_role_ref_none_without_color_rule_is_neutral():
+    ctx = _stub_cell()
+    assert _resolve_role(ctx, 1.0, 0.5, 1.5, None) == "neutral"
+
+
+def test_resolve_role_ref_none_forwards_to_color_rule_override():
+    seen_refs = []
+
+    def rule(value, low, high, ref):
+        seen_refs.append(ref)
+        return "unfavorable"
+
+    ctx = _stub_cell(color_rule=rule)
+    assert _resolve_role(ctx, 1.0, 0.5, 1.5, None) == "unfavorable"
+    assert seen_refs == [None]
+
+
+# Absolute-valued series, two row groups, no value anywhere near 0 -- the
+# motivating case for ref=None: with a forced-zero domain this data would
+# be compressed into a sliver of each cell.
+_ABS_GROUP_RAW = {
+    "area": ["Core", "Core", "Ops", "Ops"],
+    "metric": ["Revenue", "Users", "Latency", "Errors"],
+    "value": [
+        [282.3, 300.1, 320.0],
+        [350.0, 360.0, 378.2],
+        [900.0, 910.0, 920.0],
+        [950.0, 960.0, 970.0],
+    ],
+}
+
+
+def test_sparkline_ref_none_end_to_end_draws_no_line_and_colours_neutral():
+    ref_none = CoefTable(pl.DataFrame(_ABS_GROUP_RAW), rows="metric", groups="area").sparkline(
+        "Trend", value="value", ref=None, scale="row_group", show_axis=False
+    )
+    ref_zero = CoefTable(pl.DataFrame(_ABS_GROUP_RAW), rows="metric", groups="area").sparkline(
+        "Trend", value="value", ref=0.0, scale="row_group", show_axis=False
+    )
+    none_plots = nw.from_native(resolve(ref_none).frame)["Trend"].to_list()
+    zero_plots = nw.from_native(resolve(ref_zero).frame)["Trend"].to_list()
+
+    # ref=None: no dashed reference line anywhere, and every cell resolves
+    # neutral -- "favorable" has no meaning without a reference.
+    assert all("stroke-dasharray" not in p for p in none_plots)
+    assert all(DEFAULT.color("neutral") in p for p in none_plots)
+    assert all(DEFAULT.color("favorable") not in p for p in none_plots)
+    assert all(DEFAULT.color("unfavorable") not in p for p in none_plots)
+
+    # ref=0.0 still forces the domain to include 0 and draws the line --
+    # unaffected by the widened type.
+    assert all("stroke-dasharray" in p for p in zero_plots)
+
+
+def test_sparkline_ref_none_color_rule_override_still_resolves():
+    def rule(value, low, high, ref):
+        return "unfavorable"
+
+    table = CoefTable(
+        pl.DataFrame(_ABS_GROUP_RAW), rows="metric", groups="area", color_rule=rule
+    ).sparkline("Trend", value="value", ref=None, show_axis=False)
+    plots = nw.from_native(resolve(table).frame)["Trend"].to_list()
+    assert all(DEFAULT.color("unfavorable") in p for p in plots)
+
+
+def test_sparkline_ref_none_end_to_end_with_autoscale_robust():
+    # ref=None's domain path (_pad_domain -> _robust_domain -> _bucket_domain)
+    # is unit-tested directly; this proves the composition survives through
+    # the full Sparkline.prepare/cell wiring too. Values sit far from 0
+    # (~279-285) with one outlier the fence should discount.
+    raw = {"metric": ["A"], "lift": [[282.3, 285.0, 279.0, 900.0, 281.0, 283.0]]}
+    table = CoefTable(pl.DataFrame(raw), rows="metric").sparkline(
+        "Trend", value="lift", ref=None, autoscale="robust", show_axis=False
+    )
+    plot = nw.from_native(resolve(table).frame)["Trend"].to_list()[0]
+    assert "stroke-dasharray" not in plot
+    assert DEFAULT.color("neutral") in plot
+
+
+def test_sparkline_max_ylim_with_ref_none_raises_spec_error():
+    with pytest.raises(SpecError, match="Trend"):
+        CoefTable(pl.DataFrame(_ABS_GROUP_RAW), rows="metric", groups="area").sparkline(
+            "Trend", value="value", ref=None, max_ylim=20.0
+        )
+
+
+def _strip_stroke_color(svg: str) -> str:
+    """Normalize a rendered SVG's stroke colour so geometry-only diffs are comparable."""
+    return re.sub(r'stroke="#[0-9A-Fa-f]{6}"', 'stroke="X"', svg)
+
+
+def test_sparkline_show_ref_false_domain_matches_ref_none_domain():
+    # show_ref=False routes the same ref=None domain path as Task 1 --
+    # geometry (everything but colour) must be identical to ref=None.
+    show_ref_false = CoefTable(
+        pl.DataFrame(_ABS_GROUP_RAW), rows="metric", groups="area"
+    ).sparkline(
+        "Trend", value="value", ref=0.0, show_ref=False, scale="row_group", show_axis=False
+    )
+    ref_none = CoefTable(pl.DataFrame(_ABS_GROUP_RAW), rows="metric", groups="area").sparkline(
+        "Trend", value="value", ref=None, scale="row_group", show_axis=False
+    )
+    show_ref_false_plots = nw.from_native(resolve(show_ref_false).frame)["Trend"].to_list()
+    ref_none_plots = nw.from_native(resolve(ref_none).frame)["Trend"].to_list()
+    assert [_strip_stroke_color(p) for p in show_ref_false_plots] == [
+        _strip_stroke_color(p) for p in ref_none_plots
+    ]
+
+
+def test_sparkline_show_ref_false_still_colours_against_ref():
+    # Unlike ref=None, show_ref=False keeps ref as a colour anchor: "Up"'s
+    # last point sits clearly above ref=0.0, so it still resolves
+    # favorable, not neutral.
+    table = CoefTable(pl.DataFrame(ROLE_RAW), rows="metric").sparkline(
+        "Trend", value="lift", ci=("lift_lb", "lift_ub"), ref=0.0, show_ref=False
+    )
+    plots = nw.from_native(resolve(table).frame)["Trend"].to_list()
+    assert DEFAULT.color("favorable") in plots[0]
+    assert DEFAULT.color("neutral") not in plots[0]
+
+
+def test_sparkline_show_ref_true_default_is_unchanged():
+    explicit = CoefTable(pl.DataFrame(ROLE_RAW), rows="metric").sparkline(
+        "Trend", value="lift", ci=("lift_lb", "lift_ub"), ref=0.0, show_ref=True
+    )
+    default = role_table()
+    assert (
+        nw.from_native(resolve(explicit).frame)["Trend"].to_list()
+        == nw.from_native(resolve(default).frame)["Trend"].to_list()
+    )
+
+
+def test_sparkline_show_ref_false_is_a_noop_when_ref_is_none():
+    with_show_ref_false = CoefTable(
+        pl.DataFrame(_ABS_GROUP_RAW), rows="metric", groups="area"
+    ).sparkline("Trend", value="value", ref=None, show_ref=False, show_axis=False)
+    without = CoefTable(pl.DataFrame(_ABS_GROUP_RAW), rows="metric", groups="area").sparkline(
+        "Trend", value="value", ref=None, show_ref=True, show_axis=False
+    )
+    assert (
+        nw.from_native(resolve(with_show_ref_false).frame)["Trend"].to_list()
+        == nw.from_native(resolve(without).frame)["Trend"].to_list()
+    )
+
+
+def test_sparkline_max_ylim_with_show_ref_false_raises_the_same_spec_error_as_ref_none():
+    with pytest.raises(SpecError, match="Trend") as none_exc:
+        CoefTable(pl.DataFrame(_ABS_GROUP_RAW), rows="metric", groups="area").sparkline(
+            "Trend", value="value", ref=None, max_ylim=20.0
+        )
+    with pytest.raises(SpecError, match="Trend") as show_ref_exc:
+        CoefTable(pl.DataFrame(_ABS_GROUP_RAW), rows="metric", groups="area").sparkline(
+            "Trend", value="value", ref=0.0, show_ref=False, max_ylim=20.0
+        )
+    assert str(none_exc.value) == str(show_ref_exc.value)
+
+
+def test_sparkline_max_ylim_with_ref_none_raises_even_when_ylim_makes_it_inert():
+    # ylim is an absolute override -- _bucket_domain returns it before
+    # max_ylim's ceiling is ever consulted, so max_ylim has no runtime
+    # effect here. It is still rejected: the spec is contradictory on its
+    # face, regardless of whether ylim happens to make the contradiction
+    # inert.
+    with pytest.raises(SpecError, match="Trend"):
+        CoefTable(pl.DataFrame(_ABS_GROUP_RAW), rows="metric", groups="area").sparkline(
+            "Trend", value="value", ref=None, ylim=(0.0, 500.0), max_ylim=20.0
+        )
+
+
+def test_clamp_domain_would_invert_without_the_anchored_domain_guard():
+    # Documents *why* validate_columns rejects max_ylim + an unanchored
+    # domain (ref=None or show_ref=False): _clamp_domain assumes ref sits
+    # inside domain (guaranteed when _pad_domain/_robust_domain anchor to
+    # it). Feed it a domain that never had ref forced in -- exactly what
+    # an unanchored max_ylim would produce -- and the ceiling clamp
+    # inverts instead of narrowing.
+    low, high = _clamp_domain((900.0, 970.0), ref=0.0, max_domain=20.0)
+    assert low > high
 
 
 def test_bucket_domain_tight_is_the_default_and_matches_pad_domain():

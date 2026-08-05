@@ -266,32 +266,50 @@ def _domain_key(column: Forest | Sparkline, row_key: Any, group: Any, split: Any
 
 
 def _resolve_role(
-    ctx: Cell, value: float | None, low: float | None, high: float | None, ref: float
+    ctx: Cell, value: float | None, low: float | None, high: float | None, ref: float | None
 ) -> Role:
-    """Resolve a cell's colour role: `ctx.color_rule` when set, else `role_for`."""
+    """Resolve a cell's colour role: `ctx.color_rule` when set, else `role_for`.
+
+    A `None` reference is forwarded unchanged: `ctx.color_rule`, documented
+    as a total override, decides for itself what to do with it; otherwise
+    `role_for` returns `"neutral"`, since "favorable" has no definition
+    without a reference.
+    """
     if ctx.color_rule is not None:
         return ctx.color_rule(value, low, high, ref)
     return role_for(low, high, ref, ctx.direction)
 
 
 def _pad_domain(
-    values: list[float], ref: float, *, symmetric: bool = False
+    values: list[float], ref: float | None, *, symmetric: bool = False
 ) -> tuple[float, float]:
+    """Pad `values` to a domain, forcing inclusion of `ref` unless `ref is None`.
+
+    `ref=None` means there is no reference to anchor the domain to: the
+    domain fits `values` alone, with no forced inclusion of any point.
+    `symmetric=True` requires a reference to centre on and raises
+    `ValueError` when `ref is None`; the later `ref is not None` guard on
+    the `symmetric` branch below is runtime-unreachable given that raise,
+    but stays for the type checker to narrow `ref` before the arithmetic.
+    """
+    if symmetric and ref is None:
+        raise ValueError("_pad_domain: symmetric=True requires ref to be set, got ref=None")
     if not values:
-        return (ref - 1.0, ref + 1.0)
+        return (-1.0, 1.0) if ref is None else (ref - 1.0, ref + 1.0)
     low, high = min(values), max(values)
-    low, high = min(low, ref), max(high, ref)
+    if ref is not None:
+        low, high = min(low, ref), max(high, ref)
     if low == high:
         return (low - 1.0, high + 1.0)
     margin = (high - low) * 0.08
     low, high = low - margin, high + margin
-    if symmetric:
+    if symmetric and ref is not None:
         half = max(ref - low, high - ref)
         return (ref - half, ref + half)
     return (low, high)
 
 
-def _robust_domain(values: list[float], ref: float) -> tuple[float, float]:
+def _robust_domain(values: list[float], ref: float | None) -> tuple[float, float]:
     """Pad an IQR/Tukey-fenced domain to `values`, discounting outliers.
 
     Falls back to `_pad_domain`'s plain min/max fit entirely -- not a
@@ -318,24 +336,29 @@ def _robust_domain(values: list[float], ref: float) -> tuple[float, float]:
 
 
 def _clamp_domain(
-    domain: tuple[float, float], ref: float, max_domain: float
+    domain: tuple[float, float], ref: float | None, max_domain: float
 ) -> tuple[float, float]:
     """Narrow `domain` to fit inside `ref - max_domain, ref + max_domain`; never widens it.
 
     Requires `ref` inside `domain` -- guaranteed by `_bucket_domain`'s one
     call site, which only ever clamps a `_pad_domain` or `_robust_domain`
-    result (both always forced to contain `ref`). `max_domain >= 0` is a
-    documented but unenforced precondition: nothing validates the sign of
-    `Sparkline`'s `max_domain` field, and a negative value inverts the
-    result (`low > high`) rather than raising.
+    result (both always forced to contain `ref`). Raises `ValueError` when
+    `ref is None`: an unanchored domain has no ceiling to clamp to. This
+    is a defensive invariant, not a reachable runtime path -- `validate_columns`
+    rejects a `Sparkline`'s `max_ylim` combined with `ref=None` earlier and
+    more legibly, naming the column. Likewise `max_domain <= 0` cannot
+    reach here: `validate_columns` rejects a non-positive `max_ylim`
+    before `_bucket_domain` ever calls this function.
     """
+    if ref is None:
+        raise ValueError("_clamp_domain: max_domain requires ref to be set, got ref=None")
     low, high = domain
     return (max(low, ref - max_domain), min(high, ref + max_domain))
 
 
 def _bucket_domain(
     values: list[float],
-    ref: float,
+    ref: float | None,
     *,
     override: tuple[float, float] | None,
     max_domain: float | None,
@@ -623,7 +646,12 @@ class Sparkline:
         columns on it instead of list-valued columns on the main frame.
     ref
         Reference value for the dashed horizontal line and role
-        resolution.
+        resolution. `None` means the series has no reference: no dashed
+        line, no forced domain inclusion, and every cell resolves
+        `theme.neutral` (a `color_rule`, if set, still decides for
+        itself). Rejected together with `max_ylim`, which has no anchor
+        to clamp around without a reference. See `show_ref` for keeping
+        `ref` as a colour anchor while dropping it from the plot itself.
     scale
         Which set of rows share a y-domain. Defaults to `"row"`, the
         opposite of `Forest`'s `"table"` default -- sparkline rows are
@@ -635,9 +663,12 @@ class Sparkline:
         Half-width ceiling around `ref` for the auto-computed domain --
         `max_ylim=20` clamps to `(ref - 20, ref + 20)`. Only narrows: a
         bucket whose natural domain already fits inside the ceiling
-        renders unchanged. Applies per `scale` bucket, composing with it
-        rather than overriding it. Ignored when `ylim` is set --
-        `ylim` is an absolute override and always wins.
+        renders unchanged. Has no effect when `ylim` is set -- `ylim` is
+        an absolute override and always wins -- but combining it with
+        `ref=None` or `show_ref=False` still raises `SpecError`, even
+        then: there is no anchor for `max_ylim` to mean anything, so the
+        spec is rejected as contradictory rather than silently accepted
+        because `ylim` happens to make it inert.
     autoscale
         Strategy for the auto-computed domain when `ylim` is not set.
         `"tight"` (default) fits tightly to the exact min/max of the
@@ -663,6 +694,19 @@ class Sparkline:
         Emit a footer axis row for the column. x is always shared
         table-wide, so at most one axis row is ever emitted for the whole
         column, regardless of `scale`.
+    show_ref
+        Whether `ref` drives the rendered plot, not just colour. Three
+        resulting states: `ref=0.0` (default) draws the dashed line and
+        forces the domain to contain it; `ref=0.0, show_ref=False` draws
+        no line and frees the domain, while colour still resolves
+        against `0.0`; `ref=None` has no reference at all, so colour is
+        always neutral. `show_ref=False` is a deliberate trade: a mark
+        can claim "entirely above the reference" while the reference
+        sits off-canvas, so the reader cannot verify the claim from the
+        plot alone -- opt in only when that's acceptable. No-op when
+        `ref is None`, since there is nothing to show either way.
+        Raises `SpecError` together with `max_ylim`, for the same reason
+        `ref=None` does: no anchored domain to clamp around.
     show_endpoint
         Draw the last point's value as a text label.
     endpoint_width
@@ -688,7 +732,8 @@ class Sparkline:
     ci: tuple[str, str] | None = None
     x: str | None = None
     data: Any | None = None
-    ref: float = 0.0
+    ref: float | None = 0.0
+    show_ref: bool = True
     scale: Scale = "row"
     ylim: tuple[float, float] | None = None
     max_ylim: float | None = None
@@ -771,10 +816,11 @@ class Sparkline:
             x_values.extend(_finite(series.x))
             x_temporal = x_temporal or series.x_temporal
 
+        plot_ref = self.ref if self.show_ref else None
         domains = {
             key: _bucket_domain(
                 vals,
-                self.ref,
+                plot_ref,
                 override=self.ylim,
                 max_domain=self.max_ylim,
                 autoscale=self.autoscale,
@@ -818,7 +864,7 @@ class Sparkline:
             series.upper,
             x_domain=state.x_domain,
             domain=state.domains[key],
-            ref=self.ref,
+            ref=self.ref if self.show_ref else None,
             color=ctx.theme.color(role),
             fmt=self.fmt,
             width=self.width,
@@ -859,8 +905,9 @@ def validate_columns(columns: tuple[Column, ...]) -> None:
         When no columns are declared, labels collide, a `Forest` names an
         undeclared estimate, a `Forest` is bound to a CI-less estimate, a
         `Sparkline`'s `ci` is not a `(lower, upper)` pair, an explicit
-        `domain` is not strictly increasing, or a `Sparkline`'s
-        `max_domain` is not positive.
+        `domain` is not strictly increasing, a `Sparkline`'s `max_domain`
+        is not positive, or a `Sparkline` sets `max_ylim` without an
+        anchored domain (`ref=None` or `show_ref=False`).
     """
     if not columns:
         raise SpecError("Table has no columns; declare at least one.")
@@ -903,10 +950,21 @@ def validate_columns(columns: tuple[Column, ...]) -> None:
                 f"{kind} column {column.label!r} ylim must be strictly increasing "
                 f"(low, high); got {column.ylim!r}."
             )
-        if isinstance(column, Sparkline) and column.max_ylim is not None and column.max_ylim <= 0:
-            raise SpecError(
-                f"Sparkline column {column.label!r} max_ylim must be > 0; got {column.max_ylim!r}."
-            )
+        if isinstance(column, Sparkline) and column.max_ylim is not None:
+            if column.max_ylim <= 0:
+                raise SpecError(
+                    f"Sparkline column {column.label!r} max_ylim must be > 0; "
+                    f"got {column.max_ylim!r}."
+                )
+            if column.ref is None or not column.show_ref:
+                raise SpecError(
+                    f"Sparkline column {column.label!r} sets max_ylim with no domain "
+                    "anchor: ref=None has no reference, and show_ref=False keeps ref "
+                    "set but hides it from the plot. max_ylim is a half-width ceiling "
+                    "around ref -- without an anchor it can exclude the data entirely "
+                    "rather than merely narrow it. Rejected even when ylim would make "
+                    "max_ylim inert, the same as an out-of-range max_ylim."
+                )
 
 
 class CoefTable:
@@ -933,9 +991,16 @@ class CoefTable:
         Sugar declaring a single `Estimate` labelled ``"Estimate"``, prepended
         before any `columns` entries.
     direction
-        Which side of a reference counts as favorable, table-wide or per row key.
+        Which side of a reference counts as favorable, table-wide or per
+        row key. Silently has no effect on a `Sparkline` column resolved
+        with `ref=None`, which always colours `"neutral"` regardless of
+        `direction` -- there is no reference for "favorable" to mean
+        anything against.
     color_rule
-        Callable overriding role resolution entirely.
+        Callable overriding role resolution entirely. Must accept a
+        `None` reference: a `Sparkline` column using `ref=None` calls it
+        with `ref=None`, same as any other value -- it decides what that
+        means, since the built-in `role_for` cannot.
     theme
         Colour and typography.
     title, subtitle
@@ -1125,7 +1190,8 @@ class CoefTable:
         ci: tuple[str, str] | None = None,
         x: str | None = None,
         data: Any | None = None,
-        ref: float = 0.0,
+        ref: float | None = 0.0,
+        show_ref: bool = True,
         scale: Scale = "row",
         ylim: tuple[float, float] | None = None,
         max_ylim: float | None = None,
@@ -1160,7 +1226,21 @@ class CoefTable:
             main frame.
         ref
             Reference value for the dashed horizontal line and role
-            resolution.
+            resolution. `None` means the series has no reference: no
+            dashed line, no forced domain inclusion, and every cell
+            resolves `theme.neutral` (a `color_rule`, if set, still
+            decides for itself). Rejected together with `max_ylim`. See
+            `show_ref` for keeping `ref` as a colour anchor while
+            dropping it from the plot itself.
+        show_ref
+            Whether `ref` drives the rendered plot, not just colour.
+            `ref=0.0, show_ref=False` draws no dashed line and frees the
+            domain, while colour still resolves against `0.0` -- unlike
+            `ref=None`, which colours neutral. A deliberate trade: a mark
+            can then claim "entirely above the reference" while the
+            reference sits off-canvas, so the reader cannot verify the
+            claim from the plot alone. No-op when `ref is None`. Rejected
+            together with `max_ylim`, for the same reason `ref=None` is.
         scale
             Which set of rows share a y-domain.
         ylim
@@ -1169,7 +1249,11 @@ class CoefTable:
             Half-width ceiling around `ref` for the auto-computed domain,
             e.g. `max_ylim=20` clamps to `(ref - 20, ref + 20)`. Only
             narrows -- a row whose natural domain already fits inside the
-            ceiling is unaffected. Ignored when `ylim` is set.
+            ceiling is unaffected. Has no effect when `ylim` is set --
+            `ylim` always wins -- but combining it with `ref=None` or
+            `show_ref=False` still raises `SpecError`: the spec is
+            rejected as contradictory even when `ylim` happens to make
+            `max_ylim` inert.
         autoscale
             Strategy for the auto-computed domain when `ylim` is not set.
             `"tight"` (default) fits tightly to the pooled values, same as
@@ -1220,6 +1304,7 @@ class CoefTable:
                 x=x,
                 data=data,
                 ref=ref,
+                show_ref=show_ref,
                 scale=scale,
                 ylim=ylim,
                 max_ylim=max_ylim,
