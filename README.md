@@ -213,8 +213,13 @@ companion-frame choice used elsewhere in coeftable:
 arrives in: a SQL export, a dbt model, an experimentation platform's daily
 metrics table. Pass `data=` a separate frame with one row per point, and
 `value` / `ci` / `x` name *scalar* columns on it. coeftable groups the
-companion frame by the table's `rows` (+ `nest`, + `split_columns`) keys
-and collapses each group into a series internally:
+companion frame by the table's `rows` (+ `nest`, + `groups`, +
+`split_columns`) keys and collapses each group into a series internally.
+`groups` participates only when `data` actually carries that column, so a
+companion frame keyed on the row alone stays valid. The one case that needs
+it is a row label appearing under more than one group: without the group
+column in `data` those rows are indistinguishable, so coeftable reports it
+rather than serving every section the same merged series.
 
 ```python
 import datetime as dt
