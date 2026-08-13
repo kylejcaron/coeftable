@@ -206,11 +206,11 @@ def resolve(table: CoefTable) -> Resolved:
 
     # Cell pass: one call to `column.cell` per (row, split, column).
     cell_values: dict[str, list[str]] = {name: [] for name in display_columns}
-    for position, (row_key, nest_key) in enumerate(grid.ordered):
+    for position, (row_key, nest_key, identity_group) in enumerate(grid.ordered):
         direction = table.direction_for(str(row_key))
         group = grid.row_group[position]
         for split in grid.splits:
-            index = grid.source_index.get(((row_key, nest_key), split))
+            index = grid.source_index.get(((row_key, nest_key, identity_group), split))
             for column, prep in zip(table.columns, prepared, strict=True):
                 name = output_name(column, split)
                 if index is None:
@@ -239,7 +239,7 @@ def resolve(table: CoefTable) -> Resolved:
             key_fn = prep.footer_key
             footer_keys[column.label] = [
                 [key_fn(row_key, group, split) for split in grid.splits]
-                for (row_key, _nest), group in zip(grid.ordered, grid.row_group, strict=True)
+                for (row_key, _nest, group) in grid.ordered
             ]
     # A footer's domain is table-wide only when the column itself says so
     # (see `Prepared.shared_footer`) -- inferring it from `scale` would be
