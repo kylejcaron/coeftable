@@ -341,6 +341,31 @@ def test_layout_column_collision_raises_spec_error():
         resolve(table)
 
 
+@pytest.mark.parametrize(
+    ("kwargs", "expected"),
+    [
+        ({"rows": "metric", "nest": "metric"}, "rows= and nest="),
+        ({"rows": "metric", "groups": "metric"}, "rows= and groups="),
+        ({"nest": "metric", "groups": "metric"}, "nest= and groups="),
+    ],
+)
+def test_two_layout_roles_naming_one_column_raise_spec_error(kwargs, expected):
+    # The output frame is keyed by column name, so two roles sharing a name
+    # means one role's values are silently overwritten by the other's.
+    table = CoefTable(pl.DataFrame(RAW), **kwargs).estimate(
+        "Lift %", "rel", ci=("rel_lb", "rel_ub")
+    )
+    with pytest.raises(SpecError, match=expected):
+        resolve(table)
+
+
+def test_distinct_layout_roles_resolve():
+    table = CoefTable(pl.DataFrame(RAW), rows="metric", nest="variant", groups="area").estimate(
+        "Lift %", "rel", ci=("rel_lb", "rel_ub")
+    )
+    assert resolve(table).group_column == "area"
+
+
 def test_duplicate_identity_rows_raise_spec_error():
     dup = dict(RAW) | {"metric": ["Revenue", "Revenue", "Revenue", "Latency"]}
     table = CoefTable(pl.DataFrame(dup), rows="metric", nest="variant").estimate(

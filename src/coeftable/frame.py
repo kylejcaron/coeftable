@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from itertools import combinations
 from typing import Any
 
 import narwhals as nw
@@ -123,6 +124,19 @@ def resolve(table: CoefTable) -> Resolved:
             raise SpecError(
                 f"Column label {column.label!r} collides with layout column "
                 f"(rows/nest/groups key {column.label!r}); choose a different label."
+            )
+
+    # Two layout roles naming the same column collide in the output frame,
+    # which `resolve()` builds keyed by column name -- the later write
+    # silently discards the earlier role's values, so the table renders with
+    # one role's layout missing. Reject it rather than emit a corrupt table.
+    roles = [("rows", table.rows), ("nest", table.nest), ("groups", table.groups)]
+    named = [(role, key) for role, key in roles if key is not None]
+    for (first_role, first_key), (second_role, second_key) in combinations(named, 2):
+        if first_key == second_key:
+            raise SpecError(
+                f"Layout keys {first_role}= and {second_role}= both name column "
+                f"{first_key!r}; each layout role needs its own column."
             )
 
     # The overlaid `series` dimension cannot also be a table axis: the
