@@ -66,11 +66,13 @@ class Scan:
         another one it depends on, e.g. `Forest.of`.
     row_keys, nest_keys, group_keys, split_keys
         Per-input-row values, aligned to `frame`'s row order.
-    rows, nest, split_columns
+    rows, nest, groups, split_columns
         The table's layout column names, as declared on `CoefTable` --
         `None` when that dimension is unused. Lets a column that reads a
         companion frame (`Sparkline`'s `data=`) group it by the same
-        identity the main frame uses.
+        identity the main frame uses. `groups` is part of that identity
+        because a row label may appear under more than one group, so
+        omitting it would merge every group's points into one series.
     """
 
     frame: nw.DataFrame
@@ -81,6 +83,7 @@ class Scan:
     split_keys: list[Any]
     rows: str | None
     nest: str | None
+    groups: str | None
     split_columns: str | None
 
 
@@ -830,10 +833,38 @@ class Sparkline:
                     f"Sparkline {self.label!r}: columns {missing} are not in `data`. "
                     f"Available columns: {list(companion.columns)}."
                 )
+            # The group joins the identity only when `data` actually carries
+            # that column. A companion frame keyed purely on the row (and nest,
+            # and split) is the common shape and stays valid -- but it cannot
+            # distinguish a row label that appears under more than one group,
+            # so that combination is rejected rather than silently merging
+            # every group's points into one series.
+            join_groups = scan.groups if scan.groups in companion.columns else None
+            if scan.groups is not None and join_groups is None:
+                seen_groups: dict[tuple[Any, Any, Any], set[Any]] = {}
+                for row_key, nest_key, group_key, split_key in zip(
+                    scan.row_keys, scan.nest_keys, scan.group_keys, scan.split_keys, strict=True
+                ):
+                    seen_groups.setdefault((row_key, nest_key, split_key), set()).add(group_key)
+                spanning = sorted(
+                    (str(key[0]) for key, found in seen_groups.items() if len(found) > 1),
+                )
+                if spanning:
+                    raise SpecError(
+                        f"Sparkline {self.label!r}: row {spanning[0]!r} appears under more "
+                        f"than one {scan.groups!r} value, but `data` has no {scan.groups!r} "
+                        "column to tell those rows apart. Add it to `data`."
+                    )
+            group_join_keys = (
+                _nan_to_none(list(scan.group_keys))
+                if join_groups is not None
+                else [None] * len(scan.row_keys)
+            )
             identities = list(
                 zip(
                     _nan_to_none(list(scan.row_keys)),
                     _nan_to_none(list(scan.nest_keys)),
+                    group_join_keys,
                     _nan_to_none(list(scan.split_keys)),
                     strict=True,
                 )
@@ -844,6 +875,7 @@ class Sparkline:
                     identities,
                     rows=scan.rows,
                     nest=scan.nest,
+                    groups=join_groups,
                     split_columns=scan.split_columns,
                     value=self.value,
                     ci=self.ci,
@@ -860,6 +892,7 @@ class Sparkline:
                     identities,
                     rows=scan.rows,
                     nest=scan.nest,
+                    groups=join_groups,
                     split_columns=scan.split_columns,
                     value=self.value,
                     ci=self.ci,

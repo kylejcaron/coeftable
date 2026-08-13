@@ -174,6 +174,7 @@ def resolve(table: CoefTable) -> Resolved:
         split_keys=split_keys,
         rows=table.rows,
         nest=table.nest,
+        groups=table.groups,
         split_columns=table.split_columns,
     )
     prepared: list[Prepared] = [column.prepare(scan) for column in table.columns]
