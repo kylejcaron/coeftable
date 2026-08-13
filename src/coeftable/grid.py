@@ -88,8 +88,8 @@ def build_grid(
     Raises
     ------
     SpecError
-        When the same (rows, nest, split_columns) combination appears more
-        than once in the input frame.
+        When the same (rows, nest, groups, split_columns) combination appears
+        more than once in the input frame.
     """
     n = len(row_keys)
     identities = [(row_keys[i], nest_keys[i], group_keys[i]) for i in range(n)]
