@@ -42,8 +42,6 @@ class Grid:
         Output rows as `(row key, nest key, group)` identities, in display
         order: group-major, then row-key order within each group, matching the
         order `great_tables` renders them in.
-    unique_rows
-        Distinct row keys, in the same order dividers key off.
     splits
         Distinct split-column values, in display order, or `[None]` when the
         table has no split column.
@@ -56,7 +54,6 @@ class Grid:
     """
 
     ordered: list[tuple[Any, Any, Any]]
-    unique_rows: list[Any]
     splits: list[Any]
     source_index: dict[tuple[tuple[Any, Any, Any], Any], int]
     row_group: list[Any]
@@ -131,7 +128,6 @@ def build_grid(
 
     return Grid(
         ordered=ordered,
-        unique_rows=unique_rows,
         splits=splits,
         source_index=source_index,
         row_group=row_group,
@@ -243,9 +239,10 @@ def assemble_rows(
         first_of_key = row_key != previous_row_key
         if first_of_key and previous_row_key is not None:
             divider_rows.append(len(layout_rows))
-        # Banding alternates over row-key blocks in display order. A global
-        # index into `unique_rows` would stripe two adjacent blocks the same
-        # shade whenever a row key spans groups, or groups interleave.
+        # Banding alternates over row-key blocks in display order. Keying off a
+        # global index into the distinct row keys would stripe two adjacent
+        # blocks the same shade whenever a row key spans groups, or groups
+        # interleave.
         if first_of_key:
             block_index += 1
         if block_index % 2 == 0:
