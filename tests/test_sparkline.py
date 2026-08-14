@@ -1698,6 +1698,25 @@ def test_sparkline_robust_autoscale_keeps_included_y_annotation():
     assert low <= 50.0 <= high < 300.0
 
 
+def test_sparkline_robust_in_domain_annotation_preserves_baseline_domain():
+    raw = pl.DataFrame({"value": [_SPIKE_LIFT]})
+    baseline = _prepared_sparkline(
+        raw,
+        Sparkline("Trend", value="value", ref=1.0, autoscale="robust"),
+    )
+    annotated = _prepared_sparkline(
+        raw,
+        Sparkline(
+            "Trend",
+            value="value",
+            ref=1.0,
+            autoscale="robust",
+            annotations=(Rule(1.05, axis="y"),),
+        ),
+    )
+    assert next(iter(annotated.domains.values())) == next(iter(baseline.domains.values()))
+
+
 def test_sparkline_non_domain_y_annotation_leaves_bucket_unchanged():
     raw = pl.DataFrame({"value": [[1.0, 2.0]]})
     state = _prepared_sparkline(

@@ -383,9 +383,10 @@ def _bucket_domain(
 
     `override` wins outright; otherwise a tight fit uses all `values` and
     a robust fit first applies an IQR/Tukey fence. Required annotation
-    coordinates are joined to those data inputs before one padding pass, so
-    an in-domain coordinate leaves the automatic fit unchanged. `max_domain`,
-    when set, then narrows the result around `ref`.
+    coordinates are joined to those retained data inputs before one padding
+    pass, so a coordinate within the retained data extent leaves the
+    automatic fit unchanged. `max_domain`, when set, then narrows the result
+    around `ref`.
     """
     if override is not None:
         return override
