@@ -1,3 +1,8 @@
+## Unreleased
+
+### Features
+- Add typed rule and band annotations to forest plots and sparklines, including row-specific field binding and domain-aware layering.
+
 <a id="v0.3.1"></a>
 # [v0.3.1](https://github.com/kylejcaron/coeftable/releases/tag/v0.3.1) - 2026-08-14
 
