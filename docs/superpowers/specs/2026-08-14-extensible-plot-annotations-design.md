@@ -96,6 +96,7 @@ class Band:
 - A band is omitted when either endpoint is missing.
 - Field-bound annotations follow the existing cell identity, including row, nest, group, and split values. No separate selector language is needed.
 - Companion-frame sparklines still read annotation fields from the main table frame. This keeps one unambiguous row-level source.
+- Multi-series sparklines resolve and draw each annotation once per cell, not once per arm.
 
 ### Axis support
 
@@ -171,7 +172,7 @@ It emits escaped SVG fragments, not complete plots. Forest and sparkline rendere
 ```text
 underlay annotations
 existing plot content, including the built-in reference
- overlay annotations
+overlay annotations
 ```
 
 Projection stays inside `svg.py`, alongside `_projector`; callers and specification classes do not handle pixels.
@@ -198,7 +199,8 @@ Resolution is $O(R \times A)$ for $R$ source rows and $A$ declared annotations. 
 
 ## Domain semantics
 
-`affect_domain=True` participates only in automatic domain calculation.
+`affect_domain=True` participates in automatic domain calculation, but explicit
+domain constraints remain authoritative.
 
 - A rule contributes its position.
 - A band contributes both endpoints.
@@ -206,8 +208,10 @@ Resolution is $O(R \times A)$ for $R$ source rows and $A$ declared annotations. 
 - Sparkline x contributions enter the table-wide x domain.
 - Sparkline y contributions enter the existing y bucket selected by `scale`.
 - Only marks belonging to cells with renderable base data contribute. An annotation does not make an otherwise blank cell establish or widen a shared domain.
+- `autoscale` first computes the data domain. Eligible annotations then expand it, so robust outlier filtering cannot discard an annotation that requested domain participation.
+- Forest `symmetric=True` expands the final automatic domain around `ref` after annotation coordinates are included.
+- Sparkline `max_ylim` then applies its explicit ceiling and may clip a more distant annotation.
 - `ylim` remains an absolute override. It ignores annotation domain contributions just as it overrides data-driven limits today.
-- `symmetric`, `autoscale`, and `max_ylim` operate after eligible annotation values join their normal automatic-domain inputs.
 - `affect_domain=False` never widens a domain. The emitter clips a partially intersecting band and omits an out-of-domain rule or band.
 
 For temporal sparkline x axes, annotation literals and fields use the existing date/datetime-to-epoch conversion semantics. Numeric and temporal x values may not be mixed. An x annotation must match the series x kind.
