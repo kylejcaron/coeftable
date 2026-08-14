@@ -44,8 +44,14 @@ Homepage = "https://github.com/kylejcaron/coeftable"
 Repository = "https://github.com/kylejcaron/coeftable"
 Issues = "https://github.com/kylejcaron/coeftable/issues"
 
+# PyPI rejects core metadata 2.5, which hatchling 1.30 defaults to.
+# Drop once https://github.com/pypi/warehouse/issues/19083 ships.
 [tool.hatch.build.targets.wheel]
 packages = ["src/coeftable"]
+core-metadata-version = "2.4"
+
+[tool.hatch.build.targets.sdist]
+core-metadata-version = "2.4"
 
 [tool.hatch.version]
 source = "vcs"
