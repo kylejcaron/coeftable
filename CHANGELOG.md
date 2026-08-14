@@ -1,3 +1,22 @@
+<a id="v0.3.1"></a>
+# [v0.3.1](https://github.com/kylejcaron/coeftable/releases/tag/v0.3.1) - 2026-08-14
+
+<!-- Release notes generated using configuration in .github/release.yml at v0.3.1 -->
+
+## What's Changed
+### Bug Fixes
+* Fix row-group handling: labels spanning groups, row striping, and layout key collisions by [@kylejcaron](https://github.com/kylejcaron) in [#26](https://github.com/kylejcaron/coeftable/pull/26)
+* Build core metadata 2.4 so releases pass validation by [@kylejcaron](https://github.com/kylejcaron) in [#27](https://github.com/kylejcaron/coeftable/pull/27)
+### Maintenance
+* Update changelog for v0.3.0 by [@github-actions](https://github.com/github-actions)[bot] in [#21](https://github.com/kylejcaron/coeftable/pull/21)
+* Fix automated releases: PyPI Trusted Publishing rejects reusable workflows by [@kylejcaron](https://github.com/kylejcaron) in [#22](https://github.com/kylejcaron/coeftable/pull/22)
+
+
+**Full Changelog**: https://github.com/kylejcaron/coeftable/compare/v0.3.0...v0.3.1
+
+[Changes][v0.3.1]
+
+
 <a id="v0.3.0"></a>
 # [v0.3.0](https://github.com/kylejcaron/coeftable/releases/tag/v0.3.0) - 2026-08-05
 
@@ -73,6 +92,7 @@
 [Changes][v0.1.0]
 
 
+[v0.3.1]: https://github.com/kylejcaron/coeftable/compare/v0.3.0...v0.3.1
 [v0.3.0]: https://github.com/kylejcaron/coeftable/compare/v0.2.1...v0.3.0
 [v0.2.1]: https://github.com/kylejcaron/coeftable/compare/v0.2.0...v0.2.1
 [v0.2.0]: https://github.com/kylejcaron/coeftable/compare/v0.1.0...v0.2.0
