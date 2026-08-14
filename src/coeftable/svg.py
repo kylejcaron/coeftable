@@ -5,12 +5,14 @@ from __future__ import annotations
 import html
 import math
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from itertools import pairwise
 from typing import NamedTuple
 
+from coeftable.annotations import Layer, ResolvedAnnotation, ResolvedRule
 from coeftable.format import _MONTH_ABBR, CalendarStep, DateAxis, Format, TimeFormat, is_missing
-from coeftable.theme import Theme
+from coeftable.theme import DEFAULT, Theme
 
 _TICK_STEPS = (1.0, 2.0, 2.5, 5.0, 10.0)
 
@@ -219,6 +221,84 @@ def _projector(domain: tuple[float, float], width: int, inset: int):
         return inset + (value - low) / span * inner
 
     return project
+
+
+@dataclass(frozen=True)
+class _PlotArea:
+    """Projector and pixel bounds for one annotation-capable plot area."""
+
+    x_domain: tuple[float, float] | None
+    y_domain: tuple[float, float] | None
+    project_x: Callable[[float], float] | None
+    project_y: Callable[[float], float] | None
+    left: float
+    right: float
+    top: float
+    bottom: float
+
+
+_DASH_ARRAY = {"solid": None, "dashed": "2,2", "dotted": "1,2"}
+
+
+def _annotation_fragments(
+    marks: Sequence[ResolvedAnnotation],
+    *,
+    area: _PlotArea,
+    layer: Layer,
+    theme: Theme,
+) -> list[str]:
+    """Project and emit one annotation layer inside `area`."""
+    fragments: list[str] = []
+    for mark in marks:
+        if mark.layer != layer:
+            continue
+
+        if mark.axis == "x":
+            domain, project = area.x_domain, area.project_x
+        else:
+            domain, project = area.y_domain, area.project_y
+        if domain is None or project is None:
+            raise RuntimeError(f"Cannot render a {mark.axis}-axis annotation for this plot.")
+
+        low, high = domain
+        color = html.escape(theme.axis if mark.color is None else mark.color, quote=True)
+        if isinstance(mark, ResolvedRule):
+            if not low <= mark.at <= high:
+                continue
+            point = project(mark.at)
+            if mark.axis == "x":
+                coordinates = (
+                    f'x1="{point:.2f}" y1="{area.top:.2f}" x2="{point:.2f}" y2="{area.bottom:.2f}"'
+                )
+            else:
+                coordinates = (
+                    f'x1="{area.left:.2f}" y1="{point:.2f}" x2="{area.right:.2f}" y2="{point:.2f}"'
+                )
+            dash = _DASH_ARRAY[mark.dash]
+            dash_attribute = "" if dash is None else f' stroke-dasharray="{dash}"'
+            fragments.append(
+                f'<line {coordinates} stroke="{color}" stroke-opacity="{mark.opacity:.2f}" '
+                f'stroke-width="{mark.width:.2f}"{dash_attribute}/>'
+            )
+            continue
+
+        start = max(mark.start, low)
+        end = min(mark.end, high)
+        if start > end:
+            continue
+        first, second = sorted((project(start), project(end)))
+        if mark.axis == "x":
+            geometry = (
+                f'x="{first:.2f}" y="{area.top:.2f}" width="{second - first:.2f}" '
+                f'height="{area.bottom - area.top:.2f}"'
+            )
+        else:
+            geometry = (
+                f'x="{area.left:.2f}" y="{first:.2f}" width="{area.right - area.left:.2f}" '
+                f'height="{second - first:.2f}"'
+            )
+        fragments.append(f'<rect {geometry} fill="{color}" fill-opacity="{mark.opacity:.2f}"/>')
+    return fragments
 
 
 def _svg(width: int, height: int, body: str) -> str:
@@ -782,6 +862,7 @@ def forest_bar(
     height: int = 18,
     bar_height: int = 9,
     inset: int = 3,
+    annotations: Sequence[ResolvedAnnotation] = (),
 ) -> str:
     """Render one interval as an inline SVG bar.
 
@@ -804,6 +885,8 @@ def forest_bar(
         Bar colour, resolved from a semantic role by the caller.
     theme
         Supplies axis and surface colours.
+    annotations
+        Resolved x-axis rules and bands rendered around the existing bar.
     width, height, bar_height, inset
         Geometry in pixels.
 
@@ -858,8 +941,24 @@ def forest_bar(
             f'<polygon points="{tip:.2f},{middle:.2f} {tip + cap:.2f},{middle - cap:.2f} '
             f'{tip + cap:.2f},{middle + cap:.2f}" fill="{color}"/>'
         )
-
-    return _svg(width, height, "".join(parts))
+    if not annotations:
+        return _svg(width, height, "".join(parts))
+    area = _PlotArea(
+        x_domain=domain,
+        y_domain=None,
+        project_x=project,
+        project_y=None,
+        left=inset,
+        right=width - inset,
+        top=0,
+        bottom=height,
+    )
+    body = (
+        _annotation_fragments(annotations, area=area, layer="underlay", theme=theme)
+        + parts
+        + _annotation_fragments(annotations, area=area, layer="overlay", theme=theme)
+    )
+    return _svg(width, height, "".join(body))
 
 
 def _render_tick_axis(
@@ -1155,6 +1254,8 @@ def sparkline_multi(
     show_endpoint: bool = True,
     endpoint_width: int = 44,
     show_clip_indicators: bool = True,
+    annotations: Sequence[ResolvedAnnotation] = (),
+    theme: Theme = DEFAULT,
 ) -> str:
     """Render one or more overlaid series as an inline SVG line plot.
 
@@ -1210,6 +1311,10 @@ def sparkline_multi(
         trace happen regardless of this flag -- turning it off only
         removes the cap marks, never the underlying clipping or the
         true-trajectory ghost.
+    annotations
+        Resolved x- and y-axis rules and bands rendered once around all traces.
+    theme
+        Supplies the fallback axis colour for annotations with `color=None`.
 
     Returns
     -------
@@ -1309,6 +1414,22 @@ def sparkline_multi(
             f'<clipPath id="{clip_id}"><rect x="0" y="{top_edge:.2f}" width="{width}" '
             f'height="{bottom_edge - top_edge:.2f}"/></clipPath>',
         )
+    if annotations:
+        area = _PlotArea(
+            x_domain=x_domain,
+            y_domain=domain,
+            project_x=project_x,
+            project_y=project_y,
+            left=inset,
+            right=plot_width - inset,
+            top=top_edge,
+            bottom=bottom_edge,
+        )
+        body = (
+            _annotation_fragments(annotations, area=area, layer="underlay", theme=theme)
+            + body
+            + _annotation_fragments(annotations, area=area, layer="overlay", theme=theme)
+        )
     return _svg(width, height, "".join(body))
 
 
@@ -1329,6 +1450,8 @@ def sparkline_bar(
     show_endpoint: bool = True,
     endpoint_width: int = 44,
     show_clip_indicators: bool = True,
+    annotations: Sequence[ResolvedAnnotation] = (),
+    theme: Theme = DEFAULT,
 ) -> str:
     """Render one series as an inline SVG line plot with an uncertainty ribbon.
 
@@ -1402,6 +1525,10 @@ def sparkline_bar(
         and the ghost trace happen regardless of this flag -- turning it
         off only removes the cap marks, never the underlying clipping or
         the true-trajectory ghost.
+    annotations
+        Resolved x- and y-axis rules and bands forwarded once to `sparkline_multi`.
+    theme
+        Supplies the fallback axis colour for annotations with `color=None`.
 
     Returns
     -------
@@ -1421,6 +1548,8 @@ def sparkline_bar(
         show_endpoint=show_endpoint,
         endpoint_width=endpoint_width,
         show_clip_indicators=show_clip_indicators,
+        annotations=annotations,
+        theme=theme,
     )
 
 

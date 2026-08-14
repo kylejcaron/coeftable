@@ -4,13 +4,21 @@ from __future__ import annotations
 
 import math
 import statistics
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 import narwhals as nw
 
+from coeftable.annotations import (
+    Annotation,
+    PreparedAnnotations,
+    annotation_sources,
+    domain_values,
+    prepare_annotations,
+)
 from coeftable.collapsible import make_collapsible
+from coeftable.errors import ColumnNotFoundError, SpecError
 from coeftable.format import (
     CIStyle,
     DateAxis,
@@ -43,14 +51,6 @@ type Autoscale = Literal["tight", "robust"]
 # defaults where ruff B008 forbids a constructor call.
 _DEFAULT_FMT = Number()
 _DEFAULT_CI_STYLE = CIStyle()
-
-
-class SpecError(ValueError):
-    """Raised when a table specification is internally inconsistent."""
-
-
-class ColumnNotFoundError(KeyError):
-    """Raised when a specification names a column absent from the frame."""
 
 
 @dataclass(frozen=True)
@@ -319,6 +319,18 @@ def _pad_domain(
     return (low, high)
 
 
+def _robust_inliers(values: list[float]) -> list[float]:
+    """Return `values` after IQR/Tukey filtering when quartiles are meaningful."""
+    if len(values) < 4:
+        return values
+    q1, _, q3 = statistics.quantiles(values, n=4, method="inclusive")
+    iqr = q3 - q1
+    if iqr == 0:
+        return values
+    fence_low, fence_high = q1 - 1.5 * iqr, q3 + 1.5 * iqr
+    return [v for v in values if fence_low <= v <= fence_high]
+
+
 def _robust_domain(values: list[float], ref: float | None) -> tuple[float, float]:
     """Pad an IQR/Tukey-fenced domain to `values`, discounting outliers.
 
@@ -334,15 +346,7 @@ def _robust_domain(values: list[float], ref: float | None) -> tuple[float, float
     always reads a row's true last point directly, never the domain it
     ends up plotted against.
     """
-    if len(values) < 4:
-        return _pad_domain(values, ref)
-    q1, _, q3 = statistics.quantiles(values, n=4, method="inclusive")
-    iqr = q3 - q1
-    if iqr == 0:
-        return _pad_domain(values, ref)
-    fence_low, fence_high = q1 - 1.5 * iqr, q3 + 1.5 * iqr
-    inliers = [v for v in values if fence_low <= v <= fence_high]
-    return _pad_domain(inliers, ref)
+    return _pad_domain(_robust_inliers(values), ref)
 
 
 def _clamp_domain(
@@ -373,21 +377,23 @@ def _bucket_domain(
     override: tuple[float, float] | None,
     max_domain: float | None,
     autoscale: Autoscale = "tight",
+    required: Sequence[float] = (),
 ) -> tuple[float, float]:
     """Resolve one domain bucket for `Sparkline.prepare`.
 
-    `override` wins outright; otherwise the domain is fit to `values` --
-    tightly (`_pad_domain`) or, when `autoscale="robust"`, with an
-    IQR/Tukey fence that discounts outliers (`_robust_domain`) -- and,
-    when `max_domain` is set, clamped to `ref - max_domain, ref +
-    max_domain`.
+    `override` wins outright; otherwise a tight fit uses all `values` and
+    a robust fit first applies an IQR/Tukey fence. Required annotation
+    coordinates are joined to those retained data inputs before one padding
+    pass, so a coordinate within the retained data extent leaves the
+    automatic fit unchanged. `max_domain`, when set, then narrows the result
+    around `ref`.
     """
     if override is not None:
         return override
-    if autoscale == "robust":
-        domain = _robust_domain(values, ref)
-    else:
-        domain = _pad_domain(values, ref)
+    fit_values = _robust_inliers(values) if autoscale == "robust" else values
+    finite_required = _finite(list(required)) if required else []
+    inputs = [*fit_values, *finite_required] if finite_required else fit_values
+    domain = _pad_domain(inputs, ref)
     return _clamp_domain(domain, ref, max_domain) if max_domain is not None else domain
 
 
@@ -447,6 +453,7 @@ class _ForestState:
     value: list[float | None]
     low: list[float | None]
     high: list[float | None]
+    annotations: PreparedAnnotations
 
 
 @dataclass(frozen=True)
@@ -479,6 +486,8 @@ class Forest:
         Emit an axis row for each distinct domain.
     axis_fmt
         Callable labelling axis ticks; defaults to the bound estimate's `fmt`.
+    annotations
+        Rules and bands drawn in each non-empty plot cell.
     """
 
     label: str
@@ -491,23 +500,37 @@ class Forest:
     height: int | None = None
     show_axis: bool = True
     axis_fmt: Format | None = None
+    annotations: tuple[Annotation, ...] = ()
 
     def sources(self) -> Iterable[str]:
-        """`Forest` reads no frame column directly; it derives from its source estimate."""
-        return ()
+        """Frame columns read by this plot's annotations."""
+        return annotation_sources(self.annotations)
 
     def prepare(self, scan: Scan) -> Prepared:
-        """Compute this column's per-key domains, and its footer schedule if `show_axis`."""
+        """Compute this column's per-key domains, annotations, and footer schedule."""
         source = _estimate_by_label(scan.columns, self.of)
         assert source.ci is not None  # noqa: S101 - guaranteed by validate_columns
         source_state: _EstimateState = source.prepare(scan).payload
         assert source_state.low is not None and source_state.high is not None  # noqa: S101
         value, low, high = source_state.value, source_state.low, source_state.high
+        row_identities = tuple(
+            zip(scan.row_keys, scan.nest_keys, scan.group_keys, scan.split_keys, strict=True)
+        )
+        annotations = prepare_annotations(
+            self.annotations,
+            scan.frame,
+            axis_kinds={"x": "numeric"},
+            plot_label=self.label,
+            row_identities=row_identities,
+        )
 
         buckets: dict[Any, list[float]] = {}
         for i in range(len(scan.row_keys)):
             key = _domain_key(self, scan.row_keys[i], scan.group_keys[i], scan.split_keys[i])
-            buckets.setdefault(key, []).extend(_finite([value[i], low[i], high[i]]))
+            inputs = buckets.setdefault(key, [])
+            inputs.extend(_finite([value[i], low[i], high[i]]))
+            if not is_missing(value[i]):
+                inputs.extend(domain_values(annotations.by_row[i], axis="x"))
         domains = {
             key: self.ylim or _pad_domain(vals, self.ref, symmetric=self.symmetric)
             for key, vals in buckets.items()
@@ -517,7 +540,14 @@ class Forest:
             return _domain_key(self, row_key, group, split)
 
         return Prepared(
-            payload=_ForestState(domains=domains, source=source, value=value, low=low, high=high),
+            payload=_ForestState(
+                domains=domains,
+                source=source,
+                value=value,
+                low=low,
+                high=high,
+                annotations=annotations,
+            ),
             footer_key=footer_key if self.show_axis else None,
             shared_footer=self.scale in ("table", "split_column"),
         )
@@ -543,6 +573,7 @@ class Forest:
             theme=ctx.theme,
             width=self.width,
             height=_plot_height((state.source,), self.height),
+            annotations=state.annotations.by_row[ctx.index],
         )
 
     def footer(self, ctx: Footer) -> str | None:
@@ -598,6 +629,7 @@ class _SparklineState:
     x_domain: tuple[float, float]
     x_temporal: bool
     height: int
+    annotations: PreparedAnnotations
 
 
 def _last_point(series: Series) -> tuple[float, float | None, float | None] | None:
@@ -757,12 +789,12 @@ class Sparkline:
         Ignored when `series` is `None`.
     show_ribbon
         Draw each arm's uncertainty ribbon. `None` (the default) is
-        auto: ribbons on when `series` is `None` (today's behaviour,
-        unchanged), off when `series` is set -- N overlapping ribbons at
-        default opacity read as mud, so overlay opts out by default
-        rather than reducing opacity as an unpredictable function of
-        arm count. `True`/`False` force every arm's ribbon on/off
-        regardless of `series`.
+        auto: on when `series` is `None`, off when `series` is set.
+        `True`/`False` force every arm's ribbon on/off.
+    annotations
+        Rules and bands drawn in each non-empty plot cell. Field-valued
+        coordinates always bind to the main table frame, including when
+        `data` supplies the series.
     """
 
     label: str
@@ -787,17 +819,17 @@ class Sparkline:
     series: str | None = None
     series_colors: Mapping[Any, str] | None = None
     show_ribbon: bool | None = None
+    annotations: tuple[Annotation, ...] = ()
 
     def sources(self) -> Iterable[str]:
-        """Frame columns this column reads, or none when `data` supplies them."""
-        if self.data is not None:
-            return ()
-        names = [self.value]
-        if self.ci is not None:
+        """Frame columns this plot reads, including main-frame annotation fields."""
+        names = [] if self.data is not None else [self.value]
+        if self.data is None and self.ci is not None:
             names.extend(self.ci)
-        if self.x is not None:
+        if self.data is None and self.x is not None:
             names.append(self.x)
-        return names
+        names.extend(annotation_sources(self.annotations))
+        return tuple(dict.fromkeys(names))
 
     def prepare(self, scan: Scan) -> Prepared:
         """Resolve each row's series (or overlaid arms), bucket domains, size the row height."""
@@ -905,17 +937,31 @@ class Sparkline:
                     by_arm = dict(arms_by_identity[identity])
                     series_list.append([by_arm.get(key, empty) for key in series_keys])
 
+        x_temporal = any(series.x_temporal for arms in series_list for series in arms)
+        row_identities = tuple(
+            zip(scan.row_keys, scan.nest_keys, scan.group_keys, scan.split_keys, strict=True)
+        )
+        annotations = prepare_annotations(
+            self.annotations,
+            scan.frame,
+            axis_kinds={"x": "temporal" if x_temporal else "numeric", "y": "numeric"},
+            plot_label=self.label,
+            row_identities=row_identities,
+        )
+
         buckets: dict[Any, list[float]] = {}
+        required: dict[Any, list[float]] = {}
         x_values: list[float] = []
-        x_temporal = False
-        for i in range(len(scan.row_keys)):
+        for i, arms in enumerate(series_list):
+            if not any(_last_point(series) is not None for series in arms):
+                continue
             key = _domain_key(self, scan.row_keys[i], scan.group_keys[i], scan.split_keys[i])
-            for series in series_list[i]:
-                buckets.setdefault(key, []).extend(
-                    _finite([*series.y, *series.lower, *series.upper])
-                )
+            inputs = buckets.setdefault(key, [])
+            for series in arms:
+                inputs.extend(_finite([*series.y, *series.lower, *series.upper]))
                 x_values.extend(_finite(series.x))
-                x_temporal = x_temporal or series.x_temporal
+            x_values.extend(domain_values(annotations.by_row[i], axis="x"))
+            required.setdefault(key, []).extend(domain_values(annotations.by_row[i], axis="y"))
 
         plot_ref = self.ref if self.show_ref else None
         domains = {
@@ -925,6 +971,7 @@ class Sparkline:
                 override=self.ylim,
                 max_domain=self.max_ylim,
                 autoscale=self.autoscale,
+                required=required.get(key, ()),
             )
             for key, vals in buckets.items()
         }
@@ -942,6 +989,7 @@ class Sparkline:
                 x_domain=x_domain,
                 x_temporal=x_temporal,
                 height=_plot_height(scan.columns, self.height),
+                annotations=annotations,
             ),
             footer_key=footer_key if self.show_axis else None,
             # footer_key is a constant ("x",) regardless of `scale` --
@@ -954,8 +1002,7 @@ class Sparkline:
         """Render one row as a line plot: one series by role, or N arms by palette."""
         state: _SparklineState = ctx.prepared.payload
         arms = state.series[ctx.index]
-        key = _domain_key(self, ctx.row_key, ctx.group, ctx.split)
-        domain = state.domains[key]
+        annotations = state.annotations.by_row[ctx.index]
         ref = self.ref if self.show_ref else None
 
         if self.series is None:
@@ -964,6 +1011,8 @@ class Sparkline:
             if last is None:
                 return ""
             value, low, high = last
+            key = _domain_key(self, ctx.row_key, ctx.group, ctx.split)
+            domain = state.domains[key]
             role = _resolve_role(ctx, value, low, high, self.ref)
             color = ctx.theme.color(role)
             if self.show_ribbon is None:
@@ -984,6 +1033,8 @@ class Sparkline:
                     show_endpoint=self.show_endpoint,
                     endpoint_width=self.endpoint_width,
                     show_clip_indicators=self.show_clip_indicators,
+                    annotations=annotations,
+                    theme=ctx.theme,
                 )
             trace = Trace(
                 x=series.x,
@@ -1006,6 +1057,8 @@ class Sparkline:
                 show_endpoint=self.show_endpoint,
                 endpoint_width=self.endpoint_width,
                 show_clip_indicators=self.show_clip_indicators,
+                annotations=annotations,
+                theme=ctx.theme,
             )
 
         show_ribbon = self.show_ribbon is True
@@ -1027,6 +1080,8 @@ class Sparkline:
             )
         if not traces:
             return ""
+        key = _domain_key(self, ctx.row_key, ctx.group, ctx.split)
+        domain = state.domains[key]
         return sparkline_multi(
             traces,
             x_domain=state.x_domain,
@@ -1039,6 +1094,8 @@ class Sparkline:
             show_endpoint=self.show_endpoint,
             endpoint_width=self.endpoint_width,
             show_clip_indicators=self.show_clip_indicators,
+            annotations=annotations,
+            theme=ctx.theme,
         )
 
     def footer(self, ctx: Footer) -> str | None:
@@ -1124,6 +1181,12 @@ def validate_columns(columns: tuple[Column, ...]) -> None:
                 f"Forest column {column.label!r} references estimate {column.of!r}, "
                 "which has no confidence interval to plot."
             )
+        for index, annotation in enumerate(column.annotations):
+            if annotation.axis != "x":
+                raise SpecError(
+                    f"Forest column {column.label!r} annotation {index} uses "
+                    f"axis={annotation.axis!r}; forest plots support axis='x' only."
+                )
 
     for column in columns:
         if isinstance(column, Sparkline) and column.ci is not None and len(column.ci) != 2:
@@ -1312,6 +1375,7 @@ class CoefTable:
         height: int | None = None,
         show_axis: bool = True,
         axis_fmt: Format | None = None,
+        annotations: Sequence[Annotation] = (),
     ) -> CoefTable:
         """Append a forest-plot column bound to an existing estimate.
 
@@ -1340,6 +1404,8 @@ class CoefTable:
             Emit an axis row per distinct domain.
         axis_fmt
             Callable labelling axis ticks.
+        annotations
+            Rules and bands drawn in each non-empty plot cell.
 
         Returns
         -------
@@ -1358,6 +1424,7 @@ class CoefTable:
                 height=height,
                 show_axis=show_axis,
                 axis_fmt=axis_fmt,
+                annotations=tuple(annotations),
             )
         )
 
@@ -1403,6 +1470,7 @@ class CoefTable:
         series: str | None = None,
         series_colors: Mapping[Any, str] | None = None,
         show_ribbon: bool | None = None,
+        annotations: Sequence[Annotation] = (),
     ) -> CoefTable:
         """Append a sparkline column plotting a series with uncertainty.
 
@@ -1504,6 +1572,10 @@ class CoefTable:
             Draw each arm's uncertainty ribbon. `None` (the default) is
             auto: on when `series` is `None`, off when `series` is set.
             `True`/`False` force every arm's ribbon on/off.
+        annotations
+            Rules and bands drawn in each non-empty plot cell. Field-valued
+            coordinates bind to columns on the main table frame; x supports
+            numeric or temporal coordinates, while y is numeric.
 
         Returns
         -------
@@ -1534,6 +1606,7 @@ class CoefTable:
                 series=series,
                 series_colors=series_colors,
                 show_ribbon=show_ribbon,
+                annotations=tuple(annotations),
             )
         )
 

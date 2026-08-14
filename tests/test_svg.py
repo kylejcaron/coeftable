@@ -1,9 +1,11 @@
 import re
 from datetime import UTC, datetime, timedelta
 from itertools import pairwise
+from typing import Literal
 
 import pytest
 
+from coeftable.annotations import ResolvedBand, ResolvedRule
 from coeftable.format import DateAxis, Number
 from coeftable.svg import (
     _CALENDAR_TICK_FLOOR,
@@ -30,7 +32,29 @@ from coeftable.svg import (
     sparkline_bar,
     sparkline_multi,
 )
-from coeftable.theme import DEFAULT
+from coeftable.theme import DEFAULT, Theme
+
+
+def _rule(
+    *,
+    at: float,
+    axis: Literal["x", "y"] = "x",
+    layer: Literal["underlay", "overlay"] = "overlay",
+    color: str | None = "#123456",
+    opacity: float = 1.0,
+    width: float = 1.0,
+    dash: Literal["solid", "dashed", "dotted"] = "dashed",
+) -> ResolvedRule:
+    return ResolvedRule(
+        at=at,
+        axis=axis,
+        layer=layer,
+        affect_domain=True,
+        color=color,
+        opacity=opacity,
+        width=width,
+        dash=dash,
+    )
 
 
 def test_nice_ticks_are_round_and_inside_domain():
@@ -110,6 +134,129 @@ def test_forest_bar_coordinates_are_two_decimals():
     for value in re.findall(r'x="([-\d.]+)"', svg):
         if "." in value:
             assert len(value.split(".")[1]) <= 2
+
+
+def test_forest_annotations_render_under_and_over_existing_bar():
+    svg = forest_bar(
+        1.0,
+        0.5,
+        1.5,
+        domain=(0.0, 2.0),
+        ref=0.0,
+        color="#000000",
+        theme=DEFAULT,
+        annotations=(
+            ResolvedBand(0.25, 0.75, "x", "underlay", True, "#abcdef", 0.2),
+            _rule(at=1.25),
+        ),
+    )
+    assert svg.index("#abcdef") < svg.index("#000000") < svg.index("#123456")
+    assert '<rect x="29.75" y="0.00" width="53.50" height="18.00"' in svg
+
+
+def test_forest_annotation_rule_uses_geometry_style_theme_fallback_and_escaping():
+    svg = forest_bar(
+        1.0,
+        0.5,
+        1.5,
+        domain=(0.0, 2.0),
+        ref=0.0,
+        color="#000000",
+        theme=DEFAULT,
+        annotations=(
+            _rule(at=1.0, color=None, dash="solid"),
+            _rule(at=1.25, color='a"&<>', opacity=0.4, width=2.5, dash="dotted"),
+        ),
+    )
+    assert (
+        f'<line x1="110.00" y1="0.00" x2="110.00" y2="18.00" stroke="{DEFAULT.axis}" '
+        'stroke-opacity="1.00" stroke-width="1.00"/>'
+    ) in svg
+    assert (
+        '<line x1="136.75" y1="0.00" x2="136.75" y2="18.00" stroke="a&quot;&amp;&lt;&gt;" '
+        'stroke-opacity="0.40" stroke-width="2.50" stroke-dasharray="1,2"/>'
+    ) in svg
+
+
+def test_forest_annotation_bands_clip_and_omit_outside_domain():
+    svg = forest_bar(
+        1.0,
+        0.5,
+        1.5,
+        domain=(0.0, 2.0),
+        ref=0.0,
+        color="#000000",
+        theme=DEFAULT,
+        annotations=(
+            ResolvedBand(-1.0, 0.5, "x", "underlay", True, "#abcdef", 0.2),
+            ResolvedBand(3.0, 4.0, "x", "underlay", True, "#fedcba", 0.2),
+        ),
+    )
+    assert '<rect x="3.00" y="0.00" width="53.50" height="18.00" fill="#abcdef"' in svg
+    assert "#fedcba" not in svg
+
+
+def test_forest_annotation_rule_omits_outside_domain():
+    svg = forest_bar(
+        1.0,
+        0.5,
+        1.5,
+        domain=(0.0, 2.0),
+        ref=0.0,
+        color="#000000",
+        theme=DEFAULT,
+        annotations=(_rule(at=3.0, color="#fedcba"),),
+    )
+    assert "#fedcba" not in svg
+
+
+def test_forest_rejects_y_axis_annotations():
+    with pytest.raises(RuntimeError, match="y-axis annotation"):
+        forest_bar(
+            1.0,
+            0.5,
+            1.5,
+            domain=(0.0, 2.0),
+            ref=0.0,
+            color="#000000",
+            theme=DEFAULT,
+            annotations=(_rule(at=1.0, axis="y"),),
+        )
+
+
+def test_forest_annotations_preserve_declaration_order_within_a_layer():
+    svg = forest_bar(
+        1.0,
+        0.5,
+        1.5,
+        domain=(0.0, 2.0),
+        ref=0.0,
+        color="#000000",
+        theme=DEFAULT,
+        annotations=(
+            _rule(at=0.5, color="#111111"),
+            _rule(at=1.0, color="#222222"),
+            _rule(at=1.5, color="#333333"),
+        ),
+    )
+    assert svg.index("#111111") < svg.index("#222222") < svg.index("#333333")
+
+
+def test_forest_bar_empty_annotations_preserve_existing_svg():
+    unannotated = forest_bar(
+        1.0, 0.5, 1.5, domain=(0.0, 2.0), ref=0.0, color="#000000", theme=DEFAULT
+    )
+    annotated = forest_bar(
+        1.0,
+        0.5,
+        1.5,
+        domain=(0.0, 2.0),
+        ref=0.0,
+        color="#000000",
+        theme=DEFAULT,
+        annotations=(),
+    )
+    assert unannotated == annotated
 
 
 def test_forest_axis_renders_tick_labels():
@@ -220,6 +367,124 @@ def test_sparkline_bar_is_well_formed_svg():
     assert "<polyline" in svg
     assert "<polygon" in svg
     assert "#55A868" in svg
+
+
+def test_sparkline_supports_x_rule_and_y_band_once():
+    svg = sparkline_bar(
+        [0.0, 1.0, 2.0],
+        [1.0, 1.5, 1.0],
+        [None, None, None],
+        [None, None, None],
+        x_domain=(0.0, 2.0),
+        domain=(0.0, 2.0),
+        ref=0.0,
+        color="#000000",
+        fmt=Number(),
+        annotations=(
+            _rule(at=1.0, axis="x"),
+            ResolvedBand(0.8, 1.2, "y", "underlay", True, "#abcdef", 0.2),
+        ),
+    )
+    assert svg.count("#123456") == 1
+    assert svg.count("#abcdef") == 1
+
+
+def test_sparkline_annotations_project_horizontal_rules_and_vertical_bands():
+    svg = sparkline_bar(
+        [0.0, 1.0, 2.0],
+        [1.0, 1.5, 1.0],
+        [None, None, None],
+        [None, None, None],
+        x_domain=(0.0, 2.0),
+        domain=(0.0, 2.0),
+        ref=None,
+        color="#000000",
+        fmt=Number(),
+        annotations=(
+            ResolvedBand(0.25, 0.75, "x", "underlay", True, "#abcdef", 0.2),
+            _rule(at=1.0, axis="y", dash="dashed"),
+        ),
+    )
+    assert '<rect x="24.25" y="3.00" width="42.50" height="24.00" fill="#abcdef"' in svg
+    assert (
+        '<line x1="3.00" y1="15.00" x2="173.00" y2="15.00" stroke="#123456" '
+        'stroke-opacity="1.00" stroke-width="1.00" stroke-dasharray="2,2"/>'
+    ) in svg
+
+
+def test_sparkline_y_band_has_positive_svg_height():
+    svg = sparkline_bar(
+        [0.0, 1.0, 2.0],
+        [1.0, 1.5, 1.0],
+        [None, None, None],
+        [None, None, None],
+        x_domain=(0.0, 2.0),
+        domain=(0.0, 2.0),
+        ref=None,
+        color="#000000",
+        fmt=Number(),
+        annotations=(ResolvedBand(0.8, 1.2, "y", "underlay", True, "#abcdef", 0.2),),
+    )
+    assert '<rect x="3.00" y="12.60" width="170.00" height="4.80" fill="#abcdef"' in svg
+
+
+def test_sparkline_annotation_band_clips_and_omits_outside_domain():
+    svg = sparkline_bar(
+        [0.0, 1.0, 2.0],
+        [1.0, 1.5, 1.0],
+        [None, None, None],
+        [None, None, None],
+        x_domain=(0.0, 2.0),
+        domain=(0.0, 2.0),
+        ref=None,
+        color="#000000",
+        fmt=Number(),
+        annotations=(
+            ResolvedBand(-1.0, 0.5, "x", "underlay", True, "#abcdef", 0.2),
+            ResolvedBand(3.0, 4.0, "x", "underlay", True, "#fedcba", 0.2),
+        ),
+    )
+    assert '<rect x="3.00" y="3.00" width="42.50" height="24.00" fill="#abcdef"' in svg
+    assert "#fedcba" not in svg
+
+
+def test_sparkline_bar_empty_annotations_preserve_existing_svg():
+    args = ([0.0, 1.0, 2.0], [1.0, 1.5, 1.0], [None, None, None], [None, None, None])
+    unannotated = sparkline_bar(
+        *args,
+        x_domain=(0.0, 2.0),
+        domain=(0.0, 2.0),
+        ref=0.0,
+        color="#000000",
+        fmt=Number(),
+    )
+    annotated = sparkline_bar(
+        *args,
+        x_domain=(0.0, 2.0),
+        domain=(0.0, 2.0),
+        ref=0.0,
+        color="#000000",
+        fmt=Number(),
+        annotations=(),
+    )
+    assert unannotated == annotated
+
+
+def test_sparkline_annotation_color_falls_back_to_given_theme():
+    svg = sparkline_bar(
+        [0.0, 1.0, 2.0],
+        [1.0, 1.5, 1.0],
+        [None, None, None],
+        [None, None, None],
+        x_domain=(0.0, 2.0),
+        domain=(0.0, 2.0),
+        ref=None,
+        color="#000000",
+        fmt=Number(),
+        theme=Theme(axis="#654321"),
+        annotations=(_rule(at=1.0, color=None),),
+    )
+    assert 'stroke="#654321"' in svg
 
 
 def test_sparkline_bar_ribbon_point_count_matches_series_length():

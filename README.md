@@ -385,3 +385,59 @@ absolute = pl.DataFrame(
     .sparkline("Hidden reference", value="value", ref=0.0, show_ref=False)
 )
 ```
+
+## Plot annotations
+
+`ct.Rule` draws a line and `ct.Band` shades an interval in a forest plot or
+sparkline. A numeric, date, or datetime coordinate is a literal; a string is
+the name of a scalar column on the main table frame. A missing field value
+leaves that annotation out of that row, which makes row-specific marks
+possible:
+
+```python
+import polars as pl
+import coeftable as ct
+
+annotated = pl.DataFrame(
+    {
+        "metric": ["Revenue", "Latency"],
+        "estimate": [1.2, -0.4],
+        "lower": [0.8, -0.8],
+        "upper": [1.6, 0.1],
+        # Only Revenue receives the second vertical rule.
+        "target": [1.5, None],
+        "trend": [[1.0, 1.2, 1.4], [-0.1, -0.3, -0.4]],
+        "guard_low": [0.9, -0.6],
+        "guard_high": [1.6, 0.0],
+    }
+)
+
+(
+    ct.CoefTable(annotated, rows="metric")
+    .estimate("Effect", "estimate", ci=("lower", "upper"))
+    .forest(
+        "Effect plot",
+        of="Effect",
+        annotations=(ct.Rule("target", axis="x"),),
+    )
+    .sparkline(
+        "Trend",
+        value="trend",
+        annotations=(ct.Band("guard_low", "guard_high", axis="y"),),
+    )
+)
+```
+
+Forest annotations use `axis="x"` only. Sparklines accept `axis="x"` and
+`axis="y"`; use the former for a shared time or sequence position and the
+latter for a value threshold or range. `layer="underlay"` (the default for
+bands) draws before the plot; `layer="overlay"` (the default for rules) draws
+after it. `affect_domain=True` by default expands an automatic axis domain to
+include the annotation; set it to `False` to keep the existing domain and
+allow the mark to be clipped. `ylim` overrides the Forest x-domain and the
+Sparkline y-domain, so annotations on those axes do not expand them. Sparkline
+x annotations still participate in their shared x-domain; `max_ylim` can cap
+the Sparkline y-domain and clip or omit distant marks. Annotations supplement
+rather than replace
+`ref`: `ref` remains the built-in semantic reference that controls colors and
+its optional dashed line.
