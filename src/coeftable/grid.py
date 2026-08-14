@@ -32,24 +32,6 @@ def _ordered_unique(values: list[Any], *, sort: bool) -> list[Any]:
     return sorted(seen, key=str) if sort else seen
 
 
-def _first_source(
-    source_index: dict[tuple[tuple[Any, Any], Any], int],
-    identity: tuple[Any, Any],
-    splits: list[Any],
-) -> int:
-    """Return the input row backing `identity`, preferring the first split value.
-
-    Split-column data is often sparse, so the first split value may have no row
-    for a given identity. Falling back to any split keeps layout metadata such
-    as the row-group value resolvable.
-    """
-    for split in splits:
-        found = source_index.get((identity, split))
-        if found is not None:
-            return found
-    raise KeyError(f"No input row for {identity!r} under any split value.")
-
-
 @dataclass(frozen=True)
 class Grid:
     """Row identity and ordering for one resolved table, independent of column kind.
@@ -57,23 +39,23 @@ class Grid:
     Parameters
     ----------
     ordered
-        Output rows as `(row key, nest key)` identities, in display order.
-    unique_rows
-        Distinct row keys, in the same order banding and dividers key off.
+        Output rows as `(row key, nest key, group)` identities, in display
+        order: group-major, then row-key order within each group, matching the
+        order `great_tables` renders them in.
     splits
         Distinct split-column values, in display order, or `[None]` when the
         table has no split column.
     source_index
-        Maps `((row key, nest key), split)` to the input frame row backing it.
+        Maps `((row key, nest key, group), split)` to the input frame row
+        backing it.
     row_group
-        The row-group value for each `ordered` position, falling back across
-        splits via `_first_source` when the first split has no data there.
+        The row-group value for each `ordered` position, read straight off the
+        identity.
     """
 
-    ordered: list[tuple[Any, Any]]
-    unique_rows: list[Any]
+    ordered: list[tuple[Any, Any, Any]]
     splits: list[Any]
-    source_index: dict[tuple[tuple[Any, Any], Any], int]
+    source_index: dict[tuple[tuple[Any, Any, Any], Any], int]
     row_group: list[Any]
 
 
@@ -106,37 +88,46 @@ def build_grid(
     Raises
     ------
     SpecError
-        When the same (rows, nest, split_columns) combination appears more
-        than once in the input frame.
+        When the same (rows, nest, groups, split_columns) combination appears
+        more than once in the input frame.
     """
     n = len(row_keys)
-    identities = [(row_keys[i], nest_keys[i]) for i in range(n)]
-    unique_rows = _ordered_unique([r for r, _ in identities], sort=sort_rows)
-    ordered: list[tuple[Any, Any]] = []
-    for row_key in unique_rows:
-        for identity in identities:
-            if identity[0] == row_key and identity not in ordered:
-                ordered.append(identity)
+    identities = [(row_keys[i], nest_keys[i], group_keys[i]) for i in range(n)]
+    unique_rows = _ordered_unique([r for r, _, _ in identities], sort=sort_rows)
+    # Groups keep input order regardless of `sort_rows`, matching what
+    # `great_tables` would have done, so no existing table's group order moves.
+    unique_groups = _ordered_unique(group_keys, sort=False)
+
+    # Group-major: rows are laid out in the same order they render in, so the
+    # band/divider indices computed below stay valid. Ordering by row key alone
+    # would leave `great_tables` to regroup, desynchronising those indices from
+    # what the reader sees whenever a group's rows are not already adjacent.
+    ordered: list[tuple[Any, Any, Any]] = []
+    for group in unique_groups:
+        for row_key in unique_rows:
+            for identity in identities:
+                if identity[0] == row_key and identity[2] == group and identity not in ordered:
+                    ordered.append(identity)
 
     splits = _ordered_unique(split_keys, sort=sort_rows) if has_splits else [None]
-    source_index: dict[tuple[tuple[Any, Any], Any], int] = {}
+    source_index: dict[tuple[tuple[Any, Any, Any], Any], int] = {}
     for i in range(n):
         key = (identities[i], split_keys[i])
         if key in source_index:
-            row_label, nest_label = identities[i]
+            row_label, nest_label, group_label = identities[i]
             extra = f", split={split_keys[i]!r}" if split_keys[i] is not None else ""
             raise SpecError(
-                f"Duplicate input row for row={row_label!r}, nest={nest_label!r}{extra}"
-                f" — each (rows, nest, split_columns) combination "
+                f"Duplicate input row for row={row_label!r}, nest={nest_label!r}, "
+                f"group={group_label!r}{extra}"
+                f" — each (rows, nest, groups, split_columns) combination "
                 f"must appear at most once."
             )
         source_index[key] = i
 
-    row_group = [group_keys[_first_source(source_index, identity, splits)] for identity in ordered]
+    row_group = [identity[2] for identity in ordered]
 
     return Grid(
         ordered=ordered,
-        unique_rows=unique_rows,
         splits=splits,
         source_index=source_index,
         row_group=row_group,
@@ -235,23 +226,26 @@ def assemble_rows(
             cells[name].append("")
 
     previous_row_key_by_group: dict[Any, Any] = {}
-    for position, (row_key, nest_key) in enumerate(grid.ordered):
+    block_index = -1
+    for position, (row_key, nest_key, _group) in enumerate(grid.ordered):
         group = grid.row_group[position]
-        # `great_tables`' `groupname_col` (see `render.py`) collects rows
-        # into contiguous per-group blocks for *display*, independent of
-        # this row-key-major physical order (`grid.ordered`). A row key
-        # spanning more than one group -- e.g. "Revenue" appearing under
-        # both "US" and "EU" -- is therefore not adjacent to its own
-        # prior occurrence once grouped; tracking "first occurrence"
-        # per group (rather than one running `previous_row_key`) keeps
-        # the label shown once per group block, matching what actually
-        # renders, instead of blanking every occurrence after the first
-        # anywhere in the table.
+        # A row key may appear under more than one group -- e.g. "Revenue"
+        # under both "US" and "EU" -- so it is not adjacent to its own prior
+        # occurrence. Tracking "first occurrence" per group (rather than one
+        # running `previous_row_key`) keeps the label shown once per group
+        # block instead of blanking every occurrence after the first anywhere
+        # in the table.
         previous_row_key = previous_row_key_by_group.get(group)
         first_of_key = row_key != previous_row_key
         if first_of_key and previous_row_key is not None:
             divider_rows.append(len(layout_rows))
-        if grid.unique_rows.index(row_key) % 2 == 0:
+        # Banding alternates over row-key blocks in display order. Keying off a
+        # global index into the distinct row keys would stripe two adjacent
+        # blocks the same shade whenever a row key spans groups, or groups
+        # interleave.
+        if first_of_key:
+            block_index += 1
+        if block_index % 2 == 0:
             band_rows.append(len(layout_rows))
         layout_rows.append(f"<b>{row_key}</b>" if first_of_key else "")
         layout_nest.append("" if nest_key is None else str(nest_key))

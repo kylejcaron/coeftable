@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from itertools import combinations
 from typing import Any
 
 import narwhals as nw
@@ -125,6 +126,19 @@ def resolve(table: CoefTable) -> Resolved:
                 f"(rows/nest/groups key {column.label!r}); choose a different label."
             )
 
+    # Two layout roles naming the same column collide in the output frame,
+    # which `resolve()` builds keyed by column name -- the later write
+    # silently discards the earlier role's values, so the table renders with
+    # one role's layout missing. Reject it rather than emit a corrupt table.
+    roles = [("rows", table.rows), ("nest", table.nest), ("groups", table.groups)]
+    named = [(role, key) for role, key in roles if key is not None]
+    for (first_role, first_key), (second_role, second_key) in combinations(named, 2):
+        if first_key == second_key:
+            raise SpecError(
+                f"Layout keys {first_role}= and {second_role}= both name column "
+                f"{first_key!r}; each layout role needs its own column."
+            )
+
     # The overlaid `series` dimension cannot also be a table axis: the
     # table's row structure already spends whichever of these an
     # identity maps to, so naming the same column both ways is
@@ -160,6 +174,7 @@ def resolve(table: CoefTable) -> Resolved:
         split_keys=split_keys,
         rows=table.rows,
         nest=table.nest,
+        groups=table.groups,
         split_columns=table.split_columns,
     )
     prepared: list[Prepared] = [column.prepare(scan) for column in table.columns]
@@ -192,11 +207,11 @@ def resolve(table: CoefTable) -> Resolved:
 
     # Cell pass: one call to `column.cell` per (row, split, column).
     cell_values: dict[str, list[str]] = {name: [] for name in display_columns}
-    for position, (row_key, nest_key) in enumerate(grid.ordered):
+    for position, (row_key, nest_key, identity_group) in enumerate(grid.ordered):
         direction = table.direction_for(str(row_key))
         group = grid.row_group[position]
         for split in grid.splits:
-            index = grid.source_index.get(((row_key, nest_key), split))
+            index = grid.source_index.get(((row_key, nest_key, identity_group), split))
             for column, prep in zip(table.columns, prepared, strict=True):
                 name = output_name(column, split)
                 if index is None:
@@ -225,7 +240,7 @@ def resolve(table: CoefTable) -> Resolved:
             key_fn = prep.footer_key
             footer_keys[column.label] = [
                 [key_fn(row_key, group, split) for split in grid.splits]
-                for (row_key, _nest), group in zip(grid.ordered, grid.row_group, strict=True)
+                for (row_key, _nest, group) in grid.ordered
             ]
     # A footer's domain is table-wide only when the column itself says so
     # (see `Prepared.shared_footer`) -- inferring it from `scale` would be

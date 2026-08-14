@@ -1402,3 +1402,108 @@ def test_series_overlay_legend_omits_an_arm_that_never_renders_anywhere():
     assert ">control<" in axis_cell
     assert ">treatment<" in axis_cell
     assert ">phantom<" not in axis_cell
+
+
+def _spanning_companion_table(companion):
+    """A table whose row label appears under two groups, plus a series column."""
+    summary = pl.DataFrame(
+        {
+            "metric": ["Revenue", "Revenue"],
+            "region": ["US", "EU"],
+            "att": [1.7, 0.3],
+        }
+    )
+    return CoefTable(summary, rows="metric", groups="region").sparkline(
+        "Trend", value="v", x="day", data=companion
+    )
+
+
+def test_companion_series_are_per_group_when_data_carries_the_group_column():
+    # "Revenue" appears under both regions, whose series move in opposite
+    # directions. Joining on (row, nest, split) alone would merge both regions'
+    # points into one zigzag and draw it identically in both rows.
+    companion = pd.DataFrame(
+        {
+            "metric": ["Revenue"] * 6,
+            "region": ["US", "US", "US", "EU", "EU", "EU"],
+            "day": [0, 1, 2, 0, 1, 2],
+            "v": [1.0, 2.0, 3.0, 3.0, 2.0, 1.0],
+        }
+    )
+    out = resolve(_spanning_companion_table(companion))
+    frame = nw.from_native(out.frame)
+    # Group-major layout: US block first, then EU.
+    assert frame["region"].to_list()[:2] == ["US", "EU"]
+    matches = [
+        re.search(r'<polyline[^>]*points="([^"]*)"', cell) for cell in frame["Trend"].to_list()[:2]
+    ]
+    assert all(m is not None for m in matches)
+    us_points, eu_points = (m.group(1) for m in matches if m is not None)
+    assert us_points != eu_points
+    # US ascends, EU descends. SVG y grows downward, so the ordering inverts.
+    us_y = [float(p.split(",")[1]) for p in us_points.split()]
+    eu_y = [float(p.split(",")[1]) for p in eu_points.split()]
+    assert us_y == sorted(us_y, reverse=True)
+    assert eu_y == sorted(eu_y)
+
+
+def test_companion_without_the_group_column_rejects_a_group_spanning_row():
+    # Without the group column the companion frame cannot tell the two Revenue
+    # rows apart, so silently serving both the same merged series would be
+    # wrong. Demand the column instead.
+    companion = pd.DataFrame({"metric": ["Revenue", "Revenue"], "day": [0, 1], "v": [1.0, 2.0]})
+    with pytest.raises(SpecError, match="no 'region' column"):
+        resolve(_spanning_companion_table(companion))
+
+
+def test_companion_without_the_group_column_still_works_when_no_row_spans_groups():
+    # The common shape -- a companion keyed only on the row -- stays valid when
+    # each row label belongs to exactly one group.
+    summary = pl.DataFrame(
+        {"metric": ["Revenue", "Signups"], "region": ["US", "EU"], "att": [1.7, 0.3]}
+    )
+    companion = pd.DataFrame(
+        {
+            "metric": ["Revenue", "Revenue", "Signups", "Signups"],
+            "day": [0, 1, 0, 1],
+            "v": [1.0, 2.0, 5.0, 6.0],
+        }
+    )
+    table = CoefTable(summary, rows="metric", groups="region").sparkline(
+        "Trend", value="v", x="day", data=companion
+    )
+    plots = nw.from_native(resolve(table).frame)["Trend"].to_list()
+    assert "<polyline" in plots[0]
+    assert "<polyline" in plots[1]
+
+
+def test_companion_group_and_series_arms_resolve_independently():
+    # groups x per-arm is a distinct code path from the plain per-identity one
+    # (`series.py` keys `arm_groups` on a 5-tuple), so the group must reach it
+    # too. Same metric and same two arms under both regions, with each
+    # (region, arm) pair given its own level.
+    levels = {
+        ("US", "control"): 1.0,
+        ("US", "treat"): 2.0,
+        ("EU", "control"): 3.0,
+        ("EU", "treat"): 4.0,
+    }
+    companion = pd.DataFrame(
+        [
+            {"metric": "Revenue", "region": region, "arm": arm, "day": day, "v": level + day}
+            for (region, arm), level in levels.items()
+            for day in (0, 1)
+        ]
+    )
+    summary = pl.DataFrame({"metric": ["Revenue", "Revenue"], "region": ["US", "EU"]})
+    table = CoefTable(summary, rows="metric", groups="region").sparkline(
+        "Trend", value="v", x="day", data=companion, series="arm"
+    )
+    out = resolve(table)
+    frame = nw.from_native(out.frame)
+    assert frame["region"].to_list()[:2] == ["US", "EU"]
+    us_cell, eu_cell = frame["Trend"].to_list()[:2]
+    # Two arms drawn in each cell, and the two regions' cells differ.
+    assert us_cell.count("<polyline") == 2
+    assert eu_cell.count("<polyline") == 2
+    assert us_cell != eu_cell

@@ -50,7 +50,10 @@ a `parameter` column.
 **Dimensions:**
 - `rows` — the label for each row in the table (e.g. a metric name).
 - `nest` — an optional secondary label stacked below each row.
-- `groups` — an optional column whose values produce section headers. Pass
+- `groups` — an optional column whose values produce section headers. A row
+  label may appear under more than one group, in which case it renders once per
+  section — so the same set of metrics can be reported per region without
+  inventing a `nest` column to tell them apart. Pass
   `collapsible_groups=True` to make those sections collapsible in the rendered
   HTML — a pure CSS toggle (relies on `:has()`, Baseline since late 2023; on an
   older browser without it the toggle no-ops and sections stay expanded), no
@@ -128,6 +131,34 @@ methods = pl.DataFrame(
 )
 ```
 
+## Repeating metrics across sections
+
+A row label may appear under more than one `groups` value. The same metrics can
+therefore be reported per region, each section repeating the full set:
+
+```python
+import polars as pl
+import coeftable as ct
+
+regions = pl.DataFrame(
+    {
+        "metric": ["Revenue", "Signups", "Revenue", "Signups"],
+        "region": ["US", "US", "EU", "EU"],
+        "est": [1.2, 0.4, 2.1, 0.9],
+        "lb": [0.8, 0.1, 1.5, 0.5],
+        "ub": [1.6, 0.7, 2.7, 1.3],
+    }
+)
+
+(
+    ct.CoefTable(
+        regions, rows="metric", groups="region", collapsible_groups=True
+    )
+    .estimate("Effect", "est", ci=("lb", "ub"))
+    .forest("Effect Plot", of="Effect", ref=0.0, symmetric=True)
+)
+```
+
 ## Theming
 
 Four built-in themes are available from `coeftable.theme`:
@@ -182,8 +213,13 @@ companion-frame choice used elsewhere in coeftable:
 arrives in: a SQL export, a dbt model, an experimentation platform's daily
 metrics table. Pass `data=` a separate frame with one row per point, and
 `value` / `ci` / `x` name *scalar* columns on it. coeftable groups the
-companion frame by the table's `rows` (+ `nest`, + `split_columns`) keys
-and collapses each group into a series internally:
+companion frame by the table's `rows` (+ `nest`, + `groups`, +
+`split_columns`) keys and collapses each group into a series internally.
+`groups` participates only when `data` actually carries that column, so a
+companion frame keyed on the row alone stays valid. The one case that needs
+it is a row label appearing under more than one group: without the group
+column in `data` those rows are indistinguishable, so coeftable reports it
+rather than serving every section the same merged series.
 
 ```python
 import datetime as dt

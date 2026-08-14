@@ -282,49 +282,55 @@ def _sorted_by_x(series: Series) -> Series:
 @overload
 def resolve_companion_series(
     data: Any,
-    identities: list[tuple[Any, Any, Any]],
+    identities: list[tuple[Any, Any, Any, Any]],
     *,
     rows: str | None,
     nest: str | None,
+    groups: str | None,
     split_columns: str | None,
     value: str,
     ci: tuple[str, str] | None = None,
     x: str | None = None,
     series: None = None,
-) -> dict[tuple[Any, Any, Any], Series]: ...
+) -> dict[tuple[Any, Any, Any, Any], Series]: ...
 
 
 @overload
 def resolve_companion_series(
     data: Any,
-    identities: list[tuple[Any, Any, Any]],
+    identities: list[tuple[Any, Any, Any, Any]],
     *,
     rows: str | None,
     nest: str | None,
+    groups: str | None,
     split_columns: str | None,
     value: str,
     ci: tuple[str, str] | None = None,
     x: str | None = None,
     series: str,
-) -> dict[tuple[Any, Any, Any], list[tuple[Any, Series]]]: ...
+) -> dict[tuple[Any, Any, Any, Any], list[tuple[Any, Series]]]: ...
 
 
 def resolve_companion_series(
     data: Any,
-    identities: list[tuple[Any, Any, Any]],
+    identities: list[tuple[Any, Any, Any, Any]],
     *,
     rows: str | None,
     nest: str | None,
+    groups: str | None,
     split_columns: str | None,
     value: str,
     ci: tuple[str, str] | None = None,
     x: str | None = None,
     series: str | None = None,
-) -> dict[tuple[Any, Any, Any], Series] | dict[tuple[Any, Any, Any], list[tuple[Any, Series]]]:
+) -> (
+    dict[tuple[Any, Any, Any, Any], Series]
+    | dict[tuple[Any, Any, Any, Any], list[tuple[Any, Series]]]
+):
     """Resolve a `Series` (or per-arm `Series` list) per row identity from a companion frame.
 
     The companion-frame front door: `value` (and `ci`, `x` when given) name
-    *scalar* columns in `data`, grouped by the same `(rows, nest,
+    *scalar* columns in `data`, grouped by the same `(rows, nest, groups,
     split_columns)` identity the main table uses and collapsed into list
     form. Each group is sorted by `x` ascending (a missing `x` sorts last);
     when `x` is not given, points keep `data`'s row order and are indexed
@@ -342,16 +348,18 @@ def resolve_companion_series(
     data
         The companion frame: any frame narwhals can read.
     identities
-        `(row key, nest key, split key)` triples the main table needs a
-        series for, e.g. one per main-frame row. An identity absent from
-        `data` gets an empty `Series` (renders as a blank cell, consistent
-        with how `resolve` blanks a missing split).
-    rows, nest, split_columns
+        `(row key, nest key, group key, split key)` tuples the main table
+        needs a series for, e.g. one per main-frame row. An identity absent
+        from `data` gets an empty `Series` (renders as a blank cell,
+        consistent with how `resolve` blanks a missing split).
+    rows, nest, groups, split_columns
         The main table's layout-key column names, as declared on
         `CoefTable`; `None` mirrors `resolve`'s fallback for an undeclared
-        key (`""` for `rows`, `None` for `nest`/`split_columns`) so
+        key (`""` for `rows`, `None` for `nest`/`groups`/`split_columns`) so
         identities line up with the ones `resolve` computes for the main
-        frame.
+        frame. `groups` is part of the identity because a row label may
+        appear under more than one group; omitting it would merge every
+        group's points into one series.
     value
         `data` column holding each point's y value.
     ci
@@ -365,7 +373,8 @@ def resolve_companion_series(
 
     Returns
     -------
-    dict[tuple[Any, Any, Any], Series] or dict[tuple[Any, Any, Any], list[tuple[Any, Series]]]
+    dict[tuple[Any, Any, Any, Any], Series] or
+    dict[tuple[Any, Any, Any, Any], list[tuple[Any, Series]]]
         One `Series` per requested identity when `series` is `None`;
         otherwise one `(arm value, Series)` list per identity.
 
@@ -380,6 +389,7 @@ def resolve_companion_series(
     n = len(frame)
     c_row_keys = _nan_to_none(frame[rows].to_list()) if rows else [""] * n
     c_nest_keys = _nan_to_none(frame[nest].to_list()) if nest else [None] * n
+    c_group_keys = _nan_to_none(frame[groups].to_list()) if groups else [None] * n
     c_split_keys = _nan_to_none(frame[split_columns].to_list()) if split_columns else [None] * n
     y_all = frame[value].to_list()
     lower_all = frame[ci[0]].to_list() if ci is not None else None
@@ -397,13 +407,15 @@ def resolve_companion_series(
         return _sorted_by_x(built) if x_all is not None else built
 
     if series is None:
-        groups: dict[tuple[Any, Any, Any], list[int]] = {}
+        grouped: dict[tuple[Any, Any, Any, Any], list[int]] = {}
         for i in range(n):
-            groups.setdefault((c_row_keys[i], c_nest_keys[i], c_split_keys[i]), []).append(i)
+            grouped.setdefault(
+                (c_row_keys[i], c_nest_keys[i], c_group_keys[i], c_split_keys[i]), []
+            ).append(i)
 
-        out: dict[tuple[Any, Any, Any], Series] = {}
+        out: dict[tuple[Any, Any, Any, Any], Series] = {}
         for identity in dict.fromkeys(identities):
-            indices = groups.get(identity)
+            indices = grouped.get(identity)
             out[identity] = (
                 Series(x=[], y=[], lower=[], upper=[], x_temporal=False)
                 if not indices
@@ -412,17 +424,17 @@ def resolve_companion_series(
         return out
 
     c_arm_keys = _nan_to_none(frame[series].to_list())
-    arm_groups: dict[tuple[Any, Any, Any, Any], list[int]] = {}
-    arms_by_identity: dict[tuple[Any, Any, Any], list[Any]] = {}
+    arm_groups: dict[tuple[Any, Any, Any, Any, Any], list[int]] = {}
+    arms_by_identity: dict[tuple[Any, Any, Any, Any], list[Any]] = {}
     for i in range(n):
-        identity = (c_row_keys[i], c_nest_keys[i], c_split_keys[i])
+        identity = (c_row_keys[i], c_nest_keys[i], c_group_keys[i], c_split_keys[i])
         arm_key = c_arm_keys[i]
         arm_groups.setdefault((*identity, arm_key), []).append(i)
         arms = arms_by_identity.setdefault(identity, [])
         if arm_key not in arms:
             arms.append(arm_key)
 
-    out_multi: dict[tuple[Any, Any, Any], list[tuple[Any, Series]]] = {}
+    out_multi: dict[tuple[Any, Any, Any, Any], list[tuple[Any, Series]]] = {}
     for identity in dict.fromkeys(identities):
         arm_keys = sorted(arms_by_identity.get(identity, []), key=lambda v: (v is None, v))
         out_multi[identity] = [

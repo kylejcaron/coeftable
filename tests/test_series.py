@@ -72,28 +72,30 @@ def test_companion_frame_matches_list_columns(make):
     )
     companion = resolve_companion_series(
         make(COMPANION_RAW),
-        [("Revenue", None, None), ("Latency", None, None)],
+        [("Revenue", None, None, None), ("Latency", None, None, None)],
         rows="metric",
         nest=None,
+        groups=None,
         split_columns=None,
         value="y",
         ci=("lb", "ub"),
         x="day",
     )
-    assert companion[("Revenue", None, None)] == list_series[0]
-    assert companion[("Latency", None, None)] == list_series[1]
+    assert companion[("Revenue", None, None, None)] == list_series[0]
+    assert companion[("Latency", None, None, None)] == list_series[1]
 
 
 def test_missing_identity_in_companion_frame_yields_empty_series(make):
     result = resolve_companion_series(
         make(COMPANION_RAW),
-        [("Revenue", None, None), ("Ghost", None, None)],
+        [("Revenue", None, None, None), ("Ghost", None, None, None)],
         rows="metric",
         nest=None,
+        groups=None,
         split_columns=None,
         value="y",
     )
-    assert result[("Ghost", None, None)] == Series(
+    assert result[("Ghost", None, None, None)] == Series(
         x=[], y=[], lower=[], upper=[], x_temporal=False
     )
 
@@ -112,33 +114,35 @@ def test_companion_frame_groups_by_nest_and_split(make):
     result = resolve_companion_series(
         make(raw),
         [
-            ("Revenue", "A", "US"),
-            ("Revenue", "A", "EU"),
-            ("Revenue", "B", "US"),
-            ("Revenue", "B", "EU"),
+            ("Revenue", "A", None, "US"),
+            ("Revenue", "A", None, "EU"),
+            ("Revenue", "B", None, "US"),
+            ("Revenue", "B", None, "EU"),
         ],
         rows="metric",
         nest="variant",
+        groups=None,
         split_columns="region",
         value="y",
     )
-    assert result[("Revenue", "A", "US")].y == [1.0]
-    assert result[("Revenue", "A", "EU")].y == [2.0]
-    assert result[("Revenue", "B", "US")].y == [3.0]
-    assert result[("Revenue", "B", "EU")].y == [4.0]
+    assert result[("Revenue", "A", None, "US")].y == [1.0]
+    assert result[("Revenue", "A", None, "EU")].y == [2.0]
+    assert result[("Revenue", "B", None, "US")].y == [3.0]
+    assert result[("Revenue", "B", None, "EU")].y == [4.0]
 
 
 def test_companion_frame_without_x_keeps_row_order(make):
     raw = {"metric": ["Revenue", "Revenue"], "y": [20.0, 10.0]}
     result = resolve_companion_series(
         make(raw),
-        [("Revenue", None, None)],
+        [("Revenue", None, None, None)],
         rows="metric",
         nest=None,
+        groups=None,
         split_columns=None,
         value="y",
     )
-    series = result[("Revenue", None, None)]
+    series = result[("Revenue", None, None, None)]
     assert series.x == [0.0, 1.0]
     assert series.y == [20.0, 10.0]
 
@@ -177,9 +181,15 @@ def test_nullable_pandas_sentinels_become_none():
         {"metric": ["Revenue", "Revenue"], "y": pd.array([1.0, None], dtype="Float64")}
     )
     result = resolve_companion_series(
-        pdf, [("Revenue", None, None)], rows="metric", nest=None, split_columns=None, value="y"
+        pdf,
+        [("Revenue", None, None, None)],
+        rows="metric",
+        nest=None,
+        groups=None,
+        split_columns=None,
+        value="y",
     )
-    assert result[("Revenue", None, None)].y == [1.0, None]
+    assert result[("Revenue", None, None, None)].y == [1.0, None]
 
     pdf2 = pd.DataFrame(
         {
@@ -190,14 +200,15 @@ def test_nullable_pandas_sentinels_become_none():
     )
     result2 = resolve_companion_series(
         pdf2,
-        [("Revenue", None, None)],
+        [("Revenue", None, None, None)],
         rows="metric",
         nest=None,
+        groups=None,
         split_columns=None,
         value="y",
         x="day",
     )
-    series = result2[("Revenue", None, None)]
+    series = result2[("Revenue", None, None, None)]
     assert series.x_temporal is True
     expected_first = (dt.datetime(2024, 1, 1) - dt.datetime(1970, 1, 1)).total_seconds()
     assert series.x == [expected_first, None]
@@ -215,14 +226,15 @@ def test_pandas_companion_null_key_matches_none_identity():
     )
     result = resolve_companion_series(
         companion,
-        [("A", "X", None), ("A", None, None)],
+        [("A", "X", None, None), ("A", None, None, None)],
         rows="metric",
         nest="variant",
+        groups=None,
         split_columns=None,
         value="y_val",
     )
-    assert result[("A", "X", None)].y == [100.0]
-    assert result[("A", None, None)].y == [200.0]
+    assert result[("A", "X", None, None)].y == [100.0]
+    assert result[("A", None, None, None)].y == [200.0]
 
 
 def test_temporal_x_normalises_with_correct_relative_spacing(make):
@@ -283,15 +295,16 @@ def test_series_arg_groups_each_identity_into_per_arm_series(make):
     }
     result = resolve_companion_series(
         make(raw),
-        [("Revenue", None, None)],
+        [("Revenue", None, None, None)],
         rows="metric",
         nest=None,
+        groups=None,
         split_columns=None,
         value="y",
         x="day",
         series="arm",
     )
-    arms = dict(result[("Revenue", None, None)])
+    arms = dict(result[("Revenue", None, None, None)])
     assert arms["control"].y == [1.0, 2.0]
     assert arms["treatment"].y == [10.0, 20.0]
 
@@ -304,14 +317,15 @@ def test_series_arg_sorts_arms_ascending_with_none_last(make):
     }
     result = resolve_companion_series(
         make(raw),
-        [("Revenue", None, None)],
+        [("Revenue", None, None, None)],
         rows="metric",
         nest=None,
+        groups=None,
         split_columns=None,
         value="y",
         series="arm",
     )
-    arm_keys = [key for key, _ in result[("Revenue", None, None)]]
+    arm_keys = [key for key, _ in result[("Revenue", None, None, None)]]
     assert arm_keys == ["a", "b", "c", None]
 
 
@@ -326,15 +340,16 @@ def test_series_arg_independent_gaps_per_arm(make):
     }
     result = resolve_companion_series(
         make(raw),
-        [("Revenue", None, None)],
+        [("Revenue", None, None, None)],
         rows="metric",
         nest=None,
+        groups=None,
         split_columns=None,
         value="y",
         x="day",
         series="arm",
     )
-    arms = dict(result[("Revenue", None, None)])
+    arms = dict(result[("Revenue", None, None, None)])
     assert arms["control"].y == [1.0, None, 3.0]
     assert arms["treatment"].y == [10.0, 20.0, 30.0]
 
@@ -343,11 +358,12 @@ def test_series_arg_identity_with_no_rows_resolves_empty_list(make):
     raw = {"metric": ["Revenue"], "arm": ["control"], "y": [1.0]}
     result = resolve_companion_series(
         make(raw),
-        [("Revenue", None, None), ("Ghost", None, None)],
+        [("Revenue", None, None, None), ("Ghost", None, None, None)],
         rows="metric",
         nest=None,
+        groups=None,
         split_columns=None,
         value="y",
         series="arm",
     )
-    assert result[("Ghost", None, None)] == []
+    assert result[("Ghost", None, None, None)] == []

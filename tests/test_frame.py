@@ -116,11 +116,11 @@ def test_groups_column_is_reported():
 
 
 def _group_spanning_row_key_table():
-    # "Revenue" spans both "US" and "EU" groups: its two group-blocks are
-    # not adjacent in row-key-major physical order (`grid.ordered`), which
-    # `great_tables`' `groupname_col` nonetheless renders as contiguous
-    # per-group blocks. Shared by both the row-label and divider tests
-    # below, which assert different facets of the same resolved table.
+    # "Revenue" spans both "US" and "EU" groups. Rows are laid out group-major,
+    # so the US block (v1, v2, v4) comes first and the EU block (v3) second --
+    # the same order `great_tables` renders them in. Shared by both the
+    # row-label and divider tests below, which assert different facets of the
+    # same resolved table.
     raw = pd.DataFrame(
         [
             {"metric": "Revenue", "variant": "v1", "region": "US", "val": 1.0},
@@ -142,15 +142,15 @@ def test_row_label_survives_groupname_col_reordering_a_row_keys_nest_values():
     # section.
     out = _group_spanning_row_key_table()
     frame = nw.from_native(out.frame)
-    # Physical order stays row-key-major: (Revenue,v1) (Revenue,v2)
-    # (Revenue,v3) (Latency,v4). The second Revenue row (v2) is a
-    # legitimate same-group repeat and still blanks; the third (v3)
-    # starts a NEW group (EU) and must show its label.
+    # Layout order is group-major: US (Revenue,v1) (Revenue,v2) (Latency,v4),
+    # then EU (Revenue,v3). The second Revenue row (v2) is a legitimate
+    # same-group repeat and still blanks; the EU occurrence starts a NEW group
+    # block and must show its label again.
     assert frame["metric"].to_list() == [
         "<b>Revenue</b>",
         "",
-        "<b>Revenue</b>",
         "<b>Latency</b>",
+        "<b>Revenue</b>",
     ]
 
 
@@ -162,10 +162,70 @@ def test_dividers_land_on_true_within_group_key_transitions_not_group_boundaries
     # the two Revenue rows before it is a genuine key transition and must
     # still get one.
     out = _group_spanning_row_key_table()
-    # Row 2 (index 2, the EU/Revenue row) gets no divider: it's a new
-    # group's first row, not a within-group transition. Row 3 (Latency,
-    # still within the US group) is a real transition and does.
-    assert out.divider_rows == [3]
+    # Latency (index 2) is a genuine within-US key transition and gets one.
+    # EU's Revenue (index 3) starts a brand new group block, so it does not.
+    assert out.divider_rows == [2]
+
+
+def test_row_label_may_appear_under_more_than_one_group():
+    # A row label under two groups is one row per (group, label) pair. Before
+    # the group joined row identity this raised SpecError, because identity was
+    # (rows, nest) only and "Revenue" collided with itself across regions.
+    raw = pd.DataFrame(
+        [
+            {"metric": "Revenue", "region": "US", "val": 1.0},
+            {"metric": "Revenue", "region": "EU", "val": 2.0},
+            {"metric": "Signups", "region": "US", "val": 3.0},
+            {"metric": "Signups", "region": "EU", "val": 4.0},
+        ]
+    )
+    out = resolve(CoefTable(raw, rows="metric", groups="region").passthrough("Val", "val"))
+    frame = nw.from_native(out.frame)
+    assert frame["region"].to_list() == ["US", "US", "EU", "EU"]
+    # Each group block re-shows the label rather than blanking the repeat.
+    assert frame["metric"].to_list() == [
+        "<b>Revenue</b>",
+        "<b>Signups</b>",
+        "<b>Revenue</b>",
+        "<b>Signups</b>",
+    ]
+    # Every cell resolves against its own (label, group) row: a stale identity
+    # lookup would blank or cross-wire one group. US(1.0, 3.0), EU(2.0, 4.0).
+    assert frame["Val"].to_list() == ["1.0", "3.0", "2.0", "4.0"]
+
+
+def test_striping_alternates_when_input_interleaves_groups():
+    # Rows arrive interleaved across groups, so laying out by row label alone
+    # would put both Growth rows on the same stripe parity and leave the whole
+    # Onboarding block unstriped once `great_tables` regrouped them.
+    raw = pd.DataFrame(
+        [
+            {"metric": "Revenue", "area": "Growth", "val": 1.0},
+            {"metric": "Retention", "area": "Onboarding", "val": 2.0},
+            {"metric": "Signups", "area": "Growth", "val": 3.0},
+            {"metric": "Churn", "area": "Onboarding", "val": 4.0},
+        ]
+    )
+    out = resolve(CoefTable(raw, rows="metric", groups="area").passthrough("Val", "val"))
+    frame = nw.from_native(out.frame)
+    # Layout order is the rendered order, so the indices below are the ones a
+    # reader sees: Growth(Revenue, Signups) then Onboarding(Retention, Churn).
+    assert frame["area"].to_list() == ["Growth", "Growth", "Onboarding", "Onboarding"]
+    assert out.band_rows == [0, 2]
+
+
+def test_duplicate_rows_within_one_group_still_raise():
+    # Widening identity with the group must not weaken the check: same label,
+    # same nest and same group is still a genuine duplicate.
+    raw = pd.DataFrame(
+        [
+            {"metric": "Revenue", "region": "US", "val": 1.0},
+            {"metric": "Revenue", "region": "US", "val": 2.0},
+        ]
+    )
+    table = CoefTable(raw, rows="metric", groups="region").passthrough("Val", "val")
+    with pytest.raises(SpecError, match="Duplicate input row"):
+        resolve(table)
 
 
 def test_missing_value_column_raises_with_available_columns():
@@ -339,6 +399,33 @@ def test_layout_column_collision_raises_spec_error():
     )
     with pytest.raises(SpecError, match="collides with layout"):
         resolve(table)
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "expected"),
+    [
+        ({"rows": "metric", "nest": "metric"}, "rows= and nest="),
+        ({"rows": "metric", "groups": "metric"}, "rows= and groups="),
+        ({"nest": "metric", "groups": "metric"}, "nest= and groups="),
+    ],
+)
+def test_two_layout_roles_naming_one_column_raise_spec_error(kwargs, expected):
+    # The output frame is keyed by column name, so two roles sharing a name
+    # means one role's values are silently overwritten by the other's. The
+    # message must name both roles and the offending column, so that it says
+    # which column to rename.
+    table = CoefTable(pl.DataFrame(RAW), **kwargs).estimate(
+        "Lift %", "rel", ci=("rel_lb", "rel_ub")
+    )
+    with pytest.raises(SpecError, match=rf"{expected}.*'metric'"):
+        resolve(table)
+
+
+def test_distinct_layout_roles_resolve():
+    table = CoefTable(pl.DataFrame(RAW), rows="metric", nest="variant", groups="area").estimate(
+        "Lift %", "rel", ci=("rel_lb", "rel_ub")
+    )
+    assert resolve(table).group_column == "area"
 
 
 def test_duplicate_identity_rows_raise_spec_error():
