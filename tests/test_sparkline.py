@@ -6,16 +6,19 @@ import pandas as pd
 import polars as pl
 import pytest
 
+from coeftable import Band, Rule
 from coeftable.format import CIStyle, DateAxis
 from coeftable.frame import resolve
 from coeftable.spec import (
     Cell,
     CoefTable,
     ColumnNotFoundError,
+    Scan,
     Sparkline,
     SpecError,
     _bucket_domain,
     _clamp_domain,
+    _domain_key,
     _pad_domain,
     _resolve_role,
     _robust_domain,
@@ -922,12 +925,9 @@ def test_autoscale_robust_multi_row_bucket_narrows_around_the_bulk_and_flags_the
 
 
 def test_autoscale_robust_multi_row_bucket_with_an_empty_sibling_still_resolves():
-    # The anchor-tracking loop this test used to guard against crashing
-    # on ("_last_point returns None for an empty series") is gone
-    # entirely -- there is nothing left in prepare() that inspects a
-    # row's last point at all. What remains worth covering: pooling an
-    # empty sibling into a shared bucket must still resolve cleanly
-    # under autoscale="robust".
+    # Renderability intentionally uses `_last_point`, so this empty sibling
+    # is excluded before pooling values into the shared robust bucket. The
+    # resulting bucket must still resolve cleanly.
     raw = {"metric": ["Empty", "Spiking"], "lift": [[], [1.0, 1.05, 0.95, 300.0]]}
     table = CoefTable(pl.DataFrame(raw), rows="metric").sparkline(
         "Trend", value="lift", ref=1.0, scale="table", autoscale="robust"
@@ -1507,3 +1507,325 @@ def test_companion_group_and_series_arms_resolve_independently():
     assert us_cell.count("<polyline") == 2
     assert eu_cell.count("<polyline") == 2
     assert us_cell != eu_cell
+
+
+def _prepared_sparkline(
+    raw: pl.DataFrame,
+    column: Sparkline,
+    *,
+    rows: str | None = None,
+    groups: str | None = None,
+    split_columns: str | None = None,
+):
+    frame = nw.from_native(raw)
+    count = len(raw)
+    row_keys = raw[rows].to_list() if rows else list(range(count))
+    group_keys = raw[groups].to_list() if groups else [None] * count
+    split_keys = raw[split_columns].to_list() if split_columns else [None] * count
+    return column.prepare(
+        Scan(
+            frame=frame,
+            columns=(column,),
+            row_keys=row_keys,
+            nest_keys=[None] * count,
+            group_keys=group_keys,
+            split_keys=split_keys,
+            rows=rows,
+            nest=None,
+            groups=groups,
+            split_columns=split_columns,
+        )
+    ).payload
+
+
+def test_sparkline_field_annotations_target_one_row_and_both_axes():
+    raw = pl.DataFrame(
+        {
+            "metric": ["Revenue", "Latency"],
+            "value": [[1.0, 1.5, 2.0], [1.0, 0.8, 0.6]],
+            "x_rule": [1.0, None],
+            "guard_low": [0.9, None],
+            "guard_high": [1.1, None],
+        }
+    )
+    table = CoefTable(raw, rows="metric").sparkline(
+        "Trend",
+        value="value",
+        annotations=(
+            Rule("x_rule", axis="x", color="#123456"),
+            Band("guard_low", "guard_high", axis="y", color="#abcdef"),
+        ),
+        show_axis=False,
+    )
+    plots = nw.from_native(resolve(table).frame)["Trend"].to_list()
+    assert "#123456" in plots[0] and "#abcdef" in plots[0]
+    assert "#123456" not in plots[1] and "#abcdef" not in plots[1]
+
+
+def test_sparkline_builder_snapshots_annotations_and_main_frame_sources():
+    marks = [Rule("x_rule", axis="x")]
+    table = CoefTable(pl.DataFrame({"metric": ["A"], "x_rule": [2.0]}), rows="metric").sparkline(
+        "Trend", value="v", data=pl.DataFrame({"metric": ["A"], "v": [1.0]}), annotations=marks
+    )
+    marks.append(Rule(3.0, axis="y"))
+    column = table.columns[-1]
+    assert isinstance(column, Sparkline)
+    assert column.annotations == (Rule("x_rule", axis="x"),)
+    assert tuple(column.sources()) == ("x_rule",)
+
+
+def test_sparkline_temporal_literal_and_main_frame_field_x_annotations_align_to_series():
+    raw = pl.DataFrame(
+        {
+            "metric": ["A"],
+            "date": [DATES],
+            "value": [[1.0, 2.0, 3.0]],
+            "date_rule": [DATES[1]],
+        }
+    )
+    column = Sparkline(
+        "Trend",
+        value="value",
+        x="date",
+        annotations=(
+            Rule(DATES[1], axis="x", color="#123456"),
+            Rule("date_rule", axis="x", color="#abcdef"),
+        ),
+    )
+    state = _prepared_sparkline(raw, column)
+    assert state.x_domain == (state.series[0][0].x[0], state.series[0][0].x[-1])
+    plot = nw.from_native(resolve(CoefTable(raw, rows="metric")._add(column)).frame)[
+        "Trend"
+    ].to_list()[0]
+    assert plot.count("#123456") == 1
+    assert plot.count("#abcdef") == 1
+
+
+@pytest.mark.parametrize(
+    ("x", "mark", "match"),
+    [
+        ([0.0, 1.0, 2.0], Rule(DATES[0], axis="x"), "numeric"),
+        (DATES, Rule(1.0, axis="x"), "temporal"),
+    ],
+)
+def test_sparkline_rejects_annotation_x_kind_mismatch(x, mark, match):
+    raw = pl.DataFrame({"metric": ["A"], "x": [x], "value": [[1.0, 2.0, 3.0]]})
+    with pytest.raises(SpecError, match=match):
+        resolve(
+            CoefTable(raw, rows="metric").sparkline(
+                "Trend", value="value", x="x", annotations=(mark,)
+            )
+        )
+
+
+def test_sparkline_included_x_annotation_expands_shared_domain():
+    raw = pl.DataFrame({"value": [[1.0, 2.0]], "x": [[0.0, 1.0]]})
+    state = _prepared_sparkline(
+        raw, Sparkline("Trend", value="value", x="x", annotations=(Rule(3.0, axis="x"),))
+    )
+    assert state.x_domain == (0.0, 3.0)
+
+
+def test_sparkline_non_domain_x_annotation_leaves_shared_domain_unchanged():
+    raw = pl.DataFrame({"value": [[1.0, 2.0]], "x": [[0.0, 1.0]]})
+    state = _prepared_sparkline(
+        raw,
+        Sparkline(
+            "Trend",
+            value="value",
+            x="x",
+            annotations=(Rule(3.0, axis="x", affect_domain=False),),
+        ),
+    )
+    assert state.x_domain == (0.0, 1.0)
+
+
+@pytest.mark.parametrize("scale", ["row", "table", "row_group", "split_column"])
+def test_sparkline_included_y_annotation_expands_its_domain_bucket(scale):
+    raw = pl.DataFrame(
+        {
+            "metric": ["A", "B"],
+            "group": ["G", "G"],
+            "split": ["left", "right"],
+            "value": [[1.0, 2.0], [10.0, 11.0]],
+            "target": [4.0, 14.0],
+        }
+    )
+    column = Sparkline(
+        "Trend", value="value", scale=scale, annotations=(Rule("target", axis="y"),)
+    )
+    state = _prepared_sparkline(raw, column, rows="metric", groups="group", split_columns="split")
+    for index, target in enumerate(raw["target"].to_list()):
+        key = _domain_key(
+            column,
+            raw["metric"][index],
+            raw["group"][index],
+            raw["split"][index],
+        )
+        low, high = state.domains[key]
+        assert low <= target <= high
+
+
+def test_sparkline_robust_autoscale_keeps_included_y_annotation():
+    raw = pl.DataFrame({"value": [_SPIKE_LIFT]})
+    state = _prepared_sparkline(
+        raw,
+        Sparkline(
+            "Trend",
+            value="value",
+            ref=1.0,
+            autoscale="robust",
+            annotations=(Rule(50.0, axis="y"),),
+        ),
+    )
+    low, high = next(iter(state.domains.values()))
+    assert low <= 50.0 <= high < 300.0
+
+
+def test_sparkline_non_domain_y_annotation_leaves_bucket_unchanged():
+    raw = pl.DataFrame({"value": [[1.0, 2.0]]})
+    state = _prepared_sparkline(
+        raw,
+        Sparkline(
+            "Trend",
+            value="value",
+            ref=None,
+            annotations=(Rule(100.0, axis="y", affect_domain=False),),
+        ),
+    )
+    assert next(iter(state.domains.values()))[1] < 100.0
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [{"ylim": (0.0, 2.0)}, {"max_ylim": 2.0}],
+)
+def test_sparkline_explicit_limits_can_clip_distant_annotations(kwargs):
+    raw = pl.DataFrame({"metric": ["A"], "value": [[0.0, 1.0]]})
+    plot = nw.from_native(
+        resolve(
+            CoefTable(raw, rows="metric").sparkline(
+                "Trend",
+                value="value",
+                annotations=(Rule(100.0, axis="y", color="#123456"),),
+                show_axis=False,
+                **kwargs,
+            )
+        ).frame
+    )["Trend"].to_list()[0]
+    assert "#123456" not in plot
+
+
+def test_sparkline_companion_series_bind_annotation_fields_only_from_main_frame():
+    raw = pl.DataFrame({"metric": ["A"], "x_rule": [3.0]})
+    companion = pl.DataFrame(
+        {
+            "metric": ["A", "A"],
+            "day": [0.0, 1.0],
+            "value": [1.0, 2.0],
+            "x_rule": [99.0, 99.0],
+        }
+    )
+    column = Sparkline(
+        "Trend",
+        value="value",
+        x="day",
+        data=companion,
+        annotations=(Rule("x_rule", axis="x"),),
+    )
+    state = _prepared_sparkline(raw, column, rows="metric")
+    assert state.x_domain == (0.0, 3.0)
+    missing_main = CoefTable(pl.DataFrame({"metric": ["A"]}), rows="metric")._add(column)
+    with pytest.raises(ColumnNotFoundError, match="x_rule"):
+        resolve(missing_main)
+
+
+def test_sparkline_multi_series_emits_each_annotation_once():
+    raw = pl.DataFrame({"metric": ["A"], "target": [1.0]})
+    companion = pl.DataFrame(
+        {
+            "metric": ["A"] * 4,
+            "arm": ["control", "control", "treatment", "treatment"],
+            "day": [0.0, 1.0, 0.0, 1.0],
+            "value": [1.0, 2.0, 3.0, 4.0],
+        }
+    )
+    plot = nw.from_native(
+        resolve(
+            CoefTable(raw, rows="metric").sparkline(
+                "Trend",
+                value="value",
+                x="day",
+                data=companion,
+                series="arm",
+                annotations=(Rule("target", axis="x", color="#123456"),),
+                show_axis=False,
+            )
+        ).frame
+    )["Trend"].to_list()[0]
+    assert plot.count("#123456") == 1
+
+
+def test_sparkline_empty_cells_do_not_render_or_expand_annotation_domains():
+    raw = pl.DataFrame(
+        {
+            "metric": ["shown", "empty"],
+            "value": [[1.0, 2.0], []],
+            "x": [[0.0, 1.0], []],
+            "x_rule": [3.0, 300.0],
+            "y_rule": [4.0, 400.0],
+        }
+    )
+    column = Sparkline(
+        "Trend",
+        value="value",
+        x="x",
+        scale="table",
+        annotations=(Rule("x_rule", axis="x", color="#123456"), Rule("y_rule", axis="y")),
+    )
+    state = _prepared_sparkline(raw, column, rows="metric")
+    assert state.x_domain == (0.0, 3.0)
+    assert state.domains[("table",)][1] < 400.0
+    plots = nw.from_native(resolve(CoefTable(raw, rows="metric")._add(column)).frame)[
+        "Trend"
+    ].to_list()
+    assert "#123456" in plots[0]
+    assert plots[1] == ""
+
+
+def test_sparkline_empty_multi_series_cell_excludes_its_annotations_from_domains():
+    raw = pl.DataFrame(
+        {
+            "metric": ["shown", "empty"],
+            "x_rule": [3.0, 300.0],
+            "y_rule": [4.0, 400.0],
+        }
+    )
+    companion = pl.DataFrame(
+        {
+            "metric": ["shown"] * 4,
+            "arm": ["control", "control", "treatment", "treatment"],
+            "day": [0.0, 1.0, 0.0, 1.0],
+            "value": [1.0, 2.0, 3.0, 4.0],
+        }
+    )
+    column = Sparkline(
+        "Trend",
+        value="value",
+        x="day",
+        data=companion,
+        series="arm",
+        scale="table",
+        annotations=(
+            Rule("x_rule", axis="x", color="#123456"),
+            Rule("y_rule", axis="y", color="#abcdef"),
+        ),
+    )
+    state = _prepared_sparkline(raw, column, rows="metric")
+    assert state.x_domain == (0.0, 3.0)
+    assert state.domains[("table",)][1] < 400.0
+    plots = nw.from_native(resolve(CoefTable(raw, rows="metric")._add(column)).frame)[
+        "Trend"
+    ].to_list()
+    assert "#123456" in plots[0] and "#abcdef" in plots[0]
+    assert plots[1] == ""
