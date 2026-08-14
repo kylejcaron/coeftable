@@ -54,7 +54,14 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
         with:
-          persist-credentials: false
-      - uses: ./.github/actions/pypi-publish
+          name: Packages
+          path: dist
+      # Must be invoked straight from the job, never via a local composite
+      # action. This action builds a Docker trampoline whose image it names
+      # from `github.action_repository`/`github.action_ref`, and both are
+      # empty for an action nested inside another composite action
+      # (actions/runner#2473). It then falls back to this repository and its
+      # branch, and tries to pull an image that was never published.
+      - uses: pypa/gh-action-pypi-publish@release/v1
