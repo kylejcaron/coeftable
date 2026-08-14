@@ -361,8 +361,7 @@ def test_forest_annotation_source_missing_from_frame_raises_before_preparation()
 
 def test_forest_rejects_y_axis_annotations_during_column_validation():
     expected = (
-        "Forest column 'Plot' annotation 0 uses axis='y'; "
-        "forest plots support axis='x' only."
+        "Forest column 'Plot' annotation 0 uses axis='y'; forest plots support axis='x' only."
     )
     with pytest.raises(SpecError, match=re.escape(expected)):
         (
