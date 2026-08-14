@@ -208,10 +208,10 @@ domain constraints remain authoritative.
 - Sparkline x contributions enter the table-wide x domain.
 - Sparkline y contributions enter the existing y bucket selected by `scale`.
 - Only marks belonging to cells with renderable base data contribute. An annotation does not make an otherwise blank cell establish or widen a shared domain.
-- `autoscale` first computes the data domain. Eligible annotations then expand it, so robust outlier filtering cannot discard an annotation that requested domain participation.
+- `autoscale="robust"` first filters data through its IQR/Tukey fence. Eligible annotations then join those inliers before the automatic domain is padded, so robust filtering cannot discard an annotation that requested domain participation.
 - Forest `symmetric=True` expands the final automatic domain around `ref` after annotation coordinates are included.
-- Sparkline `max_ylim` then applies its explicit ceiling and may clip a more distant annotation.
-- `ylim` remains an absolute override. It ignores annotation domain contributions just as it overrides data-driven limits today.
+- Sparkline `max_ylim` then applies its explicit ceiling to the y-domain and may clip a more distant annotation.
+- `ylim` remains an absolute override: it overrides the Forest x-domain and Sparkline y-domain, ignoring annotation contributions on those axes. It does not override the Sparkline shared x-domain, so domain-affecting Sparkline x annotations still participate there.
 - `affect_domain=False` never widens a domain. The emitter clips a partially intersecting band and omits an out-of-domain rule or band.
 
 For temporal sparkline x axes, annotation literals and fields use the existing date/datetime-to-epoch conversion semantics. Numeric and temporal x values may not be mixed. An x annotation must match the series x kind.

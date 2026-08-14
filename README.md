@@ -434,8 +434,10 @@ latter for a value threshold or range. `layer="underlay"` (the default for
 bands) draws before the plot; `layer="overlay"` (the default for rules) draws
 after it. `affect_domain=True` by default expands an automatic axis domain to
 include the annotation; set it to `False` to keep the existing domain and
-allow the mark to be clipped. An explicit `ylim` ignores annotation domain
-contributions, and `max_ylim` can cap the domain and clip or omit distant
-marks. Annotations supplement rather than replace
+allow the mark to be clipped. `ylim` overrides the Forest x-domain and the
+Sparkline y-domain, so annotations on those axes do not expand them. Sparkline
+x annotations still participate in their shared x-domain; `max_ylim` can cap
+the Sparkline y-domain and clip or omit distant marks. Annotations supplement
+rather than replace
 `ref`: `ref` remains the built-in semantic reference that controls colors and
 its optional dashed line.

@@ -319,6 +319,18 @@ def _pad_domain(
     return (low, high)
 
 
+def _robust_inliers(values: list[float]) -> list[float]:
+    """Return `values` after IQR/Tukey filtering when quartiles are meaningful."""
+    if len(values) < 4:
+        return values
+    q1, _, q3 = statistics.quantiles(values, n=4, method="inclusive")
+    iqr = q3 - q1
+    if iqr == 0:
+        return values
+    fence_low, fence_high = q1 - 1.5 * iqr, q3 + 1.5 * iqr
+    return [v for v in values if fence_low <= v <= fence_high]
+
+
 def _robust_domain(values: list[float], ref: float | None) -> tuple[float, float]:
     """Pad an IQR/Tukey-fenced domain to `values`, discounting outliers.
 
@@ -334,15 +346,7 @@ def _robust_domain(values: list[float], ref: float | None) -> tuple[float, float
     always reads a row's true last point directly, never the domain it
     ends up plotted against.
     """
-    if len(values) < 4:
-        return _pad_domain(values, ref)
-    q1, _, q3 = statistics.quantiles(values, n=4, method="inclusive")
-    iqr = q3 - q1
-    if iqr == 0:
-        return _pad_domain(values, ref)
-    fence_low, fence_high = q1 - 1.5 * iqr, q3 + 1.5 * iqr
-    inliers = [v for v in values if fence_low <= v <= fence_high]
-    return _pad_domain(inliers, ref)
+    return _pad_domain(_robust_inliers(values), ref)
 
 
 def _clamp_domain(
@@ -377,21 +381,18 @@ def _bucket_domain(
 ) -> tuple[float, float]:
     """Resolve one domain bucket for `Sparkline.prepare`.
 
-    `override` wins outright; otherwise the domain is fit to `values` --
-    tightly (`_pad_domain`) or, when `autoscale="robust"`, with an
-    IQR/Tukey fence that discounts outliers (`_robust_domain`). Required
-    annotation coordinates expand that automatic fit after robust filtering;
-    `max_domain`, when set, then narrows the result around `ref`.
+    `override` wins outright; otherwise a tight fit uses all `values` and
+    a robust fit first applies an IQR/Tukey fence. Required annotation
+    coordinates are joined to those data inputs before one padding pass, so
+    an in-domain coordinate leaves the automatic fit unchanged. `max_domain`,
+    when set, then narrows the result around `ref`.
     """
     if override is not None:
         return override
-    if autoscale == "robust":
-        domain = _robust_domain(values, ref)
-    else:
-        domain = _pad_domain(values, ref)
-    finite_required = _finite(list(required))
-    if finite_required:
-        domain = _pad_domain([domain[0], domain[1], *finite_required], ref)
+    fit_values = _robust_inliers(values) if autoscale == "robust" else values
+    finite_required = _finite(list(required)) if required else []
+    inputs = [*fit_values, *finite_required] if finite_required else fit_values
+    domain = _pad_domain(inputs, ref)
     return _clamp_domain(domain, ref, max_domain) if max_domain is not None else domain
 
 
