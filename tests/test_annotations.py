@@ -48,6 +48,45 @@ def test_prepare_numeric_field_omits_missing_row_and_preserves_order():
     assert domain_values(prepared.by_row[0], axis="x") == [2.0, 0.5, 1.5]
 
 
+def test_prepare_preserves_non_default_rule_and_band_styles():
+    prepared = prepare_annotations(
+        (
+            Rule(
+                1.0,
+                axis="x",
+                layer="underlay",
+                color="#123456",
+                opacity=0.4,
+                width=2.5,
+                dash="dotted",
+            ),
+            Band(
+                2.0,
+                3.0,
+                axis="x",
+                layer="overlay",
+                color="#abcdef",
+                opacity=0.7,
+            ),
+        ),
+        _frame(metric=["A"]),
+        axis_kinds={"x": "numeric"},
+        plot_label="Plot",
+        row_identities=[("A", None, None, None)],
+    )
+    rule, band = prepared.by_row[0]
+    assert isinstance(rule, ResolvedRule)
+    assert isinstance(band, ResolvedBand)
+    assert (rule.layer, rule.color, rule.opacity, rule.width, rule.dash) == (
+        "underlay",
+        "#123456",
+        0.4,
+        2.5,
+        "dotted",
+    )
+    assert (band.layer, band.color, band.opacity) == ("overlay", "#abcdef", 0.7)
+
+
 def test_prepare_temporal_literal_uses_epoch_seconds():
     prepared = prepare_annotations(
         (Rule(dt.date(1970, 1, 2), axis="x"),),
