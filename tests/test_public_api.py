@@ -85,6 +85,8 @@ def test_every_public_symbol_is_exported():
         "Forest",
         "Passthrough",
         "Sparkline",
+        "Rule",
+        "Band",
         "Number",
         "Percent",
         "Currency",

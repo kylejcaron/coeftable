@@ -286,6 +286,31 @@ def test_timezone_aware_x_normalises_through_utc(make):
     assert x0 - x1 == 3600.0
 
 
+@pytest.mark.parametrize(
+    "values",
+    [
+        [
+            dt.datetime(2024, 1, 1, 12, 0),
+            dt.datetime(2024, 1, 1, 14, 30),
+        ],
+        [
+            dt.datetime(2024, 1, 1, 12, 0, tzinfo=dt.UTC),
+            dt.datetime(2024, 1, 1, 16, 30, tzinfo=dt.timezone(dt.timedelta(hours=2))),
+        ],
+    ],
+    ids=["naive", "aware"],
+)
+def test_temporal_datetime_spacing_remains_elapsed_seconds(make, values):
+    raw = {"metric": ["Revenue"], "y": [[1.0, 2.0]], "x": [values]}
+    series = resolve_list_series(_frame(make, raw), ["Revenue"], value="y", x="x")[0]
+
+    assert series.x_temporal is True
+    first, second = series.x
+    assert first is not None
+    assert second is not None
+    assert second - first == 2.5 * 3600.0
+
+
 def test_series_arg_groups_each_identity_into_per_arm_series(make):
     raw = {
         "metric": ["Revenue", "Revenue", "Revenue", "Revenue"],

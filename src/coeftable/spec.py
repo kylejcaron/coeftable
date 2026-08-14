@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol
 import narwhals as nw
 
 from coeftable.collapsible import make_collapsible
+from coeftable.errors import ColumnNotFoundError, SpecError
 from coeftable.format import (
     CIStyle,
     DateAxis,
@@ -43,14 +44,6 @@ type Autoscale = Literal["tight", "robust"]
 # defaults where ruff B008 forbids a constructor call.
 _DEFAULT_FMT = Number()
 _DEFAULT_CI_STYLE = CIStyle()
-
-
-class SpecError(ValueError):
-    """Raised when a table specification is internally inconsistent."""
-
-
-class ColumnNotFoundError(KeyError):
-    """Raised when a specification names a column absent from the frame."""
 
 
 @dataclass(frozen=True)
