@@ -196,6 +196,34 @@ def test_forest_annotation_bands_clip_and_omit_outside_domain():
     assert "#fedcba" not in svg
 
 
+def test_forest_annotation_rule_omits_outside_domain():
+    svg = forest_bar(
+        1.0,
+        0.5,
+        1.5,
+        domain=(0.0, 2.0),
+        ref=0.0,
+        color="#000000",
+        theme=DEFAULT,
+        annotations=(_rule(at=3.0, color="#fedcba"),),
+    )
+    assert "#fedcba" not in svg
+
+
+def test_forest_rejects_y_axis_annotations():
+    with pytest.raises(RuntimeError, match="y-axis annotation"):
+        forest_bar(
+            1.0,
+            0.5,
+            1.5,
+            domain=(0.0, 2.0),
+            ref=0.0,
+            color="#000000",
+            theme=DEFAULT,
+            annotations=(_rule(at=1.0, axis="y"),),
+        )
+
+
 def test_forest_annotations_preserve_declaration_order_within_a_layer():
     svg = forest_bar(
         1.0,
@@ -382,6 +410,22 @@ def test_sparkline_annotations_project_horizontal_rules_and_vertical_bands():
         '<line x1="3.00" y1="15.00" x2="173.00" y2="15.00" stroke="#123456" '
         'stroke-opacity="1.00" stroke-width="1.00" stroke-dasharray="2,2"/>'
     ) in svg
+
+
+def test_sparkline_y_band_has_positive_svg_height():
+    svg = sparkline_bar(
+        [0.0, 1.0, 2.0],
+        [1.0, 1.5, 1.0],
+        [None, None, None],
+        [None, None, None],
+        x_domain=(0.0, 2.0),
+        domain=(0.0, 2.0),
+        ref=None,
+        color="#000000",
+        fmt=Number(),
+        annotations=(ResolvedBand(0.8, 1.2, "y", "underlay", True, "#abcdef", 0.2),),
+    )
+    assert '<rect x="3.00" y="12.60" width="170.00" height="4.80" fill="#abcdef"' in svg
 
 
 def test_sparkline_annotation_band_clips_and_omits_outside_domain():

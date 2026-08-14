@@ -885,6 +885,8 @@ def forest_bar(
         Bar colour, resolved from a semantic role by the caller.
     theme
         Supplies axis and surface colours.
+    annotations
+        Resolved x-axis rules and bands rendered around the existing bar.
     width, height, bar_height, inset
         Geometry in pixels.
 
@@ -1309,6 +1311,10 @@ def sparkline_multi(
         trace happen regardless of this flag -- turning it off only
         removes the cap marks, never the underlying clipping or the
         true-trajectory ghost.
+    annotations
+        Resolved x- and y-axis rules and bands rendered once around all traces.
+    theme
+        Supplies the fallback axis colour for annotations with `color=None`.
 
     Returns
     -------
@@ -1519,6 +1525,10 @@ def sparkline_bar(
         and the ghost trace happen regardless of this flag -- turning it
         off only removes the cap marks, never the underlying clipping or
         the true-trajectory ghost.
+    annotations
+        Resolved x- and y-axis rules and bands forwarded once to `sparkline_multi`.
+    theme
+        Supplies the fallback axis colour for annotations with `color=None`.
 
     Returns
     -------
