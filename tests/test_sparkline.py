@@ -1,5 +1,6 @@
 import datetime as dt
 import re
+from dataclasses import replace
 
 import narwhals as nw
 import pandas as pd
@@ -1764,6 +1765,69 @@ def test_sparkline_multi_series_emits_each_annotation_once():
         ).frame
     )["Trend"].to_list()[0]
     assert plot.count("#123456") == 1
+
+
+@pytest.mark.parametrize(
+    "show_ribbon",
+    [None, True, False],
+    ids=["default", "explicit-ribbon", "explicit-no-ribbon"],
+)
+def test_sparkline_single_series_annotations_use_custom_theme_axis(show_ribbon):
+    custom_theme = replace(DEFAULT, axis="#c0ffee")
+    raw = pl.DataFrame(
+        {
+            "metric": ["A"],
+            "value": [[1.0, 2.0]],
+            "low": [[0.5, 1.5]],
+            "high": [[1.5, 2.5]],
+        }
+    )
+    plot = nw.from_native(
+        resolve(
+            CoefTable(raw, rows="metric")
+            .sparkline(
+                "Trend",
+                value="value",
+                ci=("low", "high"),
+                ref=None,
+                show_ribbon=show_ribbon,
+                annotations=(Rule(1.0, axis="x"),),
+                show_axis=False,
+            )
+            .with_theme(custom_theme)
+        ).frame
+    )["Trend"].to_list()[0]
+    assert plot.count("#c0ffee") == 1
+
+
+def test_sparkline_multi_series_annotations_use_custom_theme_axis():
+    custom_theme = replace(DEFAULT, axis="#c0ffee")
+    raw = pl.DataFrame({"metric": ["A"]})
+    companion = pl.DataFrame(
+        {
+            "metric": ["A"] * 4,
+            "arm": ["control", "control", "treatment", "treatment"],
+            "day": [0.0, 1.0, 0.0, 1.0],
+            "value": [1.0, 2.0, 3.0, 4.0],
+        }
+    )
+    plot = nw.from_native(
+        resolve(
+            CoefTable(raw, rows="metric")
+            .sparkline(
+                "Trend",
+                value="value",
+                x="day",
+                data=companion,
+                series="arm",
+                ref=None,
+                annotations=(Rule(1.0, axis="x"),),
+                show_axis=False,
+            )
+            .with_theme(custom_theme)
+        ).frame
+    )["Trend"].to_list()[0]
+    assert plot.count("#c0ffee") == 1
 
 
 def test_sparkline_empty_cells_do_not_render_or_expand_annotation_domains():
