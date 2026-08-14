@@ -18,3 +18,5 @@ src/coeftable/_version.py
 /.roborev/
 # internal planning docs (not shipped, not for the public repo)
 docs/superpowers/
+# local feature worktrees
+/.worktrees/
