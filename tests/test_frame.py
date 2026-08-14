@@ -1,11 +1,14 @@
+import re
+
 import narwhals as nw
 import pandas as pd
 import polars as pl
 import pytest
 
+from coeftable import Band, Rule
 from coeftable.format import CIStyle
 from coeftable.frame import _pad_domain, _plot_height, resolve
-from coeftable.spec import CoefTable, ColumnNotFoundError, Estimate, Forest, SpecError
+from coeftable.spec import CoefTable, ColumnNotFoundError, Estimate, Forest, Scan, SpecError
 
 RAW = {
     "area": ["Core", "Core", "Core", "Core"],
@@ -21,6 +24,27 @@ def base(data, **kwargs):
     return CoefTable(data, rows="metric", nest="variant", **kwargs).estimate(
         "Lift %", "rel", ci=("rel_lb", "rel_ub")
     )
+
+
+def _forest_state(table: CoefTable):
+    frame = nw.from_native(table.data, eager_only=True)
+    count = len(frame)
+    scan = Scan(
+        frame=frame,
+        columns=table.columns,
+        row_keys=frame[table.rows].to_list() if table.rows else [""] * count,
+        nest_keys=frame[table.nest].to_list() if table.nest else [None] * count,
+        group_keys=frame[table.groups].to_list() if table.groups else [None] * count,
+        split_keys=(
+            frame[table.split_columns].to_list() if table.split_columns else [None] * count
+        ),
+        rows=table.rows,
+        nest=table.nest,
+        groups=table.groups,
+        split_columns=table.split_columns,
+    )
+    forest = next(column for column in table.columns if isinstance(column, Forest))
+    return forest.prepare(scan).payload
 
 
 @pytest.fixture(params=["pandas", "polars"])
@@ -294,6 +318,205 @@ def test_sparse_split_data_resolves():
     ).estimate("Lift %", "rel", ci=("rel_lb", "rel_ub"))
     out = resolve(table)
     assert len(nw.from_native(out.frame).rows()) == 2
+
+
+def test_forest_field_rule_targets_exactly_one_row():
+    raw = pl.DataFrame(
+        {
+            "metric": ["Revenue", "Latency"],
+            "est": [1.0, 1.0],
+            "low": [0.5, 0.5],
+            "high": [1.5, 1.5],
+            "target": [1.25, None],
+        }
+    )
+    table = (
+        CoefTable(raw, rows="metric")
+        .estimate("Effect", "est", ci=("low", "high"))
+        .forest(
+            "Plot",
+            of="Effect",
+            annotations=(Rule("target", axis="x", color="#123456"),),
+            show_axis=False,
+        )
+    )
+    plots = nw.from_native(resolve(table).frame)["Plot"].to_list()
+    assert "#123456" in plots[0]
+    assert "#123456" not in plots[1]
+    assert all(plot.count("stroke-dasharray") >= 1 for plot in plots)
+
+
+def test_forest_annotation_source_missing_from_frame_raises_before_preparation():
+    table = (
+        CoefTable(
+            pl.DataFrame({"metric": ["Revenue"], "est": [1.0], "low": [0.5], "high": [1.5]}),
+            rows="metric",
+        )
+        .estimate("Effect", "est", ci=("low", "high"))
+        .forest("Plot", of="Effect", annotations=(Rule("target", axis="x"),))
+    )
+    with pytest.raises(ColumnNotFoundError, match="target"):
+        resolve(table)
+
+
+def test_forest_rejects_y_axis_annotations_during_column_validation():
+    expected = (
+        "Forest column 'Plot' annotation 0 uses axis='y'; "
+        "forest plots support axis='x' only."
+    )
+    with pytest.raises(SpecError, match=re.escape(expected)):
+        (
+            CoefTable(
+                pl.DataFrame({"metric": ["Revenue"], "est": [1.0], "low": [0.5], "high": [1.5]}),
+                rows="metric",
+            )
+            .estimate("Effect", "est", ci=("low", "high"))
+            .forest("Plot", of="Effect", annotations=(Rule(1.0, axis="y"),))
+        )
+
+
+def test_forest_literal_band_renders_in_every_nonempty_row():
+    raw = pl.DataFrame(
+        {
+            "metric": ["Revenue", "Latency"],
+            "est": [1.0, 1.0],
+            "low": [0.5, 0.5],
+            "high": [1.5, 1.5],
+        }
+    )
+    table = (
+        CoefTable(raw, rows="metric")
+        .estimate("Effect", "est", ci=("low", "high"))
+        .forest("Plot", of="Effect", annotations=(Band(1.1, 1.2, axis="x", color="#abcdef"),))
+    )
+    plots = nw.from_native(resolve(table).frame)["Plot"].to_list()
+    assert sum("#abcdef" in plot for plot in plots) == 2
+
+
+@pytest.mark.parametrize(
+    ("scale", "expanded_key", "unexpanded_key"),
+    [
+        ("table", ("table",), None),
+        ("row_group", ("group", "Core"), ("group", "Ops")),
+        ("split_column", ("split", "OLS"), ("split", "DiD")),
+        ("row", ("row", "Revenue"), ("row", "Latency")),
+    ],
+)
+def test_forest_annotation_expands_the_eligible_scale_bucket(scale, expanded_key, unexpanded_key):
+    raw = pl.DataFrame(
+        {
+            "area": ["Core", "Ops"],
+            "metric": ["Revenue", "Latency"],
+            "method": ["OLS", "DiD"],
+            "est": [1.0, 1.0],
+            "low": [0.5, 0.5],
+            "high": [1.5, 1.5],
+            "target": [10.0, None],
+        }
+    )
+    table = (
+        CoefTable(raw, rows="metric", groups="area", split_columns="method")
+        .estimate("Effect", "est", ci=("low", "high"))
+        .forest("Plot", of="Effect", scale=scale, annotations=(Rule("target", axis="x"),))
+    )
+    domains = _forest_state(table).domains
+    assert domains[expanded_key][1] > 10.0
+    if unexpanded_key is not None:
+        assert domains[unexpanded_key][1] < 2.0
+
+
+def test_forest_annotation_that_does_not_affect_domain_keeps_bucket_tight():
+    raw = pl.DataFrame(
+        {
+            "metric": ["Revenue"],
+            "est": [1.0],
+            "low": [0.5],
+            "high": [1.5],
+        }
+    )
+    table = (
+        CoefTable(raw, rows="metric")
+        .estimate("Effect", "est", ci=("low", "high"))
+        .forest(
+            "Plot",
+            of="Effect",
+            annotations=(Rule(10.0, axis="x", affect_domain=False),),
+        )
+    )
+    assert _forest_state(table).domains[("table",)] == pytest.approx((-0.12, 1.62))
+
+
+def test_forest_symmetric_domain_includes_annotation_around_reference():
+    raw = pl.DataFrame(
+        {
+            "metric": ["Revenue"],
+            "est": [1.0],
+            "low": [0.5],
+            "high": [1.5],
+        }
+    )
+    table = (
+        CoefTable(raw, rows="metric")
+        .estimate("Effect", "est", ci=("low", "high"))
+        .forest(
+            "Plot",
+            of="Effect",
+            ref=2.0,
+            symmetric=True,
+            annotations=(Rule(10.0, axis="x"),),
+        )
+    )
+    low, high = _forest_state(table).domains[("table",)]
+    assert high > 10.0
+    assert high - 2.0 == pytest.approx(2.0 - low)
+
+
+def test_forest_explicit_ylim_clips_and_omits_annotations_beyond_it():
+    raw = pl.DataFrame(
+        {
+            "metric": ["Revenue"],
+            "est": [1.0],
+            "low": [0.5],
+            "high": [1.5],
+        }
+    )
+    table = (
+        CoefTable(raw, rows="metric")
+        .estimate("Effect", "est", ci=("low", "high"))
+        .forest(
+            "Plot",
+            of="Effect",
+            ylim=(0.0, 2.0),
+            annotations=(
+                Rule(3.0, axis="x", color="#ff0000"),
+                Band(1.5, 3.0, axis="x", color="#00ff00"),
+            ),
+        )
+    )
+    plot = nw.from_native(resolve(table).frame)["Plot"].to_list()[0]
+    assert _forest_state(table).domains == {("table",): (0.0, 2.0)}
+    assert "#ff0000" not in plot
+    assert "#00ff00" in plot
+
+
+def test_forest_annotations_do_not_fill_blank_cells_or_expand_from_them():
+    raw = pl.DataFrame(
+        {
+            "metric": ["Revenue", "Latency"],
+            "est": [1.0, None],
+            "low": [0.5, 0.5],
+            "high": [1.5, 1.5],
+            "target": [None, 10.0],
+        }
+    )
+    table = (
+        CoefTable(raw, rows="metric")
+        .estimate("Effect", "est", ci=("low", "high"))
+        .forest("Plot", of="Effect", annotations=(Rule("target", axis="x"),))
+    )
+    plots = nw.from_native(resolve(table).frame)["Plot"].to_list()
+    assert plots[1] == ""
+    assert _forest_state(table).domains[("table",)][1] < 2.0
 
 
 def test_color_rule_overrides_direction():

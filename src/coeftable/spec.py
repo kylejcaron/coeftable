@@ -4,12 +4,19 @@ from __future__ import annotations
 
 import math
 import statistics
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 import narwhals as nw
 
+from coeftable.annotations import (
+    Annotation,
+    PreparedAnnotations,
+    annotation_sources,
+    domain_values,
+    prepare_annotations,
+)
 from coeftable.collapsible import make_collapsible
 from coeftable.errors import ColumnNotFoundError, SpecError
 from coeftable.format import (
@@ -440,6 +447,7 @@ class _ForestState:
     value: list[float | None]
     low: list[float | None]
     high: list[float | None]
+    annotations: PreparedAnnotations
 
 
 @dataclass(frozen=True)
@@ -472,6 +480,8 @@ class Forest:
         Emit an axis row for each distinct domain.
     axis_fmt
         Callable labelling axis ticks; defaults to the bound estimate's `fmt`.
+    annotations
+        Rules and bands drawn in each non-empty plot cell.
     """
 
     label: str
@@ -484,23 +494,37 @@ class Forest:
     height: int | None = None
     show_axis: bool = True
     axis_fmt: Format | None = None
+    annotations: tuple[Annotation, ...] = ()
 
     def sources(self) -> Iterable[str]:
-        """`Forest` reads no frame column directly; it derives from its source estimate."""
-        return ()
+        """Frame columns read by this plot's annotations."""
+        return annotation_sources(self.annotations)
 
     def prepare(self, scan: Scan) -> Prepared:
-        """Compute this column's per-key domains, and its footer schedule if `show_axis`."""
+        """Compute this column's per-key domains, annotations, and footer schedule."""
         source = _estimate_by_label(scan.columns, self.of)
         assert source.ci is not None  # noqa: S101 - guaranteed by validate_columns
         source_state: _EstimateState = source.prepare(scan).payload
         assert source_state.low is not None and source_state.high is not None  # noqa: S101
         value, low, high = source_state.value, source_state.low, source_state.high
+        row_identities = tuple(
+            zip(scan.row_keys, scan.nest_keys, scan.group_keys, scan.split_keys, strict=True)
+        )
+        annotations = prepare_annotations(
+            self.annotations,
+            scan.frame,
+            axis_kinds={"x": "numeric"},
+            plot_label=self.label,
+            row_identities=row_identities,
+        )
 
         buckets: dict[Any, list[float]] = {}
         for i in range(len(scan.row_keys)):
             key = _domain_key(self, scan.row_keys[i], scan.group_keys[i], scan.split_keys[i])
-            buckets.setdefault(key, []).extend(_finite([value[i], low[i], high[i]]))
+            inputs = buckets.setdefault(key, [])
+            inputs.extend(_finite([value[i], low[i], high[i]]))
+            if not is_missing(value[i]):
+                inputs.extend(domain_values(annotations.by_row[i], axis="x"))
         domains = {
             key: self.ylim or _pad_domain(vals, self.ref, symmetric=self.symmetric)
             for key, vals in buckets.items()
@@ -510,7 +534,14 @@ class Forest:
             return _domain_key(self, row_key, group, split)
 
         return Prepared(
-            payload=_ForestState(domains=domains, source=source, value=value, low=low, high=high),
+            payload=_ForestState(
+                domains=domains,
+                source=source,
+                value=value,
+                low=low,
+                high=high,
+                annotations=annotations,
+            ),
             footer_key=footer_key if self.show_axis else None,
             shared_footer=self.scale in ("table", "split_column"),
         )
@@ -536,6 +567,7 @@ class Forest:
             theme=ctx.theme,
             width=self.width,
             height=_plot_height((state.source,), self.height),
+            annotations=state.annotations.by_row[ctx.index],
         )
 
     def footer(self, ctx: Footer) -> str | None:
@@ -1117,6 +1149,12 @@ def validate_columns(columns: tuple[Column, ...]) -> None:
                 f"Forest column {column.label!r} references estimate {column.of!r}, "
                 "which has no confidence interval to plot."
             )
+        for index, annotation in enumerate(column.annotations):
+            if annotation.axis != "x":
+                raise SpecError(
+                    f"Forest column {column.label!r} annotation {index} uses "
+                    f"axis={annotation.axis!r}; forest plots support axis='x' only."
+                )
 
     for column in columns:
         if isinstance(column, Sparkline) and column.ci is not None and len(column.ci) != 2:
@@ -1305,6 +1343,7 @@ class CoefTable:
         height: int | None = None,
         show_axis: bool = True,
         axis_fmt: Format | None = None,
+        annotations: Sequence[Annotation] = (),
     ) -> CoefTable:
         """Append a forest-plot column bound to an existing estimate.
 
@@ -1333,6 +1372,8 @@ class CoefTable:
             Emit an axis row per distinct domain.
         axis_fmt
             Callable labelling axis ticks.
+        annotations
+            Rules and bands drawn in each non-empty plot cell.
 
         Returns
         -------
@@ -1351,6 +1392,7 @@ class CoefTable:
                 height=height,
                 show_axis=show_axis,
                 axis_fmt=axis_fmt,
+                annotations=tuple(annotations),
             )
         )
 
