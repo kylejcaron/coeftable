@@ -360,6 +360,36 @@ trend = pl.DataFrame(
 )
 ```
 
+**Forest plots take `autoscale` too.** A single extreme interval (say a
++3000% lift among sub-1% metrics) otherwise stretches the shared domain
+and flattens every other bar:
+
+```python
+lifts = pl.DataFrame(
+    {
+        "metric": ["Checkout CVR", "Signup Rate", "Retention D7", "AOV", "Rare Event"],
+        "rel": [0.03, -0.05, 0.08, 0.02, 30.0],
+        "rel_lb": [0.01, -0.09, 0.04, -0.01, 22.0],
+        "rel_ub": [0.05, -0.01, 0.12, 0.05, 41.0],
+    }
+)
+
+(
+    ct.CoefTable(lifts, rows="metric")
+    .estimate("Lift %", "rel", ci=("rel_lb", "rel_ub"), fmt=ct.Percent(signed=True))
+    # "robust" fits an IQR/Tukey fence over the pooled values instead of
+    # the raw min/max, so the outlier stops dictating the axis. Composes
+    # with symmetric= (fence first, then mirror around ref); ylim= still
+    # overrides everything.
+    .forest("Lift Plot", of="Lift %", ref=0.0, autoscale="robust")
+)
+```
+
+A discounted interval is never hidden: bars in a clipping domain plot
+against a slightly inset region and the clipped interval continues into
+the reserved margin as a gradient fade, reading as "extends beyond the
+axis". Buckets with nothing clipped render exactly as before.
+
 **No reference, or a hidden one.** `ref` also drives the dashed line and
 colour resolution; two ways to opt out, for data with no meaningful
 zero (revenue, durations, absolute counts):

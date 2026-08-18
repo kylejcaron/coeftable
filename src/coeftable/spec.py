@@ -30,6 +30,7 @@ from coeftable.format import (
     render_interval,
 )
 from coeftable.svg import (
+    CLIP_MARGIN,
     Trace,
     forest_axis,
     forest_bar,
@@ -378,22 +379,24 @@ def _bucket_domain(
     max_domain: float | None,
     autoscale: Autoscale = "tight",
     required: Sequence[float] = (),
+    symmetric: bool = False,
 ) -> tuple[float, float]:
-    """Resolve one domain bucket for `Sparkline.prepare`.
+    """Resolve one domain bucket for `Sparkline.prepare` or `Forest.prepare`.
 
     `override` wins outright; otherwise a tight fit uses all `values` and
     a robust fit first applies an IQR/Tukey fence. Required annotation
     coordinates are joined to those retained data inputs before one padding
     pass, so a coordinate within the retained data extent leaves the
     automatic fit unchanged. `max_domain`, when set, then narrows the result
-    around `ref`.
+    around `ref`. `symmetric=True` mirrors the padded fit around `ref`
+    (`Forest`'s option; requires `ref`, enforced by `_pad_domain`).
     """
     if override is not None:
         return override
     fit_values = _robust_inliers(values) if autoscale == "robust" else values
     finite_required = _finite(list(required)) if required else []
     inputs = [*fit_values, *finite_required] if finite_required else fit_values
-    domain = _pad_domain(inputs, ref)
+    domain = _pad_domain(inputs, ref, symmetric=symmetric)
     return _clamp_domain(domain, ref, max_domain) if max_domain is not None else domain
 
 
@@ -453,6 +456,7 @@ class _ForestState:
     value: list[float | None]
     low: list[float | None]
     high: list[float | None]
+    clipped: frozenset[Any]
     annotations: PreparedAnnotations
 
 
@@ -475,6 +479,16 @@ class Forest:
     symmetric
         When `ylim` is not set, symmetrize the auto-computed domain
         around `ref` instead of fitting tightly to the data.
+    autoscale
+        Strategy for the auto-computed domain when `ylim` is not set.
+        `"tight"` (default) fits to the exact min/max of the bucket's
+        pooled values. `"robust"` fits an IQR/Tukey fence over them
+        instead, so a single extreme interval stops flattening every
+        other bar; a discounted interval clips against the resulting
+        domain edge and continues into a reserved margin as a gradient
+        fade rather than being hidden. Colour resolution is unaffected --
+        it always reads a row's true values, never the domain they are
+        plotted against.
     width
         Bar width in pixels.
     height
@@ -496,6 +510,7 @@ class Forest:
     scale: Scale = "table"
     ylim: tuple[float, float] | None = None
     symmetric: bool = False
+    autoscale: Autoscale = "tight"
     width: int = 220
     height: int | None = None
     show_axis: bool = True
@@ -525,16 +540,30 @@ class Forest:
         )
 
         buckets: dict[Any, list[float]] = {}
+        required: dict[Any, list[float]] = {}
         for i in range(len(scan.row_keys)):
             key = _domain_key(self, scan.row_keys[i], scan.group_keys[i], scan.split_keys[i])
             inputs = buckets.setdefault(key, [])
             inputs.extend(_finite([value[i], low[i], high[i]]))
             if not is_missing(value[i]):
-                inputs.extend(domain_values(annotations.by_row[i], axis="x"))
+                required.setdefault(key, []).extend(domain_values(annotations.by_row[i], axis="x"))
         domains = {
-            key: self.ylim or _pad_domain(vals, self.ref, symmetric=self.symmetric)
+            key: _bucket_domain(
+                vals,
+                self.ref,
+                override=self.ylim,
+                max_domain=None,
+                autoscale=self.autoscale,
+                required=required.get(key, ()),
+                symmetric=self.symmetric,
+            )
             for key, vals in buckets.items()
         }
+        clipped = frozenset(
+            key
+            for key, vals in buckets.items()
+            if any(v < domains[key][0] or v > domains[key][1] for v in vals)
+        )
 
         def footer_key(row_key: Any, group: Any, split: Any) -> Any:
             return _domain_key(self, row_key, group, split)
@@ -547,6 +576,7 @@ class Forest:
                 low=low,
                 high=high,
                 annotations=annotations,
+                clipped=clipped,
             ),
             footer_key=footer_key if self.show_axis else None,
             shared_footer=self.scale in ("table", "split_column"),
@@ -573,6 +603,7 @@ class Forest:
             theme=ctx.theme,
             width=self.width,
             height=_plot_height((state.source,), self.height),
+            margin=CLIP_MARGIN if key in state.clipped else 0,
             annotations=state.annotations.by_row[ctx.index],
         )
 
@@ -585,6 +616,7 @@ class Forest:
             fmt=self.axis_fmt or state.source.fmt,
             theme=ctx.theme,
             width=self.width,
+            margin=CLIP_MARGIN if ctx.key in state.clipped else 0,
         )
 
 
@@ -1371,6 +1403,7 @@ class CoefTable:
         scale: Scale = "table",
         ylim: tuple[float, float] | None = None,
         symmetric: bool = False,
+        autoscale: Autoscale = "tight",
         width: int = 220,
         height: int | None = None,
         show_axis: bool = True,
@@ -1394,6 +1427,15 @@ class CoefTable:
         symmetric
             When `ylim` is not set, symmetrize the auto-computed domain
             around `ref` instead of fitting tightly to the data.
+        autoscale
+            Strategy for the auto-computed domain when `ylim` is not set.
+            `"tight"` (default) fits to the exact min/max of the bucket's
+            pooled values. `"robust"` fits an IQR/Tukey fence over them
+            instead, so a single extreme interval stops flattening every
+            other bar; a discounted interval clips against the resulting
+            domain edge and continues into a reserved margin as a
+            gradient fade rather than being hidden. Composes with
+            `symmetric`: the fence runs first, then the mirrored padding.
         width
             Bar width in pixels.
         height
@@ -1420,6 +1462,7 @@ class CoefTable:
                 scale=scale,
                 ylim=ylim,
                 symmetric=symmetric,
+                autoscale=autoscale,
                 width=width,
                 height=height,
                 show_axis=show_axis,
