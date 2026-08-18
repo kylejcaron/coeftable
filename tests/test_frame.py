@@ -621,15 +621,17 @@ def test_forest_unclipped_table_renders_no_fade_in_html():
 
 
 def test_forest_robust_domain_retains_annotation_outside_inlier_range():
-    # An annotation coordinate rides the `required` join past the IQR fence:
-    # under autoscale="robust" it still expands the domain and never marks the
-    # bucket clipped (annotation coords are excluded from the clip test).
+    # Under autoscale="robust" a forest annotation coordinate rides the
+    # `required` join past the IQR fence: it expands the domain even though a
+    # genuine data outlier in the same bucket is fenced out. The two live
+    # bounds pin both halves -- the annotation (2.0) is retained while the
+    # data outlier (6.0) is discounted, so the domain lands near 2.0, not 6.0.
     raw = pl.DataFrame(
         {
-            "metric": ["A", "B", "C", "D"],
-            "est": [0.30, 0.32, 0.28, 0.31],
-            "low": [0.20, 0.22, 0.18, 0.21],
-            "high": [0.40, 0.42, 0.38, 0.41],
+            "metric": ["A", "B", "C", "D", "E"],
+            "est": [0.30, 0.32, 0.28, 0.31, 5.00],
+            "low": [0.20, 0.22, 0.18, 0.21, 4.00],
+            "high": [0.40, 0.42, 0.38, 0.41, 6.00],
         }
     )
     table = (
@@ -643,10 +645,9 @@ def test_forest_robust_domain_retains_annotation_outside_inlier_range():
             annotations=(Rule(2.0, axis="x"),),
         )
     )
-    state = _forest_state(table)
-    _, high = state.domains[("table",)]
-    assert high >= 2.0
-    assert ("table",) not in state.clipped
+    _, high = _forest_state(table).domains[("table",)]
+    assert high >= 2.0  # annotation retained past the fence
+    assert high < 4.0  # data outlier fenced out, not driving the domain
 
 
 def test_plot_height_picks_stacked_layout_default():
