@@ -620,6 +620,35 @@ def test_forest_unclipped_table_renders_no_fade_in_html():
     assert "linearGradient" not in html
 
 
+def test_forest_robust_domain_retains_annotation_outside_inlier_range():
+    # An annotation coordinate rides the `required` join past the IQR fence:
+    # under autoscale="robust" it still expands the domain and never marks the
+    # bucket clipped (annotation coords are excluded from the clip test).
+    raw = pl.DataFrame(
+        {
+            "metric": ["A", "B", "C", "D"],
+            "est": [0.30, 0.32, 0.28, 0.31],
+            "low": [0.20, 0.22, 0.18, 0.21],
+            "high": [0.40, 0.42, 0.38, 0.41],
+        }
+    )
+    table = (
+        CoefTable(raw, rows="metric")
+        .estimate("Effect", "est", ci=("low", "high"))
+        .forest(
+            "Plot",
+            of="Effect",
+            ref=0.0,
+            autoscale="robust",
+            annotations=(Rule(2.0, axis="x"),),
+        )
+    )
+    state = _forest_state(table)
+    _, high = state.domains[("table",)]
+    assert high >= 2.0
+    assert ("table",) not in state.clipped
+
+
 def test_plot_height_picks_stacked_layout_default():
     estimate = Estimate("Lift %", "rel", ci=("lb", "ub"))
     forest = Forest("Plot", of="Lift %")
