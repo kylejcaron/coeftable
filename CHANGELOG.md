@@ -1,3 +1,19 @@
+<a id="v0.5.0"></a>
+# [v0.5.0](https://github.com/kylejcaron/coeftable/releases/tag/v0.5.0) - 2026-08-19
+
+<!-- Release notes generated using configuration in .github/release.yml at v0.5.0 -->
+
+## What's Changed
+### Maintenance
+* Update changelog for v0.4.0 by [@github-actions](https://github.com/github-actions)[bot] in [#32](https://github.com/kylejcaron/coeftable/pull/32)
+* feat: forest plot outlier handling. robust autoscale + margin-fade clipping by [@kylejcaron](https://github.com/kylejcaron) in [#33](https://github.com/kylejcaron/coeftable/pull/33)
+
+
+**Full Changelog**: https://github.com/kylejcaron/coeftable/compare/v0.4.0...v0.5.0
+
+[Changes][v0.5.0]
+
+
 <a id="v0.4.0"></a>
 # [v0.4.0](https://github.com/kylejcaron/coeftable/releases/tag/v0.4.0) - 2026-08-14
 
@@ -108,6 +124,7 @@
 [Changes][v0.1.0]
 
 
+[v0.5.0]: https://github.com/kylejcaron/coeftable/compare/v0.4.0...v0.5.0
 [v0.4.0]: https://github.com/kylejcaron/coeftable/compare/v0.3.1...v0.4.0
 [v0.3.1]: https://github.com/kylejcaron/coeftable/compare/v0.3.0...v0.3.1
 [v0.3.0]: https://github.com/kylejcaron/coeftable/compare/v0.2.1...v0.3.0
