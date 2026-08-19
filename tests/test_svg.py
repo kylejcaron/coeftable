@@ -124,6 +124,42 @@ def test_forest_bar_without_clipping_has_no_cap():
     assert "<polygon" not in svg
 
 
+def test_forest_bar_margin_fades_clipped_upper_bound_instead_of_cap():
+    svg = forest_bar(
+        1.0, 0.5, 99.0, domain=(0.0, 2.0), ref=0.0, color="#000", theme=DEFAULT, margin=18
+    )
+    assert "linearGradient" in svg
+    assert "<polygon" not in svg
+
+
+def test_forest_bar_margin_fades_clipped_lower_bound_with_flipped_gradient():
+    svg = forest_bar(
+        1.0, -99.0, 1.5, domain=(0.0, 2.0), ref=0.0, color="#000", theme=DEFAULT, margin=18
+    )
+    assert 'id="fadel_' in svg
+
+
+def test_forest_bar_margin_without_clipping_draws_no_fade():
+    svg = forest_bar(
+        1.0, 0.5, 1.5, domain=(0.0, 2.0), ref=0.0, color="#000", theme=DEFAULT, margin=18
+    )
+    assert "linearGradient" not in svg
+    assert "<polygon" not in svg
+
+
+def test_forest_bar_margin_offsets_projection_into_inner_region():
+    # A bar spanning the whole domain starts at margin + inset, not inset.
+    svg = forest_bar(
+        1.0, 0.0, 2.0, domain=(0.0, 2.0), ref=0.0, color="#000", theme=DEFAULT, margin=18
+    )
+    assert 'x="21.00"' in svg
+
+
+def test_forest_axis_margin_spans_inner_region():
+    axis = forest_axis(domain=(0.0, 2.0), ref=0.0, fmt=Number(), theme=DEFAULT, margin=18)
+    assert 'x1="21"' in axis
+
+
 def test_forest_bar_survives_zero_width_domain():
     svg = forest_bar(1.0, 1.0, 1.0, domain=(1.0, 1.0), ref=0.0, color="#000", theme=DEFAULT)
     assert svg.startswith("<svg")

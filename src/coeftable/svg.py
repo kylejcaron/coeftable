@@ -849,6 +849,48 @@ def _esc(text: str) -> str:
     return html.escape(text, quote=False)
 
 
+CLIP_MARGIN = 18
+# Pixel reserve on each side of a forest bar's plotting region when its
+# domain bucket contains clipped values -- the strip a `_fade_cap` bleeds
+# into. Shared with `spec.Forest`, which decides per bucket whether to
+# reserve it at all.
+
+
+def _fade_id(color: str, flip: bool) -> str:
+    """Return a deterministic id for a `_fade_cap` gradient.
+
+    Same collision reasoning as `_hard_clip_id`: SVG ids share one
+    namespace across an embedding page, so the id is built from the
+    gradient's full content -- its colour and direction. Two calls share
+    an id exactly when their gradients are identical, which makes any
+    collision harmless.
+    """
+    safe = "".join(c if c.isalnum() else "_" for c in color)
+    return f"fade{'l' if flip else 'r'}_{safe}"
+
+
+def _fade_cap(
+    x: float, top: float, fade_width: float, bar_height: int, color: str, *, flip: bool
+) -> str:
+    """Continue a clipped bar into the reserved margin as a gradient fade.
+
+    The rectangle starts at the domain edge the bar clipped against and
+    fades from the bar's own fill to transparent across `fade_width` px,
+    reading as "extends beyond the axis" rather than ending abruptly.
+    `flip=True` fades leftward for a low-edge clip.
+    """
+    gid = _fade_id(color, flip)
+    x_attrs = 'x1="1" y1="0" x2="0" y2="0"' if flip else 'x1="0" y1="0" x2="1" y2="0"'
+    return (
+        f'<defs><linearGradient id="{gid}" {x_attrs}>'
+        f'<stop offset="0" stop-color="{color}" stop-opacity="0.75"/>'
+        f'<stop offset="1" stop-color="{color}" stop-opacity="0"/>'
+        f"</linearGradient></defs>"
+        f'<rect x="{x:.2f}" y="{top:.2f}" width="{fade_width:.2f}" '
+        f'height="{bar_height}" fill="url(#{gid})"/>'
+    )
+
+
 def forest_bar(
     estimate: float | None,
     lower: float | None,
@@ -862,14 +904,18 @@ def forest_bar(
     height: int = 18,
     bar_height: int = 9,
     inset: int = 3,
+    margin: int = 0,
     annotations: Sequence[ResolvedAnnotation] = (),
 ) -> str:
     """Render one interval as an inline SVG bar.
 
     The bar spans the interval, a light tick marks the point estimate, and a
     dashed line marks `ref` when it falls inside `domain`.  A bound outside the
-    domain, including an unbounded one, draws to the edge with a triangular cap
-    so that clipping is visible rather than silently misleading.
+    domain, including an unbounded one, is clipped visibly rather than
+    silently: with `margin=0` it draws to the edge with a triangular cap;
+    with `margin > 0` the bars plot against the inner
+    `[margin, width - margin]` region and a clipped bound continues into
+    the margin as a gradient fade to transparent (see `_fade_cap`).
 
     Parameters
     ----------
@@ -889,6 +935,10 @@ def forest_bar(
         Resolved x-axis rules and bands rendered around the existing bar.
     width, height, bar_height, inset
         Geometry in pixels.
+    margin
+        Pixel reserve on each side of the plotting region for the fade
+        treatment of clipped bounds. `0` (the default) keeps the full
+        width for bars and marks clipping with triangular caps instead.
 
     Returns
     -------
@@ -896,7 +946,12 @@ def forest_bar(
         A complete ``<svg>`` element.
     """
     low, high = domain
-    project = _projector(domain, width, inset)
+    plot_width = width - 2 * margin
+    inner_project = _projector(domain, plot_width, inset)
+
+    def project(v: float) -> float:
+        return margin + inner_project(v)
+
     low_value = low if lower is None or is_missing(lower) else lower
     high_value = high if upper is None or is_missing(upper) else upper
     clipped_low = is_missing(lower) or low_value < low
@@ -928,19 +983,26 @@ def forest_bar(
             f'y2="{top + bar_height:.2f}" stroke="{theme.surface}" stroke-width="1.5"/>'
         )
 
-    cap = bar_height * 0.6
-    if clipped_high:
-        tip = width - inset / 2
-        parts.append(
-            f'<polygon points="{tip:.2f},{middle:.2f} {tip - cap:.2f},{middle - cap:.2f} '
-            f'{tip - cap:.2f},{middle + cap:.2f}" fill="{color}"/>'
-        )
-    if clipped_low:
-        tip = inset / 2
-        parts.append(
-            f'<polygon points="{tip:.2f},{middle:.2f} {tip + cap:.2f},{middle - cap:.2f} '
-            f'{tip + cap:.2f},{middle + cap:.2f}" fill="{color}"/>'
-        )
+    if margin:
+        fade_width = float(margin - inset)
+        if clipped_high:
+            parts.append(_fade_cap(x1, top, fade_width, bar_height, color, flip=False))
+        if clipped_low:
+            parts.append(_fade_cap(x0 - fade_width, top, fade_width, bar_height, color, flip=True))
+    else:
+        cap = bar_height * 0.6
+        if clipped_high:
+            tip = width - inset / 2
+            parts.append(
+                f'<polygon points="{tip:.2f},{middle:.2f} {tip - cap:.2f},{middle - cap:.2f} '
+                f'{tip - cap:.2f},{middle + cap:.2f}" fill="{color}"/>'
+            )
+        if clipped_low:
+            tip = inset / 2
+            parts.append(
+                f'<polygon points="{tip:.2f},{middle:.2f} {tip + cap:.2f},{middle - cap:.2f} '
+                f'{tip + cap:.2f},{middle + cap:.2f}" fill="{color}"/>'
+            )
     if not annotations:
         return _svg(width, height, "".join(parts))
     area = _PlotArea(
@@ -948,8 +1010,8 @@ def forest_bar(
         y_domain=None,
         project_x=project,
         project_y=None,
-        left=inset,
-        right=width - inset,
+        left=margin + inset,
+        right=width - margin - inset,
         top=0,
         bottom=height,
     )
@@ -1078,6 +1140,7 @@ def forest_axis(
     width: int = 220,
     height: int = 22,
     inset: int = 3,
+    margin: int = 0,
     target_ticks: int = 4,
 ) -> str:
     """Render the shared x-axis for a set of forest bars.
@@ -1094,6 +1157,10 @@ def forest_axis(
         Supplies the axis colour and label size.
     width, height, inset
         Geometry in pixels.
+    margin
+        Pixel reserve on each side matching the bars' own `margin`; the
+        axis spine and projection span only the inner region so ticks
+        stay aligned with the bars.
     target_ticks
         Approximate number of ticks wanted.
 
@@ -1103,10 +1170,15 @@ def forest_axis(
         A complete ``<svg>`` element.
     """
     low, high = domain
-    project = _projector(domain, width, inset)
+    inner_project = _projector(domain, width - 2 * margin, inset)
+
+    def project(v: float) -> float:
+        return margin + inner_project(v)
+
     baseline = 4.0
     parts = [
-        f'<line x1="{inset}" y1="{baseline:.2f}" x2="{width - inset}" y2="{baseline:.2f}" '
+        f'<line x1="{margin + inset}" y1="{baseline:.2f}" '
+        f'x2="{width - margin - inset}" y2="{baseline:.2f}" '
         f'stroke="{theme.axis}" stroke-width="0.75"/>'
     ]
     if low <= ref <= high:

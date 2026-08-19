@@ -562,6 +562,94 @@ def test_explicit_ylim_wins_over_symmetric():
     assert out.axis_rows
 
 
+OUTLIER_RAW = {
+    "area": ["Core"] * 4,
+    "metric": ["A", "B", "C", "Rare"],
+    "variant": ["B", "B", "B", "B"],
+    "rel": [0.5, -0.2, 0.1, 300.0],
+    "rel_lb": [0.3, -0.5, -0.1, 220.0],
+    "rel_ub": [0.7, 0.1, 0.3, 410.0],
+}
+
+
+def test_forest_autoscale_robust_discounts_outlier_and_flags_bucket_clipped():
+    table = base(pl.DataFrame(OUTLIER_RAW)).forest("Plot", of="Lift %", autoscale="robust")
+    state = _forest_state(table)
+    (domain,) = state.domains.values()
+    assert domain[1] < 220.0
+    assert state.clipped == set(state.domains)
+
+
+def test_forest_autoscale_tight_default_fits_outlier_with_no_clip():
+    table = base(pl.DataFrame(OUTLIER_RAW)).forest("Plot", of="Lift %")
+    state = _forest_state(table)
+    (domain,) = state.domains.values()
+    assert domain[1] >= 410.0
+    assert state.clipped == frozenset()
+
+
+def test_forest_autoscale_robust_composes_with_symmetric():
+    table = base(pl.DataFrame(OUTLIER_RAW)).forest(
+        "Plot", of="Lift %", ref=0.0, autoscale="robust", symmetric=True
+    )
+    state = _forest_state(table)
+    (domain,) = state.domains.values()
+    assert domain[0] == -domain[1]
+    assert domain[1] < 220.0
+
+
+def test_forest_explicit_ylim_wins_over_robust_and_still_flags_clipping():
+    table = base(pl.DataFrame(OUTLIER_RAW)).forest(
+        "Plot", of="Lift %", autoscale="robust", ylim=(-1.0, 1.0)
+    )
+    state = _forest_state(table)
+    (domain,) = state.domains.values()
+    assert domain == (-1.0, 1.0)
+    assert state.clipped == set(state.domains)
+
+
+def test_forest_clipped_bucket_renders_margin_fade_in_html():
+    table = base(pl.DataFrame(OUTLIER_RAW)).forest("Plot", of="Lift %", autoscale="robust")
+    html = table.gt()._repr_html_()
+    assert "linearGradient" in html
+
+
+def test_forest_unclipped_table_renders_no_fade_in_html():
+    table = base(pl.DataFrame(RAW)).forest("Plot", of="Lift %")
+    html = table.gt()._repr_html_()
+    assert "linearGradient" not in html
+
+
+def test_forest_robust_domain_retains_annotation_outside_inlier_range():
+    # Under autoscale="robust" a forest annotation coordinate rides the
+    # `required` join past the IQR fence: it expands the domain even though a
+    # genuine data outlier in the same bucket is fenced out. The two live
+    # bounds pin both halves -- the annotation (2.0) is retained while the
+    # data outlier (6.0) is discounted, so the domain lands near 2.0, not 6.0.
+    raw = pl.DataFrame(
+        {
+            "metric": ["A", "B", "C", "D", "E"],
+            "est": [0.30, 0.32, 0.28, 0.31, 5.00],
+            "low": [0.20, 0.22, 0.18, 0.21, 4.00],
+            "high": [0.40, 0.42, 0.38, 0.41, 6.00],
+        }
+    )
+    table = (
+        CoefTable(raw, rows="metric")
+        .estimate("Effect", "est", ci=("low", "high"))
+        .forest(
+            "Plot",
+            of="Effect",
+            ref=0.0,
+            autoscale="robust",
+            annotations=(Rule(2.0, axis="x"),),
+        )
+    )
+    _, high = _forest_state(table).domains[("table",)]
+    assert high >= 2.0  # annotation retained past the fence
+    assert high < 4.0  # data outlier fenced out, not driving the domain
+
+
 def test_plot_height_picks_stacked_layout_default():
     estimate = Estimate("Lift %", "rel", ci=("lb", "ub"))
     forest = Forest("Plot", of="Lift %")
