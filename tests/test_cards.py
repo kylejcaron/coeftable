@@ -411,8 +411,8 @@ def test_select_row_height_is_fixed_from_chrome():
     assert f"height:{select_line_height}px" in select_tag
     assert f"line-height:{select_line_height}px" in select_tag
     assert "box-sizing:border-box" in select_tag
-    assert "display:flex;align-items:center" in html_out
-    assert "max-width:60%" in select_tag
+    assert "width:60%" in select_tag
+    assert "flex:none" in select_tag
 
 
 def test_select_height_tracks_custom_control_size():
@@ -645,6 +645,7 @@ def test_default_chrome_line_heights_round_up():
         {"title_size": 1.5},
         {"border_width": 1.5},
         {"leading": 0.0},
+        {"leading": 0.5},
         {"leading": 3.5},
         {"char_width_ratio": 0.0},
         {"swatch_thickness": 30},
@@ -659,6 +660,7 @@ def test_default_chrome_line_heights_round_up():
         "fractional-size",
         "fractional-border",
         "zero-leading",
+        "subunit-leading",
         "huge-leading",
         "zero-ratio",
         "oversized-swatch",
@@ -1025,6 +1027,52 @@ def test_summary_shows_the_chip():
     assert "min-width:0" in summary
     assert "flex:none" in summary
     assert f"column-gap:{DEFAULT_CHROME.gap}px" in summary
+    assert "align-items:flex-start" in summary
+
+
+def test_select_label_and_control_keep_explicit_flex_allocations():
+    control = SelectControl(
+        "A label long enough to clip",
+        (("a", "An option with a long visible label"),),
+        selected="a",
+    )
+    html_out = render_adornment(control, theme=DEFAULT)
+    label_span = re.search(r"<span style=\"([^\"]+)\">", html_out)
+    select_tag = html_out[
+        html_out.index("<select") : html_out.index(">", html_out.index("<select")) + 1
+    ]
+    assert label_span is not None
+    assert f"width:calc(40% - {DEFAULT_CHROME.swatch_gap}px)" in label_span.group(1)
+    assert "flex:none" in label_span.group(1)
+    assert "overflow:hidden;text-overflow:ellipsis;white-space:nowrap" in label_span.group(1)
+    assert "width:60%" in select_tag
+    assert "flex:none" in select_tag
+
+
+def test_long_select_label_keeps_measured_allocation():
+    template = CardTemplate(
+        width=252,
+        header=(TextBlock("Revenue", variant="title"),),
+        body=(
+            SelectControl(
+                "A label long enough to clip",
+                (("a", "An option with a long visible label"),),
+                selected="a",
+            ),
+        ),
+    )
+    html_out = template.render(theme=DEFAULT)
+    assert f"width:calc(40% - {DEFAULT_CHROME.swatch_gap}px);flex:none" in html_out
+
+
+def test_narrow_select_label_budget_raises():
+    with pytest.raises(SpecError):
+        resolve_rows(
+            (SelectControl("Breakout", (("a", "Alpha"),), selected="a"),),
+            usable=42,
+            chrome=DEFAULT_CHROME,
+            section="body",
+        )
 
 
 def test_popover_row_wrapper_allows_panel_to_escape():

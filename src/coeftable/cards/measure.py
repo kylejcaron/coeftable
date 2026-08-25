@@ -56,8 +56,9 @@ def _minimum_inline_width(adornment: Adornment, chrome: CardChrome) -> float | N
         fixed = chrome.swatch_width + chrome.swatch_gap + chrome.chip_gap
         return len(adornment.entries) * (fixed + text_budget * chrome.caption_size)
     if isinstance(adornment, SelectControl):
-        # The label keeps its existing half-width allocation.
-        return 2 * text_budget * chrome.control_size
+        # The label gets 40% of usable width less the swatch gap.
+        label_minimum = text_budget * chrome.control_size
+        return (label_minimum + chrome.swatch_gap) / 0.4
     return None
 
 
@@ -214,7 +215,11 @@ def resolve_rows(
                     )
                 )
             case SelectControl(label=label):
-                budget = _budget(usable / 2, chrome.control_size, chrome.char_width_ratio)
+                budget = _budget(
+                    usable * 0.4 - chrome.swatch_gap,
+                    chrome.control_size,
+                    chrome.char_width_ratio,
+                )
                 rows.append(
                     Row(
                         replace(adornment, label=_clip(label, budget)),

@@ -54,8 +54,13 @@ class CardChrome:
                     or not math.isfinite(value)
                 ):
                     raise SpecError(f"CardChrome.{field.name} must be a finite float")
-                if not 0.0 < value <= 3.0:
-                    raise SpecError(f"CardChrome.{field.name} must be in (0, 3]")
+                if field.name == "leading":
+                    valid_range = 1.0 <= value <= 3.0
+                else:
+                    valid_range = 0.0 < value <= 3.0
+                if not valid_range:
+                    bound = "[1, 3]" if field.name == "leading" else "(0, 3]"
+                    raise SpecError(f"CardChrome.{field.name} must be in {bound}")
             else:
                 if isinstance(value, bool) or not isinstance(value, int):
                     raise SpecError(f"CardChrome.{field.name} must be an int")

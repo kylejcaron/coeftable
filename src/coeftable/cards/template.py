@@ -89,7 +89,7 @@ class CardTemplate:
             f'overflow:visible">'
             f'<summary style="box-sizing:content-box;display:flex;'
             f"column-gap:{chrome.gap}px;list-style:none;margin:0;"
-            f"justify-content:space-between;align-items:baseline;"
+            f"justify-content:space-between;align-items:flex-start;"
             f"padding:{chrome.padding}px {chrome.padding}px 0 {chrome.padding}px;"
             f'height:{summary_content}px;cursor:pointer">'
             f'<div style="min-width:0;flex:1 1 auto">{header_html}</div>{chip_html}</summary>'

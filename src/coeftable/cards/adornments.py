@@ -2,7 +2,9 @@
 
 The renderer (`coeftable.cards.fragments`) knows exactly these nine types
 and never branches on report type. Construction is the runtime contract
-boundary: every invalid value raises `SpecError` here, never later.
+boundary for intrinsic field validity: every invalid value raises `SpecError`
+here. Layout-dependent fit, including overflow and minimum widths, raises
+`SpecError` during measurement instead.
 """
 
 from __future__ import annotations
