@@ -69,15 +69,19 @@ def _require_entry_tuples(
 
 @dataclass(frozen=True, slots=True)
 class TextBlock:
-    """A run of card text at one typographic variant."""
+    """A run of card text at one typographic variant, wrapping to max_lines."""
 
     text: str
     variant: Variant = "body"
+    max_lines: int = 1
 
     def __post_init__(self) -> None:
         """Validate fields."""
         _require_str(self.text, name="TextBlock.text")
         _require_member(self.variant, _VARIANTS, name="TextBlock.variant")
+        _require_int(self.max_lines, name="TextBlock.max_lines")
+        if self.max_lines < 1:
+            raise SpecError("TextBlock.max_lines must be >= 1")
 
 
 @dataclass(frozen=True, slots=True)

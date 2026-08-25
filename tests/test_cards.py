@@ -22,6 +22,7 @@ from coeftable.cards.adornments import (
 )
 from coeftable.cards.chrome import DEFAULT_CHROME, CardChrome, line_height
 from coeftable.cards.fragments import render_adornment
+from coeftable.cards.measure import measure_card, resolve_rows, text_line_plan
 from coeftable.errors import SpecError
 from coeftable.theme import DEFAULT
 
@@ -652,3 +653,121 @@ def test_default_chrome_render_matches_default_call():
         assert render_adornment(adornment, theme=DEFAULT) == render_adornment(
             adornment, theme=DEFAULT, chrome=DEFAULT_CHROME
         )
+
+
+def test_line_plan_wraps_greedily_at_the_budget():
+    assert text_line_plan("alpha beta gamma", budget=11, max_lines=5) == (
+        "alpha beta",
+        "gamma",
+    )
+
+
+def test_line_plan_hard_splits_an_overlong_token():
+    assert text_line_plan("abcdefghij", budget=4, max_lines=5) == (
+        "abcd",
+        "efgh",
+        "ij",
+    )
+
+
+def test_line_plan_normalizes_whitespace():
+    assert text_line_plan("  a\tb\n\nc  ", budget=20, max_lines=3) == ("a b c",)
+
+
+def test_line_plan_empty_text_is_one_blank_line():
+    assert text_line_plan("", budget=10, max_lines=3) == ("",)
+
+
+def test_line_plan_caps_and_ellipsizes_the_last_line():
+    plan = text_line_plan("one two three four five", budget=9, max_lines=2)
+    assert len(plan) == 2
+    assert plan[1].endswith("…")
+    assert len(plan[1]) <= 9
+
+
+def test_wrapping_textblock_height_is_lines_times_line_height():
+    block = TextBlock("alpha beta gamma delta epsilon", variant="body", max_lines=3)
+    rows = resolve_rows((block,), usable=80, chrome=DEFAULT_CHROME, section="body")
+    lh = line_height(DEFAULT_CHROME.body_size, DEFAULT_CHROME)
+    assert sum(r.height for r in rows) % lh == 0
+    assert len(rows) >= 2  # narrow width forces a wrap
+    assert all(isinstance(r.adornment, TextBlock) for r in rows)
+
+
+def test_metric_value_overflow_raises_with_fixes():
+    with pytest.raises(SpecError) as excinfo:
+        resolve_rows(
+            (MetricValue("+123,456,789.00% " * 4),),
+            usable=60,
+            chrome=DEFAULT_CHROME,
+            section="body",
+        )
+    message = str(excinfo.value)
+    assert "MetricValue.value" in message
+    assert "wider card" in message
+
+
+def test_inline_svg_wider_than_usable_raises():
+    with pytest.raises(SpecError):
+        resolve_rows(
+            (InlineSvg(SVG_OK, width=220, height=30),),
+            usable=200,
+            chrome=DEFAULT_CHROME,
+            section="body",
+        )
+
+
+def test_measured_card_invariants_hold():
+    measured, _header_rows, _body_rows, chip = measure_card(
+        width=252,
+        header=(TextBlock("Revenue", variant="title"),),
+        body=(
+            MetricValue("+3.4%", detail="[1.2, 5.7]", role="favorable"),
+            CaptionRow("weekly", color="#111"),
+        ),
+        chrome=DEFAULT_CHROME,
+    )
+    assert measured.collapsed_height <= measured.expanded_height
+    assert measured.width == 252
+    assert chip == "+3.4%"
+    for anchor in measured.anchors:
+        assert 0 <= anchor.x <= measured.width
+        assert 0 <= anchor.y <= measured.collapsed_height
+    names = [a.name for a in measured.anchors]
+    assert names == ["in", "out"]
+
+
+def test_chip_comes_from_body_never_header():
+    _, _, _, chip = measure_card(
+        width=252,
+        header=(TextBlock("t", variant="title"), MetricValue("+9.9%", role="favorable")),
+        body=(),
+        chrome=DEFAULT_CHROME,
+    )
+    assert chip is None
+
+
+def test_bigger_chrome_measures_taller():
+    header = (TextBlock("A title that will wrap somewhere", variant="title", max_lines=3),)
+    body = (CaptionRow("caption"),)
+    small = measure_card(width=252, header=header, body=body, chrome=DEFAULT_CHROME)[0]
+    big = measure_card(
+        width=252,
+        header=header,
+        body=body,
+        chrome=CardChrome(title_size=24, caption_size=18),
+    )[0]
+    assert big.expanded_height > small.expanded_height
+    assert big.collapsed_height > small.collapsed_height
+
+
+def test_header_gap_absent_for_empty_body():
+    header = (TextBlock("t", variant="title"),)
+    with_body = measure_card(
+        width=252, header=header, body=(CaptionRow("c"),), chrome=DEFAULT_CHROME
+    )[0]
+    without = measure_card(width=252, header=header, body=(), chrome=DEFAULT_CHROME)[0]
+    caption_h = line_height(DEFAULT_CHROME.caption_size, DEFAULT_CHROME)
+    assert with_body.expanded_height == (
+        without.expanded_height + DEFAULT_CHROME.header_gap + caption_h
+    )
