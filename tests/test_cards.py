@@ -790,6 +790,34 @@ def test_inline_svg_wider_than_usable_raises():
         )
 
 
+@pytest.mark.parametrize(
+    ("adornment", "usable"),
+    [
+        ("caption", 31),
+        ("badge", 27),
+        ("legend", 70),
+    ],
+)
+def test_adornment_minimum_width_rejects_narrow_sections(adornment, usable):
+    adornments = {
+        "caption": (CaptionRow("caption", color="#111"),),
+        "badge": (Badge("badge"),),
+        "legend": (Legend((("A", "#111"), ("B", "#222"))),),
+    }
+    with pytest.raises(SpecError) as excinfo:
+        resolve_rows(
+            adornments[adornment],
+            usable=usable,
+            chrome=DEFAULT_CHROME,
+            section="body",
+        )
+    message = str(excinfo.value)
+    assert "body[0]" in message
+    assert "requires at least" in message
+    assert "available" in message
+    assert "wider card" in message
+
+
 def test_chip_does_not_break_header_that_fits_without_chip():
     usable = 250
     width = usable + 2 * (DEFAULT_CHROME.padding + DEFAULT_CHROME.border_width)
@@ -803,6 +831,21 @@ def test_chip_does_not_break_header_that_fits_without_chip():
     assert isinstance(header_rows[0].adornment, InlineSvg)
     assert header_rows[0].adornment.width == 220
     assert chip is None
+
+
+def test_chip_reservation_falls_back_when_colored_caption_header_would_not_fit():
+    usable = 70
+    width = usable + 2 * (DEFAULT_CHROME.padding + DEFAULT_CHROME.border_width)
+    measured, header_rows, _body_rows, chip = measure_card(
+        width=width,
+        header=(CaptionRow("header", color="#111"),),
+        body=(MetricValue("+345"),),
+        chrome=DEFAULT_CHROME,
+    )
+    assert measured.width == width
+    assert chip is None
+    assert isinstance(header_rows[0].adornment, CaptionRow)
+    assert header_rows[0].adornment.text == "header"
 
 
 def test_measured_card_invariants_hold():
@@ -946,10 +989,31 @@ def test_template_render_is_deterministic_and_measure_stable():
 
 
 def test_template_body_rows_are_fixed_height_and_clipped():
-    html_out = _template().render(theme=DEFAULT)
+    template = CardTemplate(
+        width=252,
+        header=(TextBlock("Revenue", variant="title"),),
+        body=(
+            KeyValuePopover("diagnostics", (("n", "412"),)),
+            CaptionRow("weekly"),
+        ),
+    )
+    _, _, body_rows, _ = measure_card(
+        width=template.width,
+        header=template.header,
+        body=template.body,
+        chrome=template.chrome,
+    )
+    html_out = template.render(theme=DEFAULT)
     details_tag = html_out[: html_out.index(">") + 1]
     assert "overflow:visible" in details_tag
-    assert html_out.count("overflow:hidden") >= 2  # body wrappers clip their rows
+    body_marker = '<div style="box-sizing:border-box;margin:0;'
+    body_block = html_out.split(body_marker, 1)[1].rsplit("</div></details>", 1)[0]
+    wrappers = re.findall(r'<div style="height:(\d+)px;overflow:(hidden|visible)', body_block)
+    expected = [
+        (str(row.height), "visible" if isinstance(row.adornment, KeyValuePopover) else "hidden")
+        for row in body_rows
+    ]
+    assert wrappers == expected
 
 
 def test_summary_shows_the_chip():

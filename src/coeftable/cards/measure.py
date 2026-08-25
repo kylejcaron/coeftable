@@ -41,6 +41,37 @@ def _est(text: str, size: int, ratio: float) -> float:
     return len(text) * ratio * size
 
 
+def _minimum_inline_width(adornment: Adornment, chrome: CardChrome) -> float | None:
+    """Return the minimum width needed to keep an adornment legible."""
+    text_budget = 2 * chrome.char_width_ratio
+    if isinstance(adornment, Badge):
+        return 2 * chrome.chip_padding_x + text_budget * chrome.chip_size
+    if isinstance(adornment, CaptionRow):
+        fixed = 0 if adornment.color is None else chrome.swatch_width + chrome.swatch_gap
+        return fixed + text_budget * chrome.caption_size
+    if isinstance(adornment, Legend):
+        fixed = chrome.legend_swatch + chrome.swatch_gap + chrome.chip_gap
+        return len(adornment.entries) * (fixed + text_budget * chrome.caption_size)
+    if isinstance(adornment, RuleStrip):
+        fixed = chrome.swatch_width + chrome.swatch_gap + chrome.chip_gap
+        return len(adornment.entries) * (fixed + text_budget * chrome.caption_size)
+    if isinstance(adornment, SelectControl):
+        # The label keeps its existing half-width allocation.
+        return 2 * text_budget * chrome.control_size
+    return None
+
+
+def _check_minimum_inline_width(
+    adornment: Adornment, *, usable: int, chrome: CardChrome, where: str
+) -> None:
+    required = _minimum_inline_width(adornment, chrome)
+    if required is not None and required > usable:
+        raise SpecError(
+            f"{where}: {type(adornment).__name__} requires at least {required:.1f}px, "
+            f"but only {usable}px available; {_FIXES}"
+        )
+
+
 def _clip(text: str, budget: int) -> str:
     if len(text) <= budget:
         return text
@@ -151,6 +182,7 @@ def resolve_rows(
     for index, adornment in enumerate(adornments):
         row_start = len(rows)
         where = f"{section}[{index}]"
+        _check_minimum_inline_width(adornment, usable=usable, chrome=chrome, where=where)
         match adornment:
             case TextBlock(text=text, variant=variant, max_lines=max_lines):
                 size = {
