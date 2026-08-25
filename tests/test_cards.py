@@ -23,6 +23,7 @@ from coeftable.cards.adornments import (
 from coeftable.cards.chrome import DEFAULT_CHROME, CardChrome, line_height
 from coeftable.cards.fragments import render_adornment
 from coeftable.cards.measure import measure_card, resolve_rows, text_line_plan
+from coeftable.cards.template import CardTemplate
 from coeftable.errors import SpecError
 from coeftable.theme import DEFAULT
 
@@ -545,6 +546,11 @@ EXPECTED_CARD_EXPORTS = {
     "SelectControl",
     "TextBlock",
     "render_adornment",
+    "Anchor",
+    "CardChrome",
+    "CardTemplate",
+    "DEFAULT_CHROME",
+    "MeasuredCard",
 }
 
 ALLOWED_CARDS_IMPORT_ROOTS = {
@@ -558,7 +564,8 @@ ALLOWED_CARDS_IMPORT_ROOTS = {
 
 
 def test_cards_export_surface_is_exactly_the_promised_set():
-    assert len(coeftable.cards.__all__) == 11
+    assert len(coeftable.cards.__all__) == 16
+
     assert set(coeftable.cards.__all__) == EXPECTED_CARD_EXPORTS
     for name in EXPECTED_CARD_EXPORTS:
         assert hasattr(coeftable.cards, name)
@@ -876,3 +883,73 @@ def test_header_gap_absent_for_empty_body():
     assert with_body.expanded_height == (
         without.expanded_height + DEFAULT_CHROME.header_gap + caption_h
     )
+
+
+def _template() -> CardTemplate:
+    return CardTemplate(
+        width=252,
+        header=(TextBlock("Revenue", variant="title"),),
+        body=(
+            MetricValue("+3.4%", detail="[1.2, 5.7]", role="favorable"),
+            CaptionRow("weekly", color="#4C72B0"),
+        ),
+    )
+
+
+def test_template_shell_pins_measured_heights():
+    template = _template()
+    measured = template.measure()
+    html_out = template.render(theme=DEFAULT)
+    assert f"width:{measured.width}px" in html_out
+    assert "box-sizing:border-box" in html_out
+    assert html_out.startswith("<details open")
+    assert re.search(r"\bid=", html_out) is None
+
+
+def test_template_render_is_deterministic_and_measure_stable():
+    template = _template()
+    assert template.render(theme=DEFAULT) == template.render(theme=DEFAULT)
+    assert template.measure() == template.measure()
+
+
+def test_template_body_rows_are_fixed_height_and_clipped():
+    html_out = _template().render(theme=DEFAULT)
+    assert html_out.count("overflow:hidden") >= 3  # shell + one wrapper per body row
+
+
+def test_summary_shows_the_chip():
+    html_out = _template().render(theme=DEFAULT)
+    summary = html_out.split("</summary>")[0]
+    assert "+3.4%" in summary
+    assert "[1.2, 5.7]" not in summary  # chip is value-only
+
+
+def test_interactive_adornments_rejected_in_header():
+    with pytest.raises(SpecError):
+        CardTemplate(
+            width=252,
+            header=(SelectControl("B", (("a", "A"),), selected="a"),),
+        )
+    with pytest.raises(SpecError):
+        CardTemplate(
+            width=252,
+            header=(KeyValuePopover("d", (("k", "v"),)),),
+        )
+
+
+def test_template_width_validation():
+    with pytest.raises(SpecError):
+        CardTemplate(width=20, header=(TextBlock("t"),))
+    with pytest.raises(SpecError):
+        CardTemplate(width=True, header=(TextBlock("t"),))
+    with pytest.raises(SpecError):
+        CardTemplate(width=252, header=())
+
+
+def test_inline_svg_wrapper_contains_baseline():
+    template = CardTemplate(
+        width=254,
+        header=(TextBlock("t", variant="title"),),
+        body=(InlineSvg(SVG_OK, width=220, height=30),),
+    )
+    assert "line-height:0" in template.render(theme=DEFAULT)
