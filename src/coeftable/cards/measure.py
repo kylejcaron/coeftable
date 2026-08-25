@@ -48,6 +48,17 @@ def _minimum_text_width(text: str, size: int, ratio: float) -> float:
 
 def _minimum_inline_width(adornment: Adornment, chrome: CardChrome) -> float | None:
     """Return the minimum width needed to keep an adornment legible."""
+    if isinstance(adornment, TextBlock):
+        size = {
+            "title": chrome.title_size,
+            "subtitle": chrome.subtitle_size,
+            "body": chrome.body_size,
+            "caption": chrome.caption_size,
+        }[adornment.variant]
+        normalized = " ".join(adornment.text.split())
+        return _minimum_text_width(normalized, size, chrome.char_width_ratio)
+    if isinstance(adornment, KeyValuePopover):
+        return _minimum_text_width(adornment.label, chrome.control_size, chrome.char_width_ratio)
     if isinstance(adornment, Badge):
         return 2 * chrome.chip_padding_x + _minimum_text_width(
             adornment.text, chrome.chip_size, chrome.char_width_ratio
@@ -295,6 +306,12 @@ def measure_card(
 ) -> tuple[MeasuredCard, tuple[Row, ...], tuple[Row, ...], str | None]:
     """Measure one card; returns footprints plus the exact rows to render."""
     usable = width - 2 * (chrome.padding + chrome.border_width)
+    if usable < 1:
+        shell_overhead = 2 * (chrome.padding + chrome.border_width)
+        raise SpecError(
+            f"card width {width}px leaves {usable}px usable after shell overhead "
+            f"{shell_overhead}px; width must leave at least 1px usable; {_FIXES}"
+        )
     chip: str | None = None
     header_rows: tuple[Row, ...] | None = None
     for adornment in body:

@@ -2,6 +2,7 @@
 
 import ast
 import dataclasses
+import math
 import re
 from pathlib import Path
 from typing import cast
@@ -1038,7 +1039,15 @@ def test_summary_shows_the_chip():
     assert "[1.2, 5.7]" not in summary  # chip is value-only
     assert "box-sizing:content-box" in summary
     assert "min-width:0" in summary
-    assert "flex:none" in summary
+    chip_span = re.search(r'<span style="([^"]+)">\+3\.4%</span>', summary)
+    assert chip_span is not None
+    chip_style = chip_span.group(1)
+    chip_est = math.ceil(
+        len("+3.4%") * DEFAULT_CHROME.value_size * DEFAULT_CHROME.data_char_width_ratio
+    )
+    assert f"max-width:{chip_est}px" in chip_style
+    assert "overflow:hidden;text-overflow:ellipsis" in chip_style
+    assert "flex:none" in chip_style
     assert f"column-gap:{DEFAULT_CHROME.gap}px" in summary
     assert "align-items:flex-start" in summary
 
@@ -1124,11 +1133,34 @@ def test_interactive_adornments_rejected_in_header():
 
 def test_template_width_validation():
     with pytest.raises(SpecError):
+        CardTemplate(width=-1, header=(TextBlock("x"),))
+    with pytest.raises(SpecError):
         CardTemplate(width=20, header=(CaptionRow("t"),))
     with pytest.raises(SpecError):
         CardTemplate(width=True, header=(TextBlock("t"),))
     with pytest.raises(SpecError):
         CardTemplate(width=252, header=())
+
+
+def test_structural_width_rejects_textblock_without_adornment_guard():
+    with pytest.raises(SpecError) as excinfo:
+        CardTemplate(width=30, header=(TextBlock("x"),))
+    assert "shell overhead" in str(excinfo.value)
+
+
+def test_empty_normalized_text_has_no_content_minimum():
+    template = CardTemplate(width=35, header=(TextBlock("   "),))
+    assert template.measure().width == 35
+
+
+def test_narrow_popover_label_rejects_content_minimum():
+    with pytest.raises(SpecError) as excinfo:
+        CardTemplate(
+            width=45,
+            header=(TextBlock("x"),),
+            body=(KeyValuePopover("long", (("k", "v"),)),),
+        )
+    assert "KeyValuePopover" in str(excinfo.value)
 
 
 def test_inline_svg_wrapper_contains_baseline():

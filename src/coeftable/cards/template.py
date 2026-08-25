@@ -8,6 +8,7 @@ when a card starts folded (zero-JS cannot reflow).
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 from coeftable.cards.adornments import (
@@ -18,7 +19,7 @@ from coeftable.cards.adornments import (
 )
 from coeftable.cards.chrome import DEFAULT_CHROME, CardChrome, line_height
 from coeftable.cards.fragments import _esc, render_adornment
-from coeftable.cards.measure import MeasuredCard, Row, measure_card
+from coeftable.cards.measure import MeasuredCard, Row, _est, measure_card
 from coeftable.errors import SpecError
 from coeftable.theme import DEFAULT, Theme
 
@@ -36,6 +37,8 @@ class CardTemplate:
         """Validate shell inputs through the shared measurement path."""
         if isinstance(self.width, bool) or not isinstance(self.width, int):
             raise SpecError("CardTemplate.width must be an int")
+        if self.width <= 0:
+            raise SpecError("CardTemplate.width must be positive")
         if not isinstance(self.header, tuple) or not isinstance(self.body, tuple):
             raise SpecError("CardTemplate.header and .body must be tuples")
         if not self.header:
@@ -66,10 +69,12 @@ class CardTemplate:
         chip_html = ""
         if chip is not None:
             chip_lh = line_height(chrome.value_size, chrome)
+            chip_est = _est(chip, chrome.value_size, chrome.data_char_width_ratio)
             chip_html = (
                 f'<span style="flex:none;font-size:{chrome.value_size}px;'
                 f"line-height:{chip_lh}px;font-weight:600;white-space:nowrap;"
-                f'color:{_esc(theme.text)}">{_esc(chip)}</span>'
+                f"max-width:{math.ceil(chip_est)}px;overflow:hidden;"
+                f'text-overflow:ellipsis;color:{_esc(theme.text)}">{_esc(chip)}</span>'
             )
         body_html = "".join(_wrap(row, theme, chrome) for row in body_rows)
         body_block = (
