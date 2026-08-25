@@ -355,10 +355,11 @@ def test_metric_value_uses_role_color():
 
 def test_metric_value_and_badge_clip_single_line_content():
     metric_html = render_adornment(MetricValue("+3.4%", detail="[1.2, 5.7]"), theme=DEFAULT)
-    badge_html = render_adornment(Badge("accounting"), theme=DEFAULT)
+    badge_html = render_adornment(Badge("x" * 1000), theme=DEFAULT)
 
     assert "overflow:hidden;text-overflow:ellipsis" in metric_html
     assert "white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%" in badge_html
+    assert "box-sizing:border-box" in badge_html
 
 
 def test_select_marks_exactly_the_selected_option():
@@ -385,9 +386,26 @@ def test_select_row_height_is_fixed_from_chrome():
     expected = (
         line_height(DEFAULT_CHROME.control_size, DEFAULT_CHROME) + DEFAULT_CHROME.select_padding
     )
+    select_start = html_out.index("<select")
+    select_tag = html_out[select_start : html_out.index(">", select_start) + 1]
+    select_line_height = line_height(DEFAULT_CHROME.control_size, DEFAULT_CHROME)
     assert f"height:{expected}px" in html_out
+    assert f"height:{select_line_height}px" in select_tag
+    assert f"line-height:{select_line_height}px" in select_tag
+    assert "box-sizing:border-box" in select_tag
     assert "display:flex;align-items:center" in html_out
-    assert "max-width:60%" in html_out
+    assert "max-width:60%" in select_tag
+
+
+def test_select_height_tracks_custom_control_size():
+    chrome = dataclasses.replace(DEFAULT_CHROME, control_size=17)
+    control = SelectControl("Breakout", (("a", "Alpha"),), selected="a")
+    html_out = render_adornment(control, theme=DEFAULT, chrome=chrome)
+    select_start = html_out.index("<select")
+    select_tag = html_out[select_start : html_out.index(">", select_start) + 1]
+    expected = line_height(chrome.control_size, chrome)
+    assert f"height:{expected}px" in select_tag
+    assert f"line-height:{expected}px" in select_tag
 
 
 def test_select_row_height_tracks_select_padding():
@@ -605,6 +623,7 @@ def test_default_chrome_line_heights_round_up():
         {"leading": 0.0},
         {"leading": 3.5},
         {"char_width_ratio": 0.0},
+        {"swatch_thickness": 30},
         {"data_char_width_ratio": float("nan")},
     ],
     ids=[
@@ -617,6 +636,7 @@ def test_default_chrome_line_heights_round_up():
         "zero-leading",
         "huge-leading",
         "zero-ratio",
+        "oversized-swatch",
         "nan-data-ratio",
     ],
 )
@@ -730,6 +750,21 @@ def test_inline_svg_wider_than_usable_raises():
             chrome=DEFAULT_CHROME,
             section="body",
         )
+
+
+def test_chip_does_not_break_header_that_fits_without_chip():
+    usable = 250
+    width = usable + 2 * (DEFAULT_CHROME.padding + DEFAULT_CHROME.border_width)
+    measured, header_rows, _body_rows, chip = measure_card(
+        width=width,
+        header=(InlineSvg(SVG_OK, width=220, height=30),),
+        body=(MetricValue("+3"),),
+        chrome=DEFAULT_CHROME,
+    )
+    assert measured.width == width
+    assert isinstance(header_rows[0].adornment, InlineSvg)
+    assert header_rows[0].adornment.width == 220
+    assert chip is None
 
 
 def test_measured_card_invariants_hold():

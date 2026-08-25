@@ -64,6 +64,9 @@ class CardChrome:
                 if value < 0:
                     raise SpecError(f"CardChrome.{field.name} must be non-negative")
 
+        if self.swatch_thickness > self.caption_size:
+            raise SpecError("CardChrome.swatch_thickness must be <= caption_size")
+
 
 def line_height(size: int, chrome: CardChrome) -> int:
     """Exact per-line pixel height: ceil(size * leading)."""
