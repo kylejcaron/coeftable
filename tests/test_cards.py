@@ -275,3 +275,19 @@ def test_popover_is_a_native_details_element():
     html_out = render_adornment(popover, theme=DEFAULT)
     assert html_out.startswith("<details>")
     assert "<summary" in html_out
+
+
+def test_theme_values_are_attribute_escaped():
+    import dataclasses
+
+    hostile = dataclasses.replace(
+        DEFAULT,
+        text='";id="injected',
+        muted='";id="injected',
+        favorable='";id="injected',
+    )
+    for adornment in _valid_instances():
+        if isinstance(adornment, InlineSvg):
+            continue
+        html_out = render_adornment(adornment, theme=hostile)
+        assert not re.search(r"\bid=", html_out)
