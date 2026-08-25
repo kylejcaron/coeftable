@@ -76,9 +76,11 @@ def render_adornment(adornment: Adornment, *, theme: Theme = DEFAULT) -> str:
                 for key, value in items
             )
             return (
-                f'<details><summary style="color:{_esc(theme.text)};cursor:pointer">'
+                '<details style="position:relative">'
+                f'<summary style="color:{_esc(theme.text)};cursor:pointer">'
                 f"{_esc(label)}</summary>"
-                f'<div style="background:{_esc(theme.surface)};border:1px solid '
+                f'<div style="position:absolute;left:0;top:100%;z-index:10;min-width:160px;'
+                f"background:{_esc(theme.surface)};border:1px solid "
                 f'{_esc(theme.rule)};padding:6px;font-size:11px">{rows}</div></details>'
             )
         case SelectControl(label=label, options=options, selected=selected):

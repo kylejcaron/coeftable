@@ -342,15 +342,27 @@ def test_select_has_a_programmatic_name():
     control = SelectControl("Breakout", (("a", "Alpha"),), selected="a")
     html_out = render_adornment(control, theme=DEFAULT)
     assert html_out.startswith("<label")
+    assert html_out.endswith("</label>")
     assert "Breakout" in html_out
     assert "<select" in html_out
+    assert html_out.index("<select") < html_out.index("</label>")
+    assert html_out.rstrip().endswith("</select></label>")
 
 
 def test_popover_is_a_native_details_element():
     popover = KeyValuePopover("diagnostics", (("n", "412"),))
     html_out = render_adornment(popover, theme=DEFAULT)
-    assert html_out.startswith("<details>")
+    assert html_out.startswith("<details")
     assert "<summary" in html_out
+
+
+def test_popover_panel_is_a_non_reflowing_overlay():
+    popover = KeyValuePopover("diagnostics", (("n", "412"),))
+    html_out = render_adornment(popover, theme=DEFAULT)
+    details_open_tag = html_out[: html_out.index(">") + 1]
+    assert "position:relative" in details_open_tag
+    panel = html_out[html_out.index("</summary>") :]
+    assert "position:absolute" in panel
 
 
 def test_renderer_does_not_emit_semantic_keys():
@@ -484,6 +496,7 @@ def test_cards_is_not_exported_from_the_top_level():
 
 def test_every_cards_module_imports_only_foundation_modules():
     package_dir = Path(coeftable.cards.__file__).parent
+    src_root = package_dir.parent.parent
     modules = sorted(package_dir.rglob("*.py"))
     assert modules, "cards package has no modules to check"
     for module in modules:
@@ -495,13 +508,22 @@ def test_every_cards_module_imports_only_foundation_modules():
                     parts = alias.name.split(".")
                     if parts[0] == "coeftable":
                         imported_roots.add(parts[1] if len(parts) > 1 else "")
-            elif isinstance(node, ast.ImportFrom) and node.module:
-                parts = node.module.split(".")
-                if parts[0] != "coeftable":
-                    continue
-                if len(parts) > 1:
-                    imported_roots.add(parts[1])
+            elif isinstance(node, ast.ImportFrom):
+                if node.level == 0:
+                    paths = [node.module.split(".")] if node.module else []
                 else:
-                    imported_roots.update(alias.name for alias in node.names)
+                    package = list(module.parent.relative_to(src_root).parts)
+                    base = package[: len(package) - (node.level - 1)]
+                    if node.module:
+                        paths = [base + node.module.split(".")]
+                    else:
+                        paths = [[*base, alias.name] for alias in node.names]
+                for parts in paths:
+                    if parts[0] != "coeftable":
+                        continue
+                    if len(parts) > 1:
+                        imported_roots.add(parts[1])
+                    else:
+                        imported_roots.update(alias.name for alias in node.names)
         leaked = imported_roots - ALLOWED_CARDS_IMPORT_ROOTS
         assert not leaked, f"{module.name} imports disallowed roots: {sorted(leaked)}"
