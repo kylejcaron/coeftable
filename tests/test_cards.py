@@ -686,12 +686,27 @@ def test_line_plan_caps_and_ellipsizes_the_last_line():
 
 
 def test_wrapping_textblock_height_is_lines_times_line_height():
-    block = TextBlock("alpha beta gamma delta epsilon", variant="body", max_lines=3)
-    rows = resolve_rows((block,), usable=80, chrome=DEFAULT_CHROME, section="body")
+    block = TextBlock("alpha beta gamma delta", variant="body", max_lines=3)
+    caption = CaptionRow("caption")
+    measured, _, rows, _ = measure_card(
+        width=114,
+        header=(),
+        body=(block, caption),
+        chrome=DEFAULT_CHROME,
+    )
     lh = line_height(DEFAULT_CHROME.body_size, DEFAULT_CHROME)
-    assert sum(r.height for r in rows) % lh == 0
-    assert len(rows) >= 2  # narrow width forces a wrap
-    assert all(isinstance(r.adornment, TextBlock) for r in rows)
+    caption_h = line_height(DEFAULT_CHROME.caption_size, DEFAULT_CHROME)
+    assert len(rows) == 3
+    assert sum(r.height for r in rows[:2]) == 2 * lh
+    assert [r.gap_above for r in rows] == [0, 0, DEFAULT_CHROME.gap]
+    body_stack = 2 * lh + DEFAULT_CHROME.gap + caption_h
+    expected_expanded = (
+        2 * (DEFAULT_CHROME.border_width + DEFAULT_CHROME.padding)
+        + DEFAULT_CHROME.header_gap
+        + body_stack
+    )
+    assert measured.expanded_height == expected_expanded
+    assert all(isinstance(r.adornment, TextBlock) for r in rows[:2])
 
 
 def test_metric_value_overflow_raises_with_fixes():
@@ -742,6 +757,24 @@ def test_chip_comes_from_body_never_header():
         width=252,
         header=(TextBlock("t", variant="title"), MetricValue("+9.9%", role="favorable")),
         body=(),
+        chrome=DEFAULT_CHROME,
+    )
+    assert chip is None
+
+
+def test_chip_refused_when_title_budget_would_not_fit():
+    chip_value = "+3"
+    chip_width = len(chip_value) * DEFAULT_CHROME.value_size * DEFAULT_CHROME.data_char_width_ratio
+    usable = int(2 * chip_width)
+    width = usable + 2 * (DEFAULT_CHROME.padding + DEFAULT_CHROME.border_width)
+    title_budget = 2 * DEFAULT_CHROME.char_width_ratio * DEFAULT_CHROME.title_size
+    assert chip_width <= usable / 2
+    assert usable - chip_width - DEFAULT_CHROME.gap < title_budget
+
+    _, _, _, chip = measure_card(
+        width=width,
+        header=(),
+        body=(MetricValue(chip_value),),
         chrome=DEFAULT_CHROME,
     )
     assert chip is None

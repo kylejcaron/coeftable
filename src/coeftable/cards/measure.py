@@ -81,6 +81,7 @@ class Row:
 
     adornment: Adornment
     height: int
+    gap_above: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,6 +146,7 @@ def resolve_rows(
     """Resolve a section's adornments into exact render rows."""
     rows: list[Row] = []
     for index, adornment in enumerate(adornments):
+        row_start = len(rows)
         where = f"{section}[{index}]"
         match adornment:
             case TextBlock(text=text, variant=variant, max_lines=max_lines):
@@ -223,6 +225,8 @@ def resolve_rows(
                 )
             case _:
                 raise SpecError(f"{where}: unmeasurable adornment {adornment!r}")
+        if index and len(rows) > row_start:
+            rows[row_start] = replace(rows[row_start], gap_above=chrome.gap)
     return tuple(rows)
 
 
@@ -241,7 +245,8 @@ def measure_card(
     for adornment in body:
         if isinstance(adornment, MetricValue):
             chip_width = _est(adornment.value, chrome.value_size, chrome.data_char_width_ratio)
-            if chip_width <= usable / 2:
+            title_budget = 2 * chrome.char_width_ratio * chrome.title_size
+            if chip_width <= usable / 2 and usable - chip_width - chrome.gap >= title_budget:
                 chip = adornment.value
             break
     header_usable = usable
@@ -252,12 +257,12 @@ def measure_card(
     header_rows = resolve_rows(header, usable=header_usable, chrome=chrome, section="header")
     body_rows = resolve_rows(body, usable=usable, chrome=chrome, section="body")
 
-    header_stack = sum(r.height for r in header_rows) + chrome.gap * (len(header_rows) - 1)
+    header_stack = sum(r.height + r.gap_above for r in header_rows)
     chip_height = 0 if chip is None else line_height(chrome.value_size, chrome)
     summary_content = max(header_stack, chip_height)
     header_height = chrome.border_width + chrome.padding + summary_content
     collapsed = header_height + chrome.padding + chrome.border_width
-    body_stack = sum(r.height for r in body_rows) + chrome.gap * max(len(body_rows) - 1, 0)
+    body_stack = sum(r.height + r.gap_above for r in body_rows)
     expanded = (
         collapsed
         if not body_rows
