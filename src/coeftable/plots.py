@@ -7,11 +7,11 @@ standalone plot and a table column are styled identically under one
 `Theme`.
 
 Every function returns a complete ``<svg>…</svg>`` element ready for
-embedding in HTML. Colors come from `Theme` roles (`theme.favorable`,
-`coeftable.role_for`); formatters are any ``Callable[[float], str]``,
-including `coeftable.Number` and `coeftable.Percent`. `ResolvedRule` and
-`ResolvedBand` add reference lines and shaded intervals via the
-``annotations=`` parameters.
+embedding in HTML. Colors come from `Theme` roles (for example,
+`theme.color(coeftable.role_for(...))` or `theme.favorable`); formatters
+are any ``Callable[[float], str]``, including `coeftable.Number` and
+`coeftable.Percent`. `ResolvedRule` and `ResolvedBand` add reference lines
+and shaded intervals via the ``annotations=`` parameters.
 """
 
 from coeftable.annotations import ResolvedBand, ResolvedRule
