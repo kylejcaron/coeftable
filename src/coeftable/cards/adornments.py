@@ -219,7 +219,7 @@ class Legend:
 class RuleStrip:
     """Chips identifying event rules: (label, color, dash) per rule."""
 
-    entries: tuple[tuple[str, str, str], ...]
+    entries: tuple[tuple[str, str, Dash], ...]
 
     def __post_init__(self) -> None:
         """Validate fields."""

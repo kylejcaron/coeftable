@@ -162,7 +162,7 @@ def test_inline_svg_accepts_real_plot_output():
         lambda: Legend(()),
         lambda: Legend((("A", "#111", "extra"),)),  # ty: ignore[invalid-argument-type]
         lambda: RuleStrip(()),
-        lambda: RuleStrip((("x", "#111", "wavy"),)),  # bad dash
+        lambda: RuleStrip((("x", "#111", "wavy"),)),  # ty: ignore[invalid-argument-type]  # bad dash
         lambda: RuleStrip((("x", "#111"),)),  # ty: ignore[invalid-argument-type]
     ],
     ids=[
