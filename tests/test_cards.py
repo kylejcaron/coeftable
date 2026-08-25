@@ -19,6 +19,7 @@ from coeftable.cards.adornments import (
     SelectControl,
     TextBlock,
 )
+from coeftable.cards.chrome import DEFAULT_CHROME, CardChrome, line_height
 from coeftable.cards.fragments import render_adornment
 from coeftable.errors import SpecError
 from coeftable.theme import DEFAULT
@@ -406,8 +407,6 @@ def test_renderer_does_not_emit_semantic_keys():
         ("muted", lambda: TextBlock("content", variant="subtitle")),
         ("surface", lambda: Badge("content")),
         ("rule", lambda: KeyValuePopover("details", (("k", "v"),))),
-        ("value_size", lambda: MetricValue("value")),
-        ("ci_size", lambda: MetricValue("value", detail="interval")),
         ("favorable", lambda: MetricValue("value", role="favorable")),
         ("favorable", lambda: Badge("value", role="favorable")),
         ("unfavorable", lambda: MetricValue("value", role="unfavorable")),
@@ -422,8 +421,6 @@ def test_renderer_does_not_emit_semantic_keys():
         "muted",
         "surface",
         "rule",
-        "value-size",
-        "ci-size",
         "favorable-metric",
         "favorable-badge",
         "unfavorable-metric",
@@ -551,3 +548,67 @@ def test_every_cards_module_imports_only_foundation_modules():
                         imported_roots.update(alias.name for alias in node.names)
         leaked = imported_roots - ALLOWED_CARDS_IMPORT_ROOTS
         assert not leaked, f"{module.name} imports disallowed roots: {sorted(leaked)}"
+
+
+def test_default_chrome_line_heights_round_up():
+    assert line_height(14, DEFAULT_CHROME) == 19  # ceil(14 * 1.3) = ceil(18.2)
+    assert line_height(15, DEFAULT_CHROME) == 20  # ceil(19.5)
+    assert line_height(11, DEFAULT_CHROME) == 15  # ceil(14.3)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"padding": 0},
+        {"padding": True},
+        {"border_width": -1},
+        {"title_size": 14.0},
+        {"leading": 0.0},
+        {"leading": 3.5},
+        {"char_width_ratio": 0.0},
+        {"data_char_width_ratio": float("nan")},
+    ],
+    ids=[
+        "zero-padding",
+        "bool-padding",
+        "negative-border",
+        "float-size",
+        "zero-leading",
+        "huge-leading",
+        "zero-ratio",
+        "nan-data-ratio",
+    ],
+)
+def test_chrome_validation_raises_spec_error(kwargs):
+    with pytest.raises(SpecError):
+        CardChrome(**kwargs)
+
+
+def test_every_text_row_declares_an_integer_line_height():
+    for adornment in _valid_instances():
+        if isinstance(adornment, InlineSvg):
+            continue
+        html_out = render_adornment(adornment, theme=DEFAULT)
+        assert re.search(r"line-height:\d+px", html_out), type(adornment).__name__
+
+
+def test_fragment_geometry_comes_from_chrome():
+    big = CardChrome(
+        title_size=28, caption_size=22, chip_size=20, swatch_width=30, legend_swatch=16
+    )
+    cases = [
+        (TextBlock("t", variant="title"), f"font-size:{big.title_size}px"),
+        (CaptionRow("c", color="#111"), f"width:{big.swatch_width}px"),
+        (Legend((("A", "#111"),)), f"width:{big.legend_swatch}px"),
+        (Badge("b"), f"font-size:{big.chip_size}px"),
+    ]
+    for adornment, expected in cases:
+        html_out = render_adornment(adornment, theme=DEFAULT, chrome=big)
+        assert expected in html_out, (type(adornment).__name__, expected)
+
+
+def test_default_chrome_render_matches_default_call():
+    for adornment in _valid_instances():
+        assert render_adornment(adornment, theme=DEFAULT) == render_adornment(
+            adornment, theme=DEFAULT, chrome=DEFAULT_CHROME
+        )
