@@ -363,6 +363,16 @@ def test_metric_value_and_badge_clip_single_line_content():
     assert "box-sizing:border-box" in badge_html
 
 
+def test_metric_detail_and_badge_stay_inside_measured_line_boxes():
+    metric_html = render_adornment(MetricValue("+3.4%", detail="[1.2, 5.7]"), theme=DEFAULT)
+    badge_html = render_adornment(Badge("accounting"), theme=DEFAULT)
+
+    assert "vertical-align:top" in metric_html
+    assert "display:block" in badge_html
+    assert "width:fit-content" in badge_html
+    assert "display:inline-block" not in badge_html
+
+
 def test_select_marks_exactly_the_selected_option():
     control = SelectControl("Breakout", (("a", "Alpha"), ("b", "Beta")), selected="b")
     html_out = render_adornment(control, theme=DEFAULT)

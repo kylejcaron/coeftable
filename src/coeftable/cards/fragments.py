@@ -98,7 +98,7 @@ def render_adornment(
             if detail is not None:
                 out += (
                     f'<span style="color:{_esc(theme.muted)};'
-                    f"font-size:{chrome.ci_size}px;"
+                    f"font-size:{chrome.ci_size}px;vertical-align:top;"
                     f'margin-left:{chrome.value_detail_gap}px">{_esc(detail)}</span>'
                 )
             return out + "</div>"
@@ -147,7 +147,8 @@ def render_adornment(
             )
         case Badge(text=text, role=role):
             return (
-                f'<span style="display:inline-block;background:{_esc(theme.color(role))};'
+                f'<span style="display:block;width:fit-content;'
+                f"background:{_esc(theme.color(role))};"
                 f"color:{_esc(theme.surface)};border-radius:{_PILL_RADIUS}px;"
                 f"box-sizing:border-box;"
                 f"padding:{chrome.chip_padding_y}px {chrome.chip_padding_x}px;"
