@@ -329,6 +329,22 @@ def test_every_text_position_is_escaped(build):
     assert ESCAPED in html_out
 
 
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda: CaptionRow("v2.1", color=THEME_HOSTILE),
+        lambda: Legend((("A", THEME_HOSTILE),)),
+        lambda: RuleStrip((("launch", THEME_HOSTILE, "dotted"),)),
+    ],
+    ids=["caption-color", "legend-color", "rulestrip-color"],
+)
+def test_every_color_position_is_attribute_escaped(build):
+    html_out = render_adornment(build(), theme=DEFAULT)
+    assert THEME_HOSTILE not in html_out
+    assert not re.search(r"\bid=", html_out)
+    assert THEME_HOSTILE_ESCAPED in html_out
+
+
 def test_metric_value_uses_role_color():
     html_out = render_adornment(MetricValue("+3.4%", role="favorable"), theme=DEFAULT)
     assert DEFAULT.favorable in html_out
