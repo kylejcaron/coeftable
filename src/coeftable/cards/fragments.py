@@ -90,7 +90,8 @@ def render_adornment(
         case MetricValue(value=value, detail=detail, role=role):
             row_height = line_height(max(chrome.value_size, chrome.ci_size), chrome)
             out = (
-                f'<div style="line-height:{row_height}px;white-space:nowrap;'
+                f'<div style="font-size:{chrome.value_size}px;'
+                f"line-height:{row_height}px;white-space:nowrap;"
                 f'overflow:hidden;text-overflow:ellipsis">'
                 f'<span style="color:{_esc(theme.color(role))};'
                 f'font-size:{chrome.value_size}px;font-weight:600">{_esc(value)}</span>'

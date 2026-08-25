@@ -367,6 +367,13 @@ def test_metric_detail_and_badge_stay_inside_measured_line_boxes():
     metric_html = render_adornment(MetricValue("+3.4%", detail="[1.2, 5.7]"), theme=DEFAULT)
     badge_html = render_adornment(Badge("accounting"), theme=DEFAULT)
 
+    row_height = line_height(
+        max(DEFAULT_CHROME.value_size, DEFAULT_CHROME.ci_size), DEFAULT_CHROME
+    )
+    assert (
+        f'<div style="font-size:{DEFAULT_CHROME.value_size}px;'
+        f"line-height:{row_height}px;" in metric_html
+    )
     assert "vertical-align:top" in metric_html
     assert "display:block" in badge_html
     assert "width:fit-content" in badge_html
