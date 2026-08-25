@@ -3,7 +3,11 @@
 Pure arithmetic over `CardChrome`. Returns the exact rows the template
 renders, so measured and rendered content agree by construction. Label
 text ellipsizes to its budget; data fields (`MetricValue`) reject with
-`SpecError` instead — truncating a number lies about data.
+`SpecError` instead — truncating a number lies about data. That rejection
+uses a conservative width estimate (`data_char_width_ratio`), so it fires
+early for typical numerals; the absolute guarantee is the fixed-height
+clipped row — rendered boxes never grow — with browser fixtures
+validating legibility.
 """
 
 from __future__ import annotations
@@ -70,7 +74,7 @@ def text_line_plan(text: str, *, budget: int, max_lines: int) -> tuple[str, ...]
         lines.append(current)
     if len(lines) > max_lines:
         kept = lines[:max_lines]
-        kept[-1] = _clip(kept[-1] + lines[max_lines], budget)
+        kept[-1] = _clip(kept[-1] + " " + lines[max_lines], budget)
         return tuple(kept)
     return tuple(lines)
 

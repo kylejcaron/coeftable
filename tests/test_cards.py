@@ -624,6 +624,7 @@ def test_default_chrome_line_heights_round_up():
         {"leading": 3.5},
         {"char_width_ratio": 0.0},
         {"swatch_thickness": 30},
+        {"legend_swatch": 30},
         {"data_char_width_ratio": float("nan")},
     ],
     ids=[
@@ -637,12 +638,17 @@ def test_default_chrome_line_heights_round_up():
         "huge-leading",
         "zero-ratio",
         "oversized-swatch",
+        "oversized-legend-swatch",
         "nan-data-ratio",
     ],
 )
 def test_chrome_validation_raises_spec_error(kwargs):
     with pytest.raises(SpecError):
         CardChrome(**kwargs)
+
+
+def test_default_chrome_passes_validation():
+    assert CardChrome().legend_swatch <= CardChrome().caption_size
 
 
 def test_every_text_row_declares_an_integer_line_height():
@@ -703,6 +709,14 @@ def test_line_plan_caps_and_ellipsizes_the_last_line():
     assert len(plan) == 2
     assert plan[1].endswith("…")
     assert len(plan[1]) <= 9
+
+
+def test_line_plan_cap_preserves_word_boundary_and_ellipsis():
+    plan = text_line_plan("ab cd ef", budget=4, max_lines=1)
+    assert len(plan) == 1
+    assert plan[0].endswith("…")
+    assert len(plan[0]) <= 4
+    assert "abcd" not in plan[0]
 
 
 def test_wrapping_textblock_height_is_lines_times_line_height():

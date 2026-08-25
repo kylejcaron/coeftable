@@ -66,6 +66,8 @@ class CardChrome:
 
         if self.swatch_thickness > self.caption_size:
             raise SpecError("CardChrome.swatch_thickness must be <= caption_size")
+        if self.legend_swatch > self.caption_size:
+            raise SpecError("CardChrome.legend_swatch must be <= caption_size")
 
 
 def line_height(size: int, chrome: CardChrome) -> int:
