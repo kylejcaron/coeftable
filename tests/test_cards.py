@@ -29,6 +29,9 @@ SVG_OK = '<svg xmlns="http://www.w3.org/2000/svg" width="220" height="30"></svg>
 def _valid_instances():
     return [
         TextBlock("Revenue", variant="title"),
+        TextBlock("Quarterly view", variant="subtitle"),
+        TextBlock("Modeled on 412 accounts", variant="body"),
+        TextBlock("Source: ledger v2", variant="caption"),
         MetricValue("+3.4%", detail="[1.2, 5.7]", role="favorable"),
         InlineSvg(SVG_OK, width=220, height=30),
         KeyValuePopover("diagnostics", (("n", "412"), ("sigma", "0.8"))),
@@ -424,28 +427,33 @@ def test_every_rendered_theme_value_is_escaped(field, build):
     assert ESCAPED in html_out
 
 
+THEME_HOSTILE = 'red";id="THEMESENTINEL'
+
+
 def test_theme_values_are_attribute_escaped():
     import dataclasses
 
     hostile = dataclasses.replace(
         DEFAULT,
-        text=HOSTILE,
-        muted=HOSTILE,
-        surface=HOSTILE,
-        rule=HOSTILE,
-        value_size=HOSTILE,
-        ci_size=HOSTILE,
-        favorable=HOSTILE,
-        unfavorable=HOSTILE,
-        inconclusive=HOSTILE,
-        neutral=HOSTILE,
+        text=THEME_HOSTILE,
+        muted=THEME_HOSTILE,
+        surface=THEME_HOSTILE,
+        rule=THEME_HOSTILE,
+        value_size=THEME_HOSTILE,
+        ci_size=THEME_HOSTILE,
+        favorable=THEME_HOSTILE,
+        unfavorable=THEME_HOSTILE,
+        inconclusive=THEME_HOSTILE,
+        neutral=THEME_HOSTILE,
     )
     for adornment in _valid_instances():
         if isinstance(adornment, InlineSvg):
             continue
         html_out = render_adornment(adornment, theme=hostile)
-        assert HOSTILE not in html_out
+        assert THEME_HOSTILE not in html_out
         assert not re.search(r"\bid=", html_out)
+        assert 'id="THEMESENTINEL' not in html_out
+        assert "THEMESENTINEL" in html_out
 
 
 def test_non_svg_fragments_use_inline_styles_only():
