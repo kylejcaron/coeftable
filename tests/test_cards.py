@@ -54,6 +54,12 @@ def test_every_adornment_constructs_and_is_frozen():
             setattr(adornment, first_field, "nope")
 
 
+def test_every_adornment_uses_slots_without_instance_dict():
+    for adornment in _valid_instances():
+        assert hasattr(type(adornment), "__slots__")
+        assert not hasattr(adornment, "__dict__")
+
+
 def test_adornments_are_hashable():
     assert len({*_valid_instances()}) == len(_valid_instances())
 
@@ -63,24 +69,34 @@ def test_adornments_are_hashable():
     [
         lambda: TextBlock("x", variant="huge"),  # ty: ignore[invalid-argument-type]
         lambda: TextBlock(7),  # ty: ignore[invalid-argument-type]
+        lambda: TextBlock("x", variant=7),  # ty: ignore[invalid-argument-type]
         lambda: MetricValue("+1", role="good"),  # ty: ignore[invalid-argument-type]
         lambda: MetricValue(3.4),  # ty: ignore[invalid-argument-type]
         lambda: MetricValue("+1", detail=7),  # ty: ignore[invalid-argument-type]
+        lambda: MetricValue("+1", role=7),  # ty: ignore[invalid-argument-type]
         lambda: Badge("x", role="loud"),  # ty: ignore[invalid-argument-type]
         lambda: Badge(None),  # ty: ignore[invalid-argument-type]
+        lambda: Badge("x", role=7),  # ty: ignore[invalid-argument-type]
         lambda: CaptionRow("x", dash="wavy"),  # ty: ignore[invalid-argument-type]
         lambda: CaptionRow("x", color=7),  # ty: ignore[invalid-argument-type]
+        lambda: CaptionRow(7),  # ty: ignore[invalid-argument-type]
+        lambda: CaptionRow("x", dash=7),  # ty: ignore[invalid-argument-type]
     ],
     ids=[
         "bad-variant",
         "nonstr-text",
+        "nonstr-variant",
         "bad-role",
         "nonstr-value",
         "nonstr-detail",
+        "nonstr-role",
         "badge-bad-role",
         "badge-nonstr",
+        "badge-nonstr-role",
         "bad-dash",
         "nonstr-color",
+        "nonstr-caption-text",
+        "nonstr-dash",
     ],
 )
 def test_scalar_field_validation_raises_spec_error(build):
@@ -91,32 +107,50 @@ def test_scalar_field_validation_raises_spec_error(build):
 @pytest.mark.parametrize(
     "build",
     [
+        lambda: InlineSvg(7, width=220, height=30),  # ty: ignore[invalid-argument-type]
         lambda: InlineSvg("<div/>", width=10, height=10),
         lambda: InlineSvg("not xml <", width=10, height=10),
         lambda: InlineSvg(SVG_OK, width=100, height=30),  # width mismatch
         lambda: InlineSvg(SVG_OK, width=220, height=40),  # height mismatch
         lambda: InlineSvg(SVG_OK, width=0, height=30),
+        lambda: InlineSvg(SVG_OK, width=220, height=0),
         lambda: InlineSvg(SVG_OK, width=True, height=30),  # bool-as-int
+        lambda: InlineSvg(SVG_OK, width=220, height=True),  # bool-as-int
         lambda: InlineSvg(
             SVG_OK,
             width=cast(int, 220.0),
             height=30,
         ),  # float-as-int
         lambda: InlineSvg(
+            SVG_OK,
+            width=220,
+            height=cast(int, 30.0),
+        ),  # float-as-int
+        lambda: InlineSvg(
             '<svg xmlns="http://www.w3.org/2000/svg" height="30"></svg>',
             width=220,
             height=30,
         ),  # missing width attr
+        lambda: InlineSvg(
+            '<svg xmlns="http://www.w3.org/2000/svg" width="220"></svg>',
+            width=220,
+            height=30,
+        ),  # missing height attr
     ],
     ids=[
+        "nonstr-svg",
         "non-svg-root",
         "malformed-xml",
         "width-mismatch",
         "height-mismatch",
         "zero-width",
+        "zero-height",
         "bool-width",
+        "bool-height",
         "float-width",
+        "float-height",
         "missing-width-attr",
+        "missing-height-attr",
     ],
 )
 def test_inline_svg_validation_raises_spec_error(build):
@@ -146,6 +180,7 @@ def test_inline_svg_accepts_real_plot_output():
     "build",
     [
         lambda: KeyValuePopover("", (("k", "v"),)),
+        lambda: KeyValuePopover(7, (("k", "v"),)),  # ty: ignore[invalid-argument-type]
         lambda: KeyValuePopover("d", ()),
         lambda: KeyValuePopover(
             "d",
@@ -153,37 +188,75 @@ def test_inline_svg_accepts_real_plot_output():
         ),  # list, not tuple
         lambda: KeyValuePopover("d", (("k",),)),  # ty: ignore[invalid-argument-type]
         lambda: KeyValuePopover("d", (("k", 7),)),  # ty: ignore[invalid-argument-type]
+        lambda: KeyValuePopover("d", ((7, "v"),)),  # ty: ignore[invalid-argument-type]
+        lambda: KeyValuePopover(
+            "d",
+            (("k", "v"),),
+            key=cast(str, 7),
+        ),
         lambda: SelectControl("", (("a", "A"),), selected="a"),
+        lambda: SelectControl(
+            cast(str, 7),
+            (("a", "A"),),
+            selected="a",
+        ),
         lambda: SelectControl("L", (), selected="a"),
         lambda: SelectControl("L", (("a", "A"), ("a", "B")), selected="a"),  # dup values
         lambda: SelectControl("L", (("a", "A"),), selected="b"),  # unknown value
+        lambda: SelectControl("L", (("a", "A"),), selected=7),  # ty: ignore[invalid-argument-type]
+        lambda: SelectControl("L", ((7, "A"),), selected="a"),  # ty: ignore[invalid-argument-type]
+        lambda: SelectControl("L", (("a", 7),), selected="a"),  # ty: ignore[invalid-argument-type]
         lambda: SelectControl(
             "L",
             cast(tuple[tuple[str, str], ...], [("a", "A")]),
             selected="a",
         ),  # list
+        lambda: SelectControl(
+            "L",
+            (("a", "A"),),
+            selected="a",
+            key=cast(str, 7),
+        ),
         lambda: Legend(()),
         lambda: Legend((("A", "#111", "extra"),)),  # ty: ignore[invalid-argument-type]
+        lambda: Legend(((7, "#111"),)),  # ty: ignore[invalid-argument-type]
+        lambda: Legend((("A", 7),)),  # ty: ignore[invalid-argument-type]
         lambda: RuleStrip(()),
         lambda: RuleStrip((("x", "#111", "wavy"),)),  # ty: ignore[invalid-argument-type]  # bad dash
+        lambda: RuleStrip((("x", "#111", 7),)),  # ty: ignore[invalid-argument-type]
         lambda: RuleStrip((("x", "#111"),)),  # ty: ignore[invalid-argument-type]
+        lambda: RuleStrip(((7, "#111", "solid"),)),  # ty: ignore[invalid-argument-type]
+        lambda: RuleStrip((("x", 7, "solid"),)),  # ty: ignore[invalid-argument-type]
     ],
     ids=[
         "popover-empty-label",
+        "popover-nonstr-label",
         "popover-empty-items",
         "popover-list",
         "popover-arity",
-        "popover-nonstr",
+        "popover-nonstr-value",
+        "popover-nonstr-key",
+        "popover-nonstr-field-key",
         "select-empty-label",
+        "select-nonstr-label",
         "select-no-options",
         "select-dup-values",
         "select-unknown-selected",
+        "select-nonstr-selected",
+        "select-nonstr-option-value",
+        "select-nonstr-option-label",
         "select-list",
+        "select-nonstr-key",
         "legend-empty",
         "legend-arity",
+        "legend-nonstr-label",
+        "legend-nonstr-color",
         "rulestrip-empty",
         "rulestrip-bad-dash",
+        "rulestrip-nonstr-dash",
         "rulestrip-arity",
+        "rulestrip-nonstr-label",
+        "rulestrip-nonstr-color",
     ],
 )
 def test_container_field_validation_raises_spec_error(build):
@@ -280,20 +353,64 @@ def test_popover_is_a_native_details_element():
     assert "<summary" in html_out
 
 
-def test_theme_values_are_attribute_escaped():
+def test_renderer_does_not_emit_semantic_keys():
+    controls = (
+        SelectControl(
+            "Breakout",
+            (("a", "Alpha"),),
+            selected="a",
+            key="KEYSENTINEL1",
+        ),
+        KeyValuePopover("diagnostics", (("n", "412"),), key="KEYSENTINEL2"),
+    )
+    for control in controls:
+        assert "KEYSENTINEL1" not in render_adornment(control, theme=DEFAULT)
+        assert "KEYSENTINEL2" not in render_adornment(control, theme=DEFAULT)
+
+
+@pytest.mark.parametrize(
+    "field, build",
+    [
+        ("text", lambda: TextBlock("content")),
+        ("muted", lambda: TextBlock("content", variant="subtitle")),
+        ("surface", lambda: Badge("content")),
+        ("rule", lambda: KeyValuePopover("details", (("k", "v"),))),
+        ("value_size", lambda: MetricValue("value")),
+        ("ci_size", lambda: MetricValue("value", detail="interval")),
+        ("favorable", lambda: MetricValue("value", role="favorable")),
+        ("favorable", lambda: Badge("value", role="favorable")),
+        ("neutral", lambda: MetricValue("value")),
+        ("neutral", lambda: Badge("value")),
+    ],
+    ids=[
+        "text",
+        "muted",
+        "surface",
+        "rule",
+        "value-size",
+        "ci-size",
+        "favorable-metric",
+        "favorable-badge",
+        "neutral-metric",
+        "neutral-badge",
+    ],
+)
+def test_every_rendered_theme_value_is_escaped(field, build):
     import dataclasses
 
-    hostile = dataclasses.replace(
-        DEFAULT,
-        text='";id="injected',
-        muted='";id="injected',
-        favorable='";id="injected',
-    )
+    hostile = dataclasses.replace(DEFAULT, **{field: HOSTILE})
+    html_out = render_adornment(build(), theme=hostile)
+    assert HOSTILE not in html_out
+    assert ESCAPED in html_out
+
+
+def test_non_svg_fragments_use_inline_styles_only():
     for adornment in _valid_instances():
         if isinstance(adornment, InlineSvg):
             continue
-        html_out = render_adornment(adornment, theme=hostile)
-        assert not re.search(r"\bid=", html_out)
+        html_out = render_adornment(adornment, theme=DEFAULT)
+        assert "class=" not in html_out
+        assert "<style" not in html_out
 
 
 EXPECTED_CARD_EXPORTS = {
@@ -310,17 +427,18 @@ EXPECTED_CARD_EXPORTS = {
     "render_adornment",
 }
 
-FORBIDDEN_IMPORTS = {
-    "coeftable.spec",
-    "coeftable.frame",
-    "coeftable.render",
-    "coeftable.grid",
-    "coeftable.collapsible",
-    "coeftable.series",
+ALLOWED_CARDS_IMPORT_ROOTS = {
+    "cards",
+    "theme",
+    "format",
+    "svg",
+    "annotations",
+    "errors",
 }
 
 
 def test_cards_export_surface_is_exactly_the_promised_set():
+    assert len(coeftable.cards.__all__) == 11
     assert set(coeftable.cards.__all__) == EXPECTED_CARD_EXPORTS
     for name in EXPECTED_CARD_EXPORTS:
         assert hasattr(coeftable.cards, name)
@@ -334,15 +452,24 @@ def test_cards_is_not_exported_from_the_top_level():
 
 def test_every_cards_module_imports_only_foundation_modules():
     package_dir = Path(coeftable.cards.__file__).parent
-    modules = sorted(package_dir.glob("*.py"))
+    modules = sorted(package_dir.rglob("*.py"))
     assert modules, "cards package has no modules to check"
     for module in modules:
         tree = ast.parse(module.read_text())
-        imported: set[str] = set()
+        imported_roots: set[str] = set()
         for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom) and node.module:
-                imported.add(node.module)
-            elif isinstance(node, ast.Import):
-                imported.update(alias.name for alias in node.names)
-        leaked = imported & FORBIDDEN_IMPORTS
-        assert not leaked, f"{module.name} imports table modules: {sorted(leaked)}"
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    parts = alias.name.split(".")
+                    if parts[0] == "coeftable":
+                        imported_roots.add(parts[1] if len(parts) > 1 else "")
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                parts = node.module.split(".")
+                if parts[0] != "coeftable":
+                    continue
+                if len(parts) > 1:
+                    imported_roots.add(parts[1])
+                else:
+                    imported_roots.update(alias.name for alias in node.names)
+        leaked = imported_roots - ALLOWED_CARDS_IMPORT_ROOTS
+        assert not leaked, f"{module.name} imports disallowed roots: {sorted(leaked)}"
