@@ -31,6 +31,11 @@ from coeftable.theme import DEFAULT, Theme
 # Overlay-only geometry: the popover panel is absolutely positioned and
 # excluded from measured footprints, so this is not a CardChrome field.
 _POPOVER_PANEL_MIN_WIDTH = 160
+_POPOVER_PANEL_BORDER = 1
+_POPOVER_PANEL_PADDING = 6
+
+# Paint-only geometry: border radius has no effect on the measured box.
+_PILL_RADIUS = 999
 
 
 def _esc(text: str) -> str:
@@ -65,7 +70,8 @@ def _variant_color(variant: Variant, theme: Theme) -> str:
 def _line_swatch(color: str, dash: str, chrome: CardChrome) -> str:
     return (
         f'<span style="display:inline-block;width:{chrome.swatch_width}px;'
-        f'border-top:2px {_esc(dash)} {_esc(color)};vertical-align:middle"></span>'
+        f"border-top:{chrome.swatch_thickness}px {_esc(dash)} {_esc(color)};"
+        f'vertical-align:middle"></span>'
     )
 
 
@@ -83,7 +89,7 @@ def render_adornment(
             row_height = line_height(max(chrome.value_size, chrome.ci_size), chrome)
             out = (
                 f'<div style="line-height:{row_height}px;white-space:nowrap;'
-                f'overflow:hidden">'
+                f'overflow:hidden;text-overflow:ellipsis">'
                 f'<span style="color:{_esc(theme.color(role))};'
                 f'font-size:{chrome.value_size}px;font-weight:600">{_esc(value)}</span>'
             )
@@ -97,8 +103,11 @@ def render_adornment(
         case InlineSvg(svg=svg):
             return svg
         case KeyValuePopover(label=label, items=items):
+            item_line_height = line_height(chrome.control_size, chrome)
             rows = "".join(
-                f'<div><span style="color:{_esc(theme.muted)}">{_esc(key)}</span> '
+                f'<div style="font-size:{chrome.control_size}px;'
+                f'line-height:{item_line_height}px">'
+                f'<span style="color:{_esc(theme.muted)}">{_esc(key)}</span> '
                 f'<span style="color:{_esc(theme.text)}">{_esc(value)}</span></div>'
                 for key, value in items
             )
@@ -108,8 +117,9 @@ def render_adornment(
                 f'<summary style="{summary_style}">{_esc(label)}</summary>'
                 f'<div style="position:absolute;left:0;top:100%;z-index:10;'
                 f"min-width:{_POPOVER_PANEL_MIN_WIDTH}px;"
-                f"background:{_esc(theme.surface)};border:1px solid "
-                f"{_esc(theme.rule)};padding:6px;"
+                f"background:{_esc(theme.surface)};"
+                f"border:{_POPOVER_PANEL_BORDER}px solid {_esc(theme.rule)};"
+                f"padding:{_POPOVER_PANEL_PADDING}px;"
                 f'font-size:{chrome.control_size}px">{rows}</div></details>'
             )
         case SelectControl(label=label, options=options, selected=selected):
@@ -127,17 +137,26 @@ def render_adornment(
         case Badge(text=text, role=role):
             return (
                 f'<span style="display:inline-block;background:{_esc(theme.color(role))};'
-                f"color:{_esc(theme.surface)};border-radius:999px;"
+                f"color:{_esc(theme.surface)};border-radius:{_PILL_RADIUS}px;"
                 f"padding:{chrome.chip_padding_y}px {chrome.chip_padding_x}px;"
                 f"font-size:{chrome.chip_size}px;"
-                f'line-height:{line_height(chrome.chip_size, chrome)}px">'
+                f"line-height:{line_height(chrome.chip_size, chrome)}px;"
+                f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%">'
                 f"{_esc(text)}</span>"
             )
         case CaptionRow(text=text, color=color, dash=dash):
-            marker = "" if color is None else _line_swatch(color, dash, chrome) + " "
+            marker = (
+                ""
+                if color is None
+                else (
+                    f"{_line_swatch(color, dash, chrome)}"
+                    f'<span style="margin-left:{chrome.swatch_gap}px">'
+                )
+            )
+            suffix = "" if color is None else "</span>"
             return (
                 f'<div style="{_row(chrome.caption_size, theme.muted, chrome)}">'
-                f"{marker}{_esc(text)}</div>"
+                f"{marker}{_esc(text)}{suffix}</div>"
             )
         case Legend(entries=entries):
             chips = "".join(
@@ -146,7 +165,8 @@ def render_adornment(
                 f'color:{_esc(theme.muted)}">'
                 f'<span style="display:inline-block;width:{chrome.legend_swatch}px;'
                 f"height:{chrome.legend_swatch}px;"
-                f'background:{_esc(color)}"></span> {_esc(label)}</span>'
+                f'background:{_esc(color)}"></span>'
+                f'<span style="margin-left:{chrome.swatch_gap}px">{_esc(label)}</span></span>'
                 for label, color in entries
             )
             style = _row(chrome.caption_size, theme.muted, chrome)
@@ -156,7 +176,8 @@ def render_adornment(
                 f'<span style="margin-right:{chrome.chip_gap}px;'
                 f"font-size:{chrome.caption_size}px;"
                 f'color:{_esc(theme.muted)}">'
-                f"{_line_swatch(color, dash, chrome)} {_esc(label)}</span>"
+                f"{_line_swatch(color, dash, chrome)}"
+                f'<span style="margin-left:{chrome.swatch_gap}px">{_esc(label)}</span></span>'
                 for label, color, dash in entries
             )
             style = _row(chrome.caption_size, theme.muted, chrome)

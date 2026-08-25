@@ -351,6 +351,14 @@ def test_metric_value_uses_role_color():
     assert DEFAULT.favorable in html_out
 
 
+def test_metric_value_and_badge_clip_single_line_content():
+    metric_html = render_adornment(MetricValue("+3.4%", detail="[1.2, 5.7]"), theme=DEFAULT)
+    badge_html = render_adornment(Badge("accounting"), theme=DEFAULT)
+
+    assert "overflow:hidden;text-overflow:ellipsis" in metric_html
+    assert "white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%" in badge_html
+
+
 def test_select_marks_exactly_the_selected_option():
     control = SelectControl("Breakout", (("a", "Alpha"), ("b", "Beta")), selected="b")
     html_out = render_adornment(control, theme=DEFAULT)
@@ -383,6 +391,14 @@ def test_popover_panel_is_a_non_reflowing_overlay():
     assert "position:relative" in details_open_tag
     panel = html_out[html_out.index("</summary>") :]
     assert "position:absolute" in panel
+
+
+def test_popover_item_rows_declare_line_height():
+    popover = KeyValuePopover("diagnostics", (("n", "412"),))
+    html_out = render_adornment(popover, theme=DEFAULT)
+    panel = html_out[html_out.index("</summary>") :]
+
+    assert re.search(r'<div style="font-size:\d+px;line-height:\d+px">', panel)
 
 
 def test_renderer_does_not_emit_semantic_keys():
@@ -563,6 +579,8 @@ def test_default_chrome_line_heights_round_up():
         {"padding": True},
         {"border_width": -1},
         {"title_size": 14.0},
+        {"title_size": 1.5},
+        {"border_width": 1.5},
         {"leading": 0.0},
         {"leading": 3.5},
         {"char_width_ratio": 0.0},
@@ -573,6 +591,8 @@ def test_default_chrome_line_heights_round_up():
         "bool-padding",
         "negative-border",
         "float-size",
+        "fractional-size",
+        "fractional-border",
         "zero-leading",
         "huge-leading",
         "zero-ratio",

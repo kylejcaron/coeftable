@@ -36,6 +36,7 @@ class CardChrome:
     chip_padding_x: int = 8
     chip_padding_y: int = 1
     swatch_width: int = 14
+    swatch_thickness: int = 2
     legend_swatch: int = 8
     swatch_gap: int = 4
     chip_gap: int = 10
@@ -43,10 +44,15 @@ class CardChrome:
 
     def __post_init__(self) -> None:
         """Validate all geometry fields."""
+        float_fields = {"char_width_ratio", "data_char_width_ratio", "leading"}
         for field in fields(self):
             value = getattr(self, field.name)
-            if field.type == "float" or isinstance(value, float):
-                if not isinstance(value, float) or not math.isfinite(value):
+            if field.name in float_fields:
+                if (
+                    isinstance(value, bool)
+                    or not isinstance(value, (int, float))
+                    or not math.isfinite(value)
+                ):
                     raise SpecError(f"CardChrome.{field.name} must be a finite float")
                 if not 0.0 < value <= 3.0:
                     raise SpecError(f"CardChrome.{field.name} must be in (0, 3]")
