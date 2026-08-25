@@ -416,6 +416,47 @@ absolute = pl.DataFrame(
 )
 ```
 
+## Standalone plots
+
+The inline SVG plots that power `.forest(...)` and `.sparkline(...)` columns
+are available directly from `coeftable.plots` — the same emitters, the same
+themes, no table required. Each function returns a complete `<svg>` string
+for embedding anywhere HTML goes:
+
+```python
+from coeftable.plots import forest_bar, sparkline_bar
+from coeftable.theme import DEFAULT
+import coeftable as ct
+
+bar = forest_bar(
+    1.2, 0.4, 2.0,            # estimate, lower, upper
+    domain=(-1.0, 3.0),
+    ref=0.0,
+    color=DEFAULT.favorable,
+    theme=DEFAULT,
+)
+
+line = sparkline_bar(
+    [0.0, 1.0, 2.0],          # x
+    [1.0, 1.5, 2.0],          # y
+    [0.5, 1.0, 1.6],          # lower
+    [1.5, 2.0, 2.4],          # upper
+    x_domain=(0.0, 2.0),
+    domain=(0.0, 3.0),
+    ref=0.0,
+    color=DEFAULT.favorable,
+    fmt=ct.Number(),
+    theme=DEFAULT,
+)
+```
+
+Also exported: `sparkline_multi` + `Trace` for overlaid series,
+`forest_axis` / `sparkline_axis` for the shared axis footer under a column
+of plots, and `ResolvedRule` / `ResolvedBand` for reference lines and
+shaded intervals via each function's `annotations=` parameter. Because a
+standalone plot and a table column share one `Theme`, a report that mixes
+both stays visually consistent.
+
 ## Plot annotations
 
 `ct.Rule` draws a line and `ct.Band` shades an interval in a forest plot or
