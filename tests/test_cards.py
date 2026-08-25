@@ -428,6 +428,7 @@ def test_every_rendered_theme_value_is_escaped(field, build):
 
 
 THEME_HOSTILE = 'red";id="THEMESENTINEL'
+THEME_HOSTILE_ESCAPED = "red&quot;;id&#61;&quot;THEMESENTINEL"
 
 
 def test_theme_values_are_attribute_escaped():
@@ -452,8 +453,7 @@ def test_theme_values_are_attribute_escaped():
         html_out = render_adornment(adornment, theme=hostile)
         assert THEME_HOSTILE not in html_out
         assert not re.search(r"\bid=", html_out)
-        assert 'id="THEMESENTINEL' not in html_out
-        assert "THEMESENTINEL" in html_out
+        assert THEME_HOSTILE_ESCAPED in html_out
 
 
 def test_non_svg_fragments_use_inline_styles_only():
