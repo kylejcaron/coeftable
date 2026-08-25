@@ -104,6 +104,6 @@ def _wrap(row: Row, theme: Theme, chrome: CardChrome) -> str:
     return (
         f'<div style="height:{row.height}px;'
         f"overflow:{'visible' if isinstance(row.adornment, KeyValuePopover) else 'hidden'};"
-        f"margin:0{gap}{svg_containment}>"
+        f'margin:0{gap}{svg_containment}">'
         f"{render_adornment(row.adornment, theme=theme, chrome=chrome)}</div>"
     )

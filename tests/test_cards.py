@@ -1005,3 +1005,30 @@ def test_inline_svg_wrapper_contains_baseline():
         body=(InlineSvg(SVG_OK, width=220, height=30),),
     )
     assert "line-height:0" in template.render(theme=DEFAULT)
+
+
+def test_rendered_html_attributes_are_well_formed():
+    templates = [
+        CardTemplate(width=252, header=(TextBlock("t", variant="title"),)),
+        CardTemplate(
+            width=252,
+            header=(TextBlock("t", variant="title"),),
+            body=(KeyValuePopover("diagnostics", (("n", "412"),)),),
+        ),
+        CardTemplate(
+            width=300,
+            header=(TextBlock("t", variant="title"),),
+            body=(InlineSvg(SVG_OK, width=220, height=30),),
+        ),
+        CardTemplate(
+            width=252,
+            header=(
+                TextBlock("A title long enough to wrap onto lines", variant="title", max_lines=3),
+            ),
+        ),
+    ]
+    outputs = [template.render(theme=DEFAULT) for template in templates]
+    outputs += [render_adornment(adornment, theme=DEFAULT) for adornment in _valid_instances()]
+    for html_out in outputs:
+        assert html_out.count('"') % 2 == 0
+        assert len(re.findall(r'style="[^"]*"', html_out)) == html_out.count("style=")
