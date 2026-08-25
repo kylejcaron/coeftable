@@ -40,9 +40,12 @@ def _valid_instances():
 
 
 def test_every_adornment_constructs_and_is_frozen():
+    import dataclasses
+
     for adornment in _valid_instances():
-        with pytest.raises(AttributeError):
-            adornment.text = "nope"  # type: ignore[misc]
+        first_field = dataclasses.fields(adornment)[0].name
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            setattr(adornment, first_field, "nope")
 
 
 def test_adornments_are_hashable():

@@ -8,7 +8,7 @@ boundary: every invalid value raises `SpecError` here, never later.
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
-from dataclasses import FrozenInstanceError, dataclass
+from dataclasses import dataclass
 from typing import Literal
 
 from coeftable.annotations import Dash
@@ -237,22 +237,3 @@ type Adornment = (
     | Legend
     | RuleStrip
 )
-
-
-def _frozen_setattr(self: object, name: str, value: object) -> None:
-    """Raise the documented frozen-instance error on Python 3.13 slots classes."""
-    raise FrozenInstanceError(f"cannot assign to field {name!r}")
-
-
-for _adornment_class in (
-    TextBlock,
-    MetricValue,
-    InlineSvg,
-    KeyValuePopover,
-    SelectControl,
-    Badge,
-    CaptionRow,
-    Legend,
-    RuleStrip,
-):
-    _adornment_class.__setattr__ = _frozen_setattr  # ty: ignore[invalid-assignment]
