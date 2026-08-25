@@ -780,6 +780,29 @@ def test_chip_refused_when_title_budget_would_not_fit():
     assert chip is None
 
 
+def test_chip_refused_when_only_fractional_sliver_meets_budget():
+    # Float remainder clears the title budget, but its integer floor does not:
+    # the eligibility check must use the same integer the header actually gets.
+    chrome = CardChrome(data_char_width_ratio=0.61)
+    chip_value = "8"
+    width = 34 + 2 * (chrome.padding + chrome.border_width)
+    usable = width - 2 * (chrome.padding + chrome.border_width)
+    chip_width = len(chip_value) * chrome.value_size * chrome.data_char_width_ratio
+    title_budget = 2 * chrome.char_width_ratio * chrome.title_size
+    remainder = usable - chip_width - chrome.gap
+    assert chip_width <= usable / 2
+    assert remainder >= title_budget  # old float check would admit the chip
+    assert int(remainder) < title_budget  # the integer budget cannot honor it
+
+    _, _, _, chip = measure_card(
+        width=width,
+        header=(),
+        body=(MetricValue(chip_value),),
+        chrome=chrome,
+    )
+    assert chip is None
+
+
 def test_bigger_chrome_measures_taller():
     header = (TextBlock("A title that will wrap somewhere", variant="title", max_lines=3),)
     body = (CaptionRow("caption"),)

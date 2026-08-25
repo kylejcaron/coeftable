@@ -242,18 +242,16 @@ def measure_card(
     if usable < 2 * chrome.body_size:
         raise SpecError(f"card width {width}px leaves {usable}px usable; too narrow; {_FIXES}")
     chip: str | None = None
+    header_usable = usable
     for adornment in body:
         if isinstance(adornment, MetricValue):
             chip_width = _est(adornment.value, chrome.value_size, chrome.data_char_width_ratio)
+            candidate = int(usable - chip_width - chrome.gap)
             title_budget = 2 * chrome.char_width_ratio * chrome.title_size
-            if chip_width <= usable / 2 and usable - chip_width - chrome.gap >= title_budget:
+            if chip_width <= usable / 2 and candidate >= title_budget:
                 chip = adornment.value
+                header_usable = candidate
             break
-    header_usable = usable
-    if chip is not None:
-        header_usable = int(
-            usable - _est(chip, chrome.value_size, chrome.data_char_width_ratio) - chrome.gap
-        )
     header_rows = resolve_rows(header, usable=header_usable, chrome=chrome, section="header")
     body_rows = resolve_rows(body, usable=usable, chrome=chrome, section="body")
 
