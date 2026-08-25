@@ -12,7 +12,7 @@ from collections.abc import Callable, Set
 from dataclasses import dataclass
 from typing import Any
 
-from coeftable.spec import SpecError
+from coeftable.errors import SpecError
 
 
 def _ordered_unique(values: list[Any], *, sort: bool) -> list[Any]:
