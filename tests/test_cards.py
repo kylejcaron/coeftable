@@ -1,5 +1,6 @@
 """Contract tests for the card adornment vocabulary and fragment renderer."""
 
+import re
 from typing import cast
 
 import pytest
@@ -15,7 +16,9 @@ from coeftable.cards.adornments import (
     SelectControl,
     TextBlock,
 )
+from coeftable.cards.fragments import render_adornment
 from coeftable.errors import SpecError
+from coeftable.theme import DEFAULT
 
 SVG_OK = '<svg xmlns="http://www.w3.org/2000/svg" width="220" height="30"></svg>'
 
@@ -183,3 +186,92 @@ def test_inline_svg_accepts_real_plot_output():
 def test_container_field_validation_raises_spec_error(build):
     with pytest.raises(SpecError):
         build()
+
+
+HOSTILE = '<script>&"boom"</script>'
+ESCAPED = "&lt;script&gt;&amp;&quot;boom&quot;&lt;/script&gt;"
+
+
+def test_every_adornment_renders_nonempty_html():
+    for adornment in _valid_instances():
+        html_out = render_adornment(adornment, theme=DEFAULT)
+        assert html_out
+        assert html_out == render_adornment(adornment, theme=DEFAULT)  # determinism
+
+
+def test_renderer_emits_no_dom_ids_outside_inline_svg():
+    for adornment in _valid_instances():
+        if isinstance(adornment, InlineSvg):
+            continue
+        assert not re.search(r"\bid=", render_adornment(adornment, theme=DEFAULT))
+
+
+def test_inline_svg_gains_nothing_beyond_its_payload():
+    svg = SVG_OK
+    assert render_adornment(InlineSvg(svg, width=220, height=30), theme=DEFAULT) == svg
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda: TextBlock(HOSTILE),
+        lambda: MetricValue(HOSTILE),
+        lambda: MetricValue("+1", detail=HOSTILE),
+        lambda: KeyValuePopover(HOSTILE, (("k", "v"),)),
+        lambda: KeyValuePopover("d", ((HOSTILE, "v"),)),
+        lambda: KeyValuePopover("d", (("k", HOSTILE),)),
+        lambda: SelectControl(HOSTILE, (("a", "A"),), selected="a"),
+        lambda: SelectControl("L", ((HOSTILE, "A"),), selected=HOSTILE),
+        lambda: SelectControl("L", (("a", HOSTILE),), selected="a"),
+        lambda: Badge(HOSTILE),
+        lambda: CaptionRow(HOSTILE),
+        lambda: Legend(((HOSTILE, "#111"),)),
+        lambda: RuleStrip(((HOSTILE, "#111", "solid"),)),
+    ],
+    ids=[
+        "textblock",
+        "metric-value",
+        "metric-detail",
+        "popover-label",
+        "popover-key",
+        "popover-value",
+        "select-label",
+        "select-value",
+        "select-option-label",
+        "badge",
+        "caption",
+        "legend-label",
+        "rulestrip-label",
+    ],
+)
+def test_every_text_position_is_escaped(build):
+    html_out = render_adornment(build(), theme=DEFAULT)
+    assert HOSTILE not in html_out
+    assert ESCAPED in html_out
+
+
+def test_metric_value_uses_role_color():
+    html_out = render_adornment(MetricValue("+3.4%", role="favorable"), theme=DEFAULT)
+    assert DEFAULT.favorable in html_out
+
+
+def test_select_marks_exactly_the_selected_option():
+    control = SelectControl("Breakout", (("a", "Alpha"), ("b", "Beta")), selected="b")
+    html_out = render_adornment(control, theme=DEFAULT)
+    assert html_out.count(" selected>") == 1
+    assert re.search(r'value="b"[^>]*selected>', html_out)
+
+
+def test_select_has_a_programmatic_name():
+    control = SelectControl("Breakout", (("a", "Alpha"),), selected="a")
+    html_out = render_adornment(control, theme=DEFAULT)
+    assert html_out.startswith("<label")
+    assert "Breakout" in html_out
+    assert "<select" in html_out
+
+
+def test_popover_is_a_native_details_element():
+    popover = KeyValuePopover("diagnostics", (("n", "412"),))
+    html_out = render_adornment(popover, theme=DEFAULT)
+    assert html_out.startswith("<details>")
+    assert "<summary" in html_out
