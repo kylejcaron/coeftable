@@ -379,6 +379,10 @@ def test_renderer_does_not_emit_semantic_keys():
         ("ci_size", lambda: MetricValue("value", detail="interval")),
         ("favorable", lambda: MetricValue("value", role="favorable")),
         ("favorable", lambda: Badge("value", role="favorable")),
+        ("unfavorable", lambda: MetricValue("value", role="unfavorable")),
+        ("unfavorable", lambda: Badge("value", role="unfavorable")),
+        ("inconclusive", lambda: MetricValue("value", role="inconclusive")),
+        ("inconclusive", lambda: Badge("value", role="inconclusive")),
         ("neutral", lambda: MetricValue("value")),
         ("neutral", lambda: Badge("value")),
     ],
@@ -391,6 +395,10 @@ def test_renderer_does_not_emit_semantic_keys():
         "ci-size",
         "favorable-metric",
         "favorable-badge",
+        "unfavorable-metric",
+        "unfavorable-badge",
+        "inconclusive-metric",
+        "inconclusive-badge",
         "neutral-metric",
         "neutral-badge",
     ],
@@ -402,6 +410,30 @@ def test_every_rendered_theme_value_is_escaped(field, build):
     html_out = render_adornment(build(), theme=hostile)
     assert HOSTILE not in html_out
     assert ESCAPED in html_out
+
+
+def test_theme_values_are_attribute_escaped():
+    import dataclasses
+
+    hostile = dataclasses.replace(
+        DEFAULT,
+        text=HOSTILE,
+        muted=HOSTILE,
+        surface=HOSTILE,
+        rule=HOSTILE,
+        value_size=HOSTILE,
+        ci_size=HOSTILE,
+        favorable=HOSTILE,
+        unfavorable=HOSTILE,
+        inconclusive=HOSTILE,
+        neutral=HOSTILE,
+    )
+    for adornment in _valid_instances():
+        if isinstance(adornment, InlineSvg):
+            continue
+        html_out = render_adornment(adornment, theme=hostile)
+        assert HOSTILE not in html_out
+        assert not re.search(r"\bid=", html_out)
 
 
 def test_non_svg_fragments_use_inline_styles_only():
