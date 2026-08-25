@@ -41,23 +41,39 @@ def _est(text: str, size: int, ratio: float) -> float:
     return len(text) * ratio * size
 
 
+def _minimum_text_width(text: str, size: int, ratio: float) -> float:
+    """Reserve at most two characters, or the content's full width if shorter."""
+    return min(len(text), 2) * ratio * size
+
+
 def _minimum_inline_width(adornment: Adornment, chrome: CardChrome) -> float | None:
     """Return the minimum width needed to keep an adornment legible."""
-    text_budget = 2 * chrome.char_width_ratio
     if isinstance(adornment, Badge):
-        return 2 * chrome.chip_padding_x + text_budget * chrome.chip_size
+        return 2 * chrome.chip_padding_x + _minimum_text_width(
+            adornment.text, chrome.chip_size, chrome.char_width_ratio
+        )
     if isinstance(adornment, CaptionRow):
         fixed = 0 if adornment.color is None else chrome.swatch_width + chrome.swatch_gap
-        return fixed + text_budget * chrome.caption_size
+        return fixed + _minimum_text_width(
+            adornment.text, chrome.caption_size, chrome.char_width_ratio
+        )
     if isinstance(adornment, Legend):
         fixed = chrome.legend_swatch + chrome.swatch_gap + chrome.chip_gap
-        return len(adornment.entries) * (fixed + text_budget * chrome.caption_size)
+        return sum(
+            fixed + _minimum_text_width(label, chrome.caption_size, chrome.char_width_ratio)
+            for label, _color in adornment.entries
+        )
     if isinstance(adornment, RuleStrip):
         fixed = chrome.swatch_width + chrome.swatch_gap + chrome.chip_gap
-        return len(adornment.entries) * (fixed + text_budget * chrome.caption_size)
+        return sum(
+            fixed + _minimum_text_width(label, chrome.caption_size, chrome.char_width_ratio)
+            for label, _color, _dash in adornment.entries
+        )
     if isinstance(adornment, SelectControl):
         # The label gets 40% of usable width less the swatch gap.
-        label_minimum = text_budget * chrome.control_size
+        label_minimum = _minimum_text_width(
+            adornment.label, chrome.control_size, chrome.char_width_ratio
+        )
         return (label_minimum + chrome.swatch_gap) / 0.4
     return None
 
@@ -279,8 +295,6 @@ def measure_card(
 ) -> tuple[MeasuredCard, tuple[Row, ...], tuple[Row, ...], str | None]:
     """Measure one card; returns footprints plus the exact rows to render."""
     usable = width - 2 * (chrome.padding + chrome.border_width)
-    if usable < 2 * chrome.body_size:
-        raise SpecError(f"card width {width}px leaves {usable}px usable; too narrow; {_FIXES}")
     chip: str | None = None
     header_rows: tuple[Row, ...] | None = None
     for adornment in body:

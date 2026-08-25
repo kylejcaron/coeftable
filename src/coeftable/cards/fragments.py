@@ -136,8 +136,8 @@ def render_adornment(
                 f'<label style="color:{_esc(theme.muted)};'
                 f"font-size:{chrome.control_size}px;"
                 f"line-height:{line_height(chrome.control_size, chrome)}px;"
-                f"display:flex;align-items:center;height:{row_height}px;"
-                f'overflow:hidden;white-space:nowrap">'
+                f"display:flex;align-items:center;column-gap:{chrome.swatch_gap}px;"
+                f'height:{row_height}px;overflow:hidden;white-space:nowrap">'
                 f'<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'
                 f'width:calc(40% - {chrome.swatch_gap}px);flex:none">{_esc(label)}</span>'
                 f'<select style="font-size:{chrome.control_size}px;'

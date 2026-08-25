@@ -80,6 +80,7 @@ def test_adornments_are_hashable():
         lambda: MetricValue("+1", role="good"),  # ty: ignore[invalid-argument-type]
         lambda: MetricValue(3.4),  # ty: ignore[invalid-argument-type]
         lambda: MetricValue("+1", detail=7),  # ty: ignore[invalid-argument-type]
+        lambda: MetricValue("+1", detail=""),
         lambda: MetricValue("+1", role=7),  # ty: ignore[invalid-argument-type]
         lambda: Badge("x", role="loud"),  # ty: ignore[invalid-argument-type]
         lambda: Badge(None),  # ty: ignore[invalid-argument-type]
@@ -96,6 +97,7 @@ def test_adornments_are_hashable():
         "bad-role",
         "nonstr-value",
         "nonstr-detail",
+        "empty-detail",
         "nonstr-role",
         "badge-bad-role",
         "badge-nonstr",
@@ -804,7 +806,7 @@ def test_adornment_minimum_width_rejects_narrow_sections(adornment, usable):
     adornments = {
         "caption": (CaptionRow("caption", color="#111"),),
         "badge": (Badge("badge"),),
-        "legend": (Legend((("A", "#111"), ("B", "#222"))),),
+        "legend": (Legend((("Alpha", "#111"), ("Beta", "#222"))),),
     }
     with pytest.raises(SpecError) as excinfo:
         resolve_rows(
@@ -818,6 +820,17 @@ def test_adornment_minimum_width_rejects_narrow_sections(adornment, usable):
     assert "requires at least" in message
     assert "available" in message
     assert "wider card" in message
+
+
+def test_one_character_legend_labels_fit_at_70px():
+    rows = resolve_rows(
+        (Legend((("A", "#111"), ("B", "#222"))),),
+        usable=70,
+        chrome=DEFAULT_CHROME,
+        section="body",
+    )
+    assert isinstance(rows[0].adornment, Legend)
+    assert rows[0].adornment.entries == (("A", "#111"), ("B", "#222"))
 
 
 def test_chip_does_not_break_header_that_fits_without_chip():
@@ -1047,6 +1060,7 @@ def test_select_label_and_control_keep_explicit_flex_allocations():
     assert "overflow:hidden;text-overflow:ellipsis;white-space:nowrap" in label_span.group(1)
     assert "width:60%" in select_tag
     assert "flex:none" in select_tag
+    assert f"column-gap:{DEFAULT_CHROME.swatch_gap}px" in html_out
 
 
 def test_long_select_label_keeps_measured_allocation():
@@ -1110,7 +1124,7 @@ def test_interactive_adornments_rejected_in_header():
 
 def test_template_width_validation():
     with pytest.raises(SpecError):
-        CardTemplate(width=20, header=(TextBlock("t"),))
+        CardTemplate(width=20, header=(CaptionRow("t"),))
     with pytest.raises(SpecError):
         CardTemplate(width=True, header=(TextBlock("t"),))
     with pytest.raises(SpecError):

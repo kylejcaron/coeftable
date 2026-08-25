@@ -98,6 +98,8 @@ class MetricValue:
         """Validate fields."""
         _require_str(self.value, name="MetricValue.value")
         _require_optional_str(self.detail, name="MetricValue.detail")
+        if self.detail == "":
+            raise SpecError("MetricValue.detail must not be empty")
         _require_member(self.role, _ROLES, name="MetricValue.role")
 
 
