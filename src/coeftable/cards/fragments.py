@@ -1,10 +1,12 @@
 """Serialize adornments to HTML fragments.
 
 The one place the closed adornment vocabulary meets HTML. Invariants:
-no ``id=`` in anything this module emits; every text and theme value is
-escaped; `InlineSvg` payloads are verbatim; output is deterministic; all
-geometry comes from `CardChrome` (colors from `Theme`), and every text
-row declares the exact integer line-height measurement assumes.
+no ``id=`` in any HTML this module emits (`InlineSvg` payloads are
+producer-owned and may carry deterministic SVG-internal ids); every text
+and theme value is escaped; `InlineSvg` payloads are verbatim; output is
+deterministic; all geometry comes from `CardChrome` (colors from
+`Theme`), and every text row declares the exact integer line-height
+measurement assumes.
 """
 
 from __future__ import annotations
@@ -128,10 +130,17 @@ def render_adornment(
                 f"{' selected' if value == selected else ''}>{_esc(text)}</option>"
                 for value, text in options
             )
+            row_height = line_height(chrome.control_size, chrome) + chrome.select_padding
             return (
-                f'<label style="{_row(chrome.control_size, theme.muted, chrome)}">'
-                f"{_esc(label)} "
-                f'<select style="font-size:{chrome.control_size}px">{rendered}</select>'
+                f'<label style="color:{_esc(theme.muted)};'
+                f"font-size:{chrome.control_size}px;"
+                f"line-height:{line_height(chrome.control_size, chrome)}px;"
+                f"display:flex;align-items:center;height:{row_height}px;"
+                f'overflow:hidden;white-space:nowrap">'
+                f'<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'
+                f'margin-right:{chrome.swatch_gap}px">{_esc(label)}</span>'
+                f'<select style="font-size:{chrome.control_size}px;max-width:60%">'
+                f"{rendered}</select>"
                 "</label>"
             )
         case Badge(text=text, role=role):

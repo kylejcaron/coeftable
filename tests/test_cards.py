@@ -1,6 +1,7 @@
 """Contract tests for the card adornment vocabulary and fragment renderer."""
 
 import ast
+import dataclasses
 import re
 from pathlib import Path
 from typing import cast
@@ -375,6 +376,25 @@ def test_select_has_a_programmatic_name():
     assert "<select" in html_out
     assert html_out.index("<select") < html_out.index("</label>")
     assert html_out.rstrip().endswith("</select></label>")
+
+
+def test_select_row_height_is_fixed_from_chrome():
+    control = SelectControl("Breakout", (("a", "Alpha"),), selected="a")
+    html_out = render_adornment(control, theme=DEFAULT)
+    expected = (
+        line_height(DEFAULT_CHROME.control_size, DEFAULT_CHROME) + DEFAULT_CHROME.select_padding
+    )
+    assert f"height:{expected}px" in html_out
+    assert "display:flex;align-items:center" in html_out
+    assert "max-width:60%" in html_out
+
+
+def test_select_row_height_tracks_select_padding():
+    chrome = dataclasses.replace(DEFAULT_CHROME, select_padding=DEFAULT_CHROME.select_padding + 9)
+    control = SelectControl("Breakout", (("a", "Alpha"),), selected="a")
+    html_out = render_adornment(control, theme=DEFAULT, chrome=chrome)
+    expected = line_height(chrome.control_size, chrome) + chrome.select_padding
+    assert f"height:{expected}px" in html_out
 
 
 def test_popover_is_a_native_details_element():
