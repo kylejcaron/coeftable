@@ -3,9 +3,6 @@
 import ast
 from pathlib import Path
 
-import pytest
-
-
 EXPECTED_EXPORTS = {
     "ResolvedBand",
     "ResolvedRule",
@@ -53,13 +50,18 @@ def test_plots_imports_only_foundation_modules():
 def test_facade_names_are_the_svg_objects():
     # Re-export, not wrapper: identity guarantees no drift in behavior
     # or signature between the public path and the internal one.
+    import coeftable.annotations as annotations
     import coeftable.plots as plots
     import coeftable.svg as svg
 
     assert plots.forest_bar is svg.forest_bar
     assert plots.sparkline_bar is svg.sparkline_bar
     assert plots.sparkline_multi is svg.sparkline_multi
+    assert plots.forest_axis is svg.forest_axis
+    assert plots.sparkline_axis is svg.sparkline_axis
     assert plots.Trace is svg.Trace
+    assert plots.ResolvedRule is annotations.ResolvedRule
+    assert plots.ResolvedBand is annotations.ResolvedBand
 
 
 def test_forest_bar_renders_via_public_path():
