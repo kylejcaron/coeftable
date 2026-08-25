@@ -67,7 +67,7 @@ class CardTemplate:
         if chip is not None:
             chip_lh = line_height(chrome.value_size, chrome)
             chip_html = (
-                f'<span style="font-size:{chrome.value_size}px;'
+                f'<span style="flex:none;font-size:{chrome.value_size}px;'
                 f"line-height:{chip_lh}px;font-weight:600;white-space:nowrap;"
                 f'color:{_esc(theme.text)}">{_esc(chip)}</span>'
             )
@@ -86,12 +86,13 @@ class CardTemplate:
             f"margin:0;padding:0 0 {chrome.padding}px 0;"
             f"border:{chrome.border_width}px solid {_esc(theme.rule)};"
             f"border-radius:{chrome.radius}px;background:{_esc(theme.surface)};"
-            f'overflow:hidden">'
-            f'<summary style="display:flex;list-style:none;margin:0;'
+            f'overflow:visible">'
+            f'<summary style="box-sizing:content-box;display:flex;'
+            f"column-gap:{chrome.gap}px;list-style:none;margin:0;"
             f"justify-content:space-between;align-items:baseline;"
             f"padding:{chrome.padding}px {chrome.padding}px 0 {chrome.padding}px;"
             f'height:{summary_content}px;cursor:pointer">'
-            f"<div>{header_html}</div>{chip_html}</summary>"
+            f'<div style="min-width:0;flex:1 1 auto">{header_html}</div>{chip_html}</summary>'
             f"{body_block}</details>"
         )
 
@@ -101,7 +102,8 @@ def _wrap(row: Row, theme: Theme, chrome: CardChrome) -> str:
     gap = f";margin-top:{row.gap_above}px" if row.gap_above else ""
     svg_containment = ";line-height:0" if isinstance(row.adornment, InlineSvg) else ""
     return (
-        f'<div style="height:{row.height}px;overflow:hidden;margin:0'
-        f'{gap}{svg_containment}">'
+        f'<div style="height:{row.height}px;'
+        f"overflow:{'visible' if isinstance(row.adornment, KeyValuePopover) else 'hidden'};"
+        f"margin:0{gap}{svg_containment}>"
         f"{render_adornment(row.adornment, theme=theme, chrome=chrome)}</div>"
     )

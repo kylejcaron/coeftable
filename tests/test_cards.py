@@ -909,8 +909,16 @@ def _template() -> CardTemplate:
 def test_template_shell_pins_measured_heights():
     template = _template()
     measured = template.measure()
+    _, _, body_rows, _ = measure_card(
+        width=template.width,
+        header=template.header,
+        body=template.body,
+        chrome=template.chrome,
+    )
     html_out = template.render(theme=DEFAULT)
     assert f"width:{measured.width}px" in html_out
+    for row in body_rows:
+        assert f"height:{row.height}px" in html_out
     assert "box-sizing:border-box" in html_out
     assert html_out.startswith("<details open")
     assert re.search(r"\bid=", html_out) is None
@@ -932,7 +940,9 @@ def test_template_render_is_deterministic_and_measure_stable():
 
 def test_template_body_rows_are_fixed_height_and_clipped():
     html_out = _template().render(theme=DEFAULT)
-    assert html_out.count("overflow:hidden") >= 3  # shell + one wrapper per body row
+    details_tag = html_out[: html_out.index(">") + 1]
+    assert "overflow:visible" in details_tag
+    assert html_out.count("overflow:hidden") >= 2  # body wrappers clip their rows
 
 
 def test_summary_shows_the_chip():
@@ -940,6 +950,30 @@ def test_summary_shows_the_chip():
     summary = html_out.split("</summary>")[0]
     assert "+3.4%" in summary
     assert "[1.2, 5.7]" not in summary  # chip is value-only
+    assert "box-sizing:content-box" in summary
+    assert "min-width:0" in summary
+    assert "flex:none" in summary
+    assert f"column-gap:{DEFAULT_CHROME.gap}px" in summary
+
+
+def test_popover_row_wrapper_allows_panel_to_escape():
+    template = CardTemplate(
+        width=252,
+        header=(TextBlock("Revenue", variant="title"),),
+        body=(
+            KeyValuePopover("diagnostics", (("n", "412"),)),
+            CaptionRow("weekly"),
+        ),
+    )
+    _, _, body_rows, _ = measure_card(
+        width=template.width,
+        header=template.header,
+        body=template.body,
+        chrome=template.chrome,
+    )
+    html_out = template.render(theme=DEFAULT)
+    assert f"height:{body_rows[0].height}px;overflow:visible;" in html_out
+    assert f"height:{body_rows[1].height}px;overflow:hidden;" in html_out
 
 
 def test_interactive_adornments_rejected_in_header():

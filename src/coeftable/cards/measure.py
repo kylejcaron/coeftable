@@ -5,9 +5,8 @@ renders, so measured and rendered content agree by construction. Label
 text ellipsizes to its budget; data fields (`MetricValue`) reject with
 `SpecError` instead — truncating a number lies about data. That rejection
 uses a conservative width estimate (`data_char_width_ratio`), so it fires
-early for typical numerals; the absolute guarantee is the fixed-height
-clipped row — rendered boxes never grow — with browser fixtures
-validating legibility.
+early for typical numerals; rendered rows are fixed-height and clip rather than
+grow; rendered-fixture parity is verified outside the test suite.
 """
 
 from __future__ import annotations
