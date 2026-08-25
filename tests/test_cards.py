@@ -906,6 +906,14 @@ def test_template_shell_pins_measured_heights():
     assert re.search(r"\bid=", html_out) is None
 
 
+def test_bottom_padding_lives_on_details_in_both_fold_states():
+    html_out = _template().render(theme=DEFAULT)
+    details_tag = html_out[: html_out.index(">") + 1]
+    assert "padding:0 0 16px 0" in details_tag  # DEFAULT_CHROME.padding
+    body_block = html_out.split("</summary>")[1]
+    assert "padding:10px 16px 0 16px" in body_block  # header_gap, padding, bottom on details
+
+
 def test_template_render_is_deterministic_and_measure_stable():
     template = _template()
     assert template.render(theme=DEFAULT) == template.render(theme=DEFAULT)

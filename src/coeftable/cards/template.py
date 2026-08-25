@@ -78,12 +78,13 @@ class CardTemplate:
             else (
                 f'<div style="box-sizing:border-box;margin:0;'
                 f"padding:{chrome.header_gap}px {chrome.padding}px "
-                f'{chrome.padding}px {chrome.padding}px">{body_html}</div>'
+                f'0 {chrome.padding}px">{body_html}</div>'
             )
         )
         return (
             f'<details open style="box-sizing:border-box;width:{self.width}px;'
-            f"margin:0;border:{chrome.border_width}px solid {_esc(theme.rule)};"
+            f"margin:0;padding:0 0 {chrome.padding}px 0;"
+            f"border:{chrome.border_width}px solid {_esc(theme.rule)};"
             f"border-radius:{chrome.radius}px;background:{_esc(theme.surface)};"
             f'overflow:hidden">'
             f'<summary style="display:flex;list-style:none;margin:0;'
