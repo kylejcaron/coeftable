@@ -209,10 +209,11 @@ def test_events_validation(build):
     "build",
     [
         lambda: Metric(1.0, ct.Number(), ci=_unchecked("ab")),
+        lambda: Metric(1.0, ct.Number(), ci=_unchecked(b"ab")),
         lambda: Diagnostics("d", _unchecked(["kv"])),
         lambda: Events(_unchecked("xy")),
     ],
-    ids=["str-ci", "str-item", "str-events"],
+    ids=["str-ci", "bytes-ci", "str-item", "str-events"],
 )
 def test_str_container_guard_names_the_string(build):
     with pytest.raises(SpecError, match="not a string"):
@@ -322,6 +323,14 @@ def test_trend_ribbon_role_reads_last_fully_present_index():
     polyline_points = polyline.group(1).split()
     assert len(polygon_points) > len(polyline_points)
     assert float(polygon_points[0].split(",", 1)[1]) == pytest.approx(17.4)
+
+
+def test_trend_endpoint_one_sided_interval_drives_role():
+    lower = (-0.1, -0.1, -0.1, 0.9)
+    upper = (0.7, 1.3, 1.6, None)
+    (spark, _) = Trend(lower=lower, upper=upper, **TREND_KW).resolve(**RESOLVE_KW)
+    assert DEFAULT.favorable in spark.svg
+    assert DEFAULT.inconclusive not in spark.svg
 
 
 def test_trend_explicit_role_override_and_axis_toggle():
@@ -645,6 +654,14 @@ def test_interval_validation(kwargs):
         Interval(**kwargs)
 
 
+def test_interval_margin_equal_to_inset_raises_with_exact_bounds():
+    with pytest.raises(
+        SpecError,
+        match=r"Interval\.margin \(3\) must be 0 or strictly greater than Interval\.inset \(3\)",
+    ):
+        Interval(1.0, 0.5, 2.0, domain=(0.0, 3.0), margin=3, inset=3)
+
+
 def test_interval_explicit_role_override():
     (bar,) = Interval(
         1.0, 0.5, 2.0, domain=(0.0, 3.0), role="unfavorable", show_axis=False
@@ -671,8 +688,18 @@ def test_interval_explicit_role_override():
             220,
             "width \\(220\\).*margin \\(108\\).*inset \\(3\\).*= -2",
         ),
+        (
+            Trend(lower=LO, upper=HI, endpoint_width=214, **TREND_KW),
+            220,
+            "width \\(220\\).*endpoint_width \\(214\\).*2\\*inset \\(6\\).*= 0",
+        ),
     ],
-    ids=["trend-endpoint-reserve", "trend-vertical-inset", "interval-margin-reserve"],
+    ids=[
+        "trend-endpoint-reserve",
+        "trend-vertical-inset",
+        "interval-margin-reserve",
+        "trend-zero-span",
+    ],
 )
 def test_projection_guards_name_effective_spans(region, width, message):
     with pytest.raises(SpecError, match=message):

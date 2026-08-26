@@ -28,3 +28,7 @@
 ## Correction
 
 - `Metric.ci` final annotation is `tuple[float, float] | None`; runtime validation accepts any 2-sequence and snapshots it to a tuple.
+
+## Final scope note
+
+Task 1 shipped the non-plot regions only; the branch ultimately added `Trend` and `Interval` in the Task 2 commits.
