@@ -229,7 +229,9 @@ def _graph_partition_rules(
             rule
             for rule in rules
             if len(rule.when_all) == 1
-            and rule.when_all[0] == Atom(ControlRef(card_id, key), "option_checked", option)
+            and rule.when_all[0].predicate == "option_checked"
+            and rule.when_all[0].control.card_id == card_id
+            and (rule.when_all[0].control.key, rule.when_all[0].option) == (key, option)
         ]
         if len(matches) != 1:
             return None
@@ -434,6 +436,11 @@ def _graph_rules(
                 raise SpecError("Graph.rules option controls must reference known selects")
             elif atom.option not in options[atom.control.key]:
                 raise SpecError("Graph.rules option must reference a known select option")
+        if any(
+            atom.predicate == "checked" and atom.control.card_id in rule.hide_cards
+            for atom in rule.when_all
+        ):
+            raise SpecError("a rule may not hide the card owning its condition nub")
     return cast(tuple[StateRule, ...], rules)
 
 

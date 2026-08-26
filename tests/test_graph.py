@@ -622,6 +622,17 @@ def test_graph_validation_matrix(kwargs, message):
         _plain_graph(**kwargs)
 
 
+def test_graph_rejects_self_trapping_checked_rule():
+    with pytest.raises(
+        SpecError,
+        match=re.escape("a rule may not hide the card owning its condition nub"),
+    ):
+        _plain_graph(
+            collapsible=("root",),
+            rules=(StateRule((Atom(ControlRef("root"), "checked"),), hide_cards=("root",)),),
+        )
+
+
 @pytest.mark.parametrize(
     ("kwargs", "message"),
     [
@@ -741,6 +752,36 @@ def test_graph_accepts_proven_shared_slot_alternatives():
     assert graph.nodes[0][0] == "controller"
 
 
+def test_shared_slot_scan_tolerates_empty_option_on_unrelated_select():
+    unrelated = Card(
+        "unrelated",
+        content=(
+            SelectControl(
+                "Other",
+                (("", "Empty"), ("other", "Other")),
+                selected="",
+                key="mode",
+            ),
+        ),
+    )
+    graph = _shared_slot_graph(
+        _shared_slot_partition_rules(),
+        nodes=(
+            ("controller", _shared_slot_controller()),
+            ("unrelated", unrelated),
+            ("left", Card("left")),
+            ("right", Card("right")),
+        ),
+        slots=(
+            Slot("controller", 0, 0),
+            Slot("unrelated", 0, 1),
+            Slot("left", 1, 0),
+            Slot("right", 1, 0),
+        ),
+    )
+    assert graph.measure().width > 0
+
+
 @pytest.mark.parametrize(
     "rules",
     [
@@ -857,11 +898,23 @@ def test_shared_slot_controller_cannot_be_hidden_by_a_rule():
             (
                 *_shared_slot_partition_rules(),
                 StateRule(
-                    (Atom(ControlRef("controller"), "checked"),),
+                    (Atom(ControlRef("root"), "checked"),),
                     hide_cards=("controller",),
                 ),
             ),
-            collapsible=("controller",),
+            nodes=(
+                ("root", Card("root")),
+                ("controller", _shared_slot_controller()),
+                ("left", Card("left")),
+                ("right", Card("right")),
+            ),
+            slots=(
+                Slot("root", 0, 0),
+                Slot("controller", 1, 0),
+                Slot("left", 2, 0),
+                Slot("right", 2, 0),
+            ),
+            collapsible=("root",),
         )
 
 
@@ -1150,13 +1203,29 @@ def test_graph_renderer_uses_measured_anchor_and_vertical_route_arithmetic():
     layout = dict(graph.measure().boxes)
     source_left, source_top, _source_width, source_height = layout["source"]
     target_left, target_top, target_width, _target_height = layout["target"]
-    anchor = dict(graph._layout.anchors)["source"][1]
-    x0 = source_left + anchor[0]
-    y0 = source_top + anchor[1]
-    x1 = target_left + target_width / 2
+    source_out = dict(graph._layout.anchors)["source"][1]
+    synthetic_anchors = dict(graph._layout.anchors)
+    synthetic_anchors["target"] = ((10.0, 5.0), synthetic_anchors["target"][1])
+    object.__setattr__(
+        graph,
+        "_layout",
+        dataclasses.replace(graph._layout, anchors=tuple(synthetic_anchors.items())),
+    )
+    x0 = source_left + source_out[0]
+    y0 = source_top + source_out[1]
+    target_in = synthetic_anchors["target"][0]
+    x1 = target_left + target_in[0]
+    y1 = target_top + target_in[1]
     my = (source_top + source_height + target_top) / 2
-    expected = f'd="M {x0:g},{y0:g} C {x0:g},{my:g} {x1:g},{my:g} {x1:g},{target_top - 3:g}"'
-    assert expected in graph.as_raw_html()
+    expected = f'd="M {x0:g},{y0:g} C {x0:g},{my:g} {x1:g},{my:g} {x1:g},{y1 - 3:g}"'
+    output = graph.as_raw_html()
+    assert expected in output
+    old_top_center = (
+        f'd="M {x0:g},{y0:g} C {x0:g},{my:g} '
+        f"{target_left + target_width / 2:g},{my:g} "
+        f'{target_left + target_width / 2:g},{target_top - 3:g}"'
+    )
+    assert old_top_center not in output
 
 
 def test_graph_renderer_does_not_remeasure_cards(monkeypatch):
@@ -1223,7 +1292,7 @@ def test_graph_renderer_contains_nubs_inside_their_card_wrappers():
         (("source", Card("Source")), ("target", Card("Target"))),
         Slotted((Slot("source", 0, 0), Slot("target", 1, 0))),
         collapsible=("source",),
-        rules=(StateRule((Atom(ControlRef("source"), "checked"),), hide_cards=("source",)),),
+        rules=(StateRule((Atom(ControlRef("source"), "checked"),), hide_cards=("target",)),),
         dom_prefix="contain",
     )
     output = graph.as_raw_html()
