@@ -88,6 +88,7 @@ def test_metric_explicit_role_overrides():
         lambda: Metric(3.4, ct.Number(), ref=float("nan")),
         lambda: Metric(3.4, ct.Number(), direction=_unchecked("sideways")),
         lambda: Metric(3.4, ct.Number(), role=_unchecked("loud")),
+        lambda: Metric(1.0, ct.Number(), ci=_unchecked("ab")),
     ],
     ids=[
         "nan-value",
@@ -100,6 +101,7 @@ def test_metric_explicit_role_overrides():
         "nan-ref",
         "bad-direction",
         "bad-role",
+        "str-ci",
     ],
 )
 def test_metric_validation(build):
@@ -126,6 +128,7 @@ def test_diagnostics_formats_numbers_and_passes_strings():
         lambda: Diagnostics("d", [("k", float("nan"))]),
         lambda: Diagnostics("d", _unchecked([(1, "v")])),
         lambda: Diagnostics("d", _unchecked([1])),
+        lambda: Diagnostics("d", _unchecked(["kv"])),
     ],
     ids=[
         "empty-label",
@@ -135,6 +138,7 @@ def test_diagnostics_formats_numbers_and_passes_strings():
         "nan-value",
         "nonstr-key",
         "malformed-item",
+        "str-item",
     ],
 )
 def test_diagnostics_validation(build):
@@ -172,8 +176,9 @@ def test_events_rules_derive_from_positioned_events_only():
         lambda: Events([Event("", "#111111")]),
         lambda: Events([Event("x", "#111111", dash=_unchecked("wavy"))]),
         lambda: Events([Event("x", "#111111", at=float("nan"))]),
+        lambda: Events(_unchecked("xy")),
     ],
-    ids=["no-events", "malformed-events", "empty-label", "bad-dash", "nan-at"],
+    ids=["no-events", "malformed-events", "empty-label", "bad-dash", "nan-at", "str-events"],
 )
 def test_events_validation(build):
     with pytest.raises(SpecError):

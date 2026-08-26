@@ -75,6 +75,8 @@ def _require_callable(value: object, *, name: str, optional: bool = False) -> No
 
 def _canonical(value: object, *, name: str) -> tuple[object, ...]:
     """Snapshot an input sequence while presenting malformed inputs as specs."""
+    if isinstance(value, (str, bytes)):
+        raise SpecError(f"{name} must be a sequence of entries, not a string")
     try:
         return tuple(cast(Iterable[object], value))
     except TypeError as error:
