@@ -260,6 +260,22 @@ def test_raw_adornment_row_wrappers_match_overflow_contract():
     assert "line-height:0" in html
 
 
+def test_empty_resolving_regions_produce_no_dividers_or_gaps():
+    class Empty:
+        def resolve(self, *, width, theme, chrome):
+            """Resolve to nothing, exercising the resolved-emptiness gates."""
+            return ()
+
+    pane = Pane("x", content=(TextBlock("body"),), width=200)
+    bare = Panel((pane,))
+    phantom = Panel((pane,), header=(Empty(),), footer=(Empty(),))
+    assert phantom.measure() == bare.measure()
+    assert phantom.as_raw_html().count("border-bottom") == bare.as_raw_html().count(
+        "border-bottom"
+    )
+    assert phantom.as_raw_html().count("border-top") == bare.as_raw_html().count("border-top")
+
+
 def test_rendering_is_deterministic_and_repr_html_matches():
     panel = _panel(content=(TextBlock("hello"),))
     assert panel.as_raw_html() == panel.as_raw_html()

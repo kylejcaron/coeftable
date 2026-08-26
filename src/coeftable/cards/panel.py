@@ -219,7 +219,7 @@ class Panel:
                 pane.content, width=pane.width, section=f"panes[{index}].content"
             )
             pane_height = _stack_height(heading)
-            if pane.content:
+            if _stack_height(content):
                 pane_height += self.chrome.header_gap
             pane_height += _stack_height(content)
             pane_layouts.append(
@@ -235,10 +235,10 @@ class Panel:
         width = inner_width + 2 * (self.chrome.padding + self.chrome.border_width)
         height = 2 * (self.chrome.border_width + self.chrome.padding)
         height += _stack_height(header_layout)
-        if header:
+        if _stack_height(header_layout):
             height += self.chrome.border_width + self.chrome.header_gap
         height += max(pane.height for pane in pane_layouts)
-        if footer:
+        if _stack_height(footer_layout):
             height += self.chrome.header_gap + self.chrome.border_width
         height += _stack_height(footer_layout)
         measured = MeasuredPanel(
@@ -326,7 +326,7 @@ class Panel:
             heading_html = _render_stack(pane.heading, theme=self.theme, chrome=chrome)
             content_html = _render_stack(pane.content, theme=self.theme, chrome=chrome)
             content_block = ""
-            if pane.content:
+            if _stack_height(pane.content):
                 content_block = (
                     f'<div style="height:{chrome.header_gap}px;margin:0;padding:0"></div>'
                     f"{content_html}"
@@ -337,14 +337,14 @@ class Panel:
                 f"{heading_html}{content_block}</div>"
             )
         header_divider = ""
-        if self.header:
+        if _stack_height(layout.header):
             header_divider = (
                 f'<div style="box-sizing:border-box;'
                 f"height:{chrome.header_gap + chrome.border_width}px;"
                 f'border-bottom:{chrome.border_width}px solid {_esc(self.theme.rule)}"></div>'
             )
         footer_divider = ""
-        if self.footer:
+        if _stack_height(layout.footer):
             footer_divider = (
                 f'<div style="box-sizing:border-box;'
                 f"height:{chrome.header_gap + chrome.border_width}px;"
