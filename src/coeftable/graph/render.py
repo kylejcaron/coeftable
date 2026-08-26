@@ -108,6 +108,7 @@ def _nub_markup(
             f"top:{_number(height)}px;width:18px;height:18px;box-sizing:border-box;"
             f"display:flex;align-items:center;justify-content:center;border:1px solid "
             f"{_esc(graph.theme.axis)};border-radius:50%;background:{_esc(graph.theme.surface)};"
+            f'color:{_esc(graph.theme.axis)};font-size:13px;line-height:16px;cursor:pointer">'
             f"<span>−</span><span>+</span></label>"
         )
         rules.extend(
