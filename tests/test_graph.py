@@ -1245,7 +1245,7 @@ def test_graph_renderer_does_not_remeasure_cards(monkeypatch):
     assert calls == 0
 
 
-def test_graph_renderer_places_label_at_cubic_three_quarters_and_rethemes_roles():
+def test_graph_renderer_places_label_at_cubic_midpoint_and_rethemes_roles():
     theme = dataclasses.replace(
         DEFAULT,
         favorable="#111111",
@@ -1264,7 +1264,7 @@ def test_graph_renderer_places_label_at_cubic_three_quarters_and_rethemes_roles(
     y0 = source[1] + anchor[1]
     x1 = target[0] + target[2] / 2
     my = (source[1] + source[3] + target[1]) / 2
-    t = 0.75
+    t = 0.5
     x = (1 - t) ** 3 * x0 + 3 * (1 - t) ** 2 * t * x0
     x += 3 * (1 - t) * t**2 * x1 + t**3 * x1
     y = (1 - t) ** 3 * y0 + 3 * (1 - t) ** 2 * t * my

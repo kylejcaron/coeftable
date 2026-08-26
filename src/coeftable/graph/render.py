@@ -69,7 +69,7 @@ def _wire_svg(graph: Graph, layout: _GraphLayout, compiled: _CompiledState) -> s
         )
         label = ""
         if wire.label is not None:
-            t = 0.75
+            t = 0.5
             inverse = 1 - t
             label_x = (
                 inverse**3 * x0 + 3 * inverse**2 * t * x0 + 3 * inverse * t**2 * x1 + t**3 * x1
