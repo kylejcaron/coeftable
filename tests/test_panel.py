@@ -264,10 +264,14 @@ def test_custom_chrome_and_theme_flow_into_resolution_and_rendering():
     assert calls == [("pane", 50, chrome, BLUE)]
     measured = panel.measure()
     assert measured.width == 50 + 2 * (24 + 2)
+    heading_height = math.ceil(chrome.title_size * chrome.leading)
+    body_height = math.ceil(chrome.body_size * chrome.leading)
+    assert measured.pane_heights == (heading_height + 12 + body_height,)
     html = panel.as_raw_html()
     assert "padding:24px" in html
     assert "border:2px solid" in html
     assert BLUE.rule in html
+    assert '<div style="height:12px;margin:0;padding:0"></div>' in html
 
 
 def test_raw_adornment_row_wrappers_match_overflow_contract():
@@ -656,7 +660,11 @@ def test_retention_fixture_reproduces_the_panel_through_public_api():
     assert html.count("· ns") == 2
     inconclusive_color = DEFAULT.color("inconclusive")
     favorable_color = DEFAULT.color("favorable")
-    badges = re.findall(r"<span[^>]*>([^<]*· ns[^<]*|▴ [^<]*)</span>", html)
-    assert len(badges) == 3
-    assert html.count(inconclusive_color) >= 2  # both ns badges paint the verdict color
-    assert favorable_color in html
+    badge_matches = re.findall(r'<span style="[^"]*background:([^;"]+)[^"]*">([^<]+)</span>', html)
+    kpi_badges = [(color, text) for color, text in badge_matches if "pp" in text]
+    assert [color for color, _ in kpi_badges] == [
+        favorable_color,
+        inconclusive_color,
+        inconclusive_color,
+    ]
+    assert [text.endswith("· ns") for _, text in kpi_badges] == [False, True, True]
