@@ -79,15 +79,18 @@ def test_regions_resolve_exactly_once_per_construction():
 
 def test_chrome_overrides_propagate_to_regions_measurement_and_html():
     widths = []
+    chromes = []
 
     class Recording:
         def resolve(self, *, width, theme, chrome):
             widths.append(width)
+            chromes.append(chrome)
             return (TextBlock("resolved"),)
 
     chrome = replace(DEFAULT_CHROME, padding=24, title_size=20)
     card = Card("t", content=[Recording()], chrome=chrome)
     assert widths == [card.width - 2 * (24 + chrome.border_width)]
+    assert chromes == [chrome]
 
     default = Card("t", content=[Recording()])
     assert card.measure().collapsed_height != default.measure().collapsed_height
