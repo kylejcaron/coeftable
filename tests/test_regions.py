@@ -766,7 +766,7 @@ def test_interval_role_and_axis_toggle():
         dict(estimate=1.0, lower=0.5, upper=2.0, domain=(0, 3), inset=True),
         dict(estimate=1.0, lower=0.5, upper=2.0, domain=(0, 3), inset=0),
         dict(estimate=1.0, lower=0.5, upper=2.0, domain=(0, float("nan"))),
-        dict(estimate=1.0, lower=0.5, upper=2.0, domain=(float("inf"), 3)),
+        dict(estimate=1.0, lower=0.5, upper=2.0, domain=(0, float("inf"))),
     ],
     ids=[
         "inverted-bounds",
