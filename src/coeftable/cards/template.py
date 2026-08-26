@@ -19,7 +19,7 @@ from coeftable.cards.adornments import (
 )
 from coeftable.cards.chrome import DEFAULT_CHROME, CardChrome, line_height
 from coeftable.cards.fragments import _esc, render_adornment
-from coeftable.cards.measure import MeasuredCard, Row, _est, measure_card
+from coeftable.cards.measure import MeasuredCard, RenderRow, _est, measure_card
 from coeftable.errors import SpecError
 from coeftable.theme import DEFAULT, Theme
 
@@ -105,7 +105,7 @@ class CardTemplate:
         )
 
 
-def _wrap(row: Row, theme: Theme, chrome: CardChrome) -> str:
+def _wrap(row: RenderRow, theme: Theme, chrome: CardChrome) -> str:
     """Render one exact-height row, preserving measurement-owned spacing."""
     gap = f";margin-top:{row.gap_above}px" if row.gap_above else ""
     svg_containment = ";line-height:0" if isinstance(row.adornment, InlineSvg) else ""
