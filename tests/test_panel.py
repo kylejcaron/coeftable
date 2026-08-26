@@ -10,6 +10,7 @@ import pytest
 
 from coeftable.cards import (
     DEFAULT_CHROME,
+    Badge,
     CardChrome,
     Event,
     Events,
@@ -266,7 +267,7 @@ def test_custom_chrome_and_theme_flow_into_resolution_and_rendering():
     html = panel.as_raw_html()
     assert "padding:24px" in html
     assert "border:2px solid" in html
-    assert BLUE.surface in html
+    assert BLUE.rule in html
 
 
 def test_raw_adornment_row_wrappers_match_overflow_contract():
@@ -487,9 +488,9 @@ def test_retention_fixture_reproduces_the_panel_through_public_api():
         )
         return Row(
             (
-                (TextBlock(label), 34),
-                (TextBlock(pcts(observed[-1][0] * 100.0)), 52),
-                (TextBlock(delta_text), 86),
+                (TextBlock(label), 28),
+                (TextBlock(pcts(observed[-1][0] * 100.0)), 44),
+                (Badge(delta_text, role=verdict), 100),
                 (trend, 240),
             ),
             gap=10,
@@ -501,18 +502,33 @@ def test_retention_fixture_reproduces_the_panel_through_public_api():
     d7_first, d7_last = anchors["D7"][0], anchors["D7"][-1]
     d30_last = anchors["D30"][-1]
     assert d7_first is not None and d7_last is not None and d30_last is not None
+
+    class LabeledKpi:
+        """A caption stacked over a metric value - one KPI block per cell."""
+
+        def __init__(self, label: str, metric: Metric) -> None:
+            self.label = label
+            self.metric = metric
+
+        def resolve(self, *, width: int, theme: Theme, chrome: CardChrome):
+            caption = TextBlock(self.label, variant="caption")
+            return (caption, *self.metric.resolve(width=width, theme=theme, chrome=chrome))
+
     header = Row(
         (
-            (TextBlock("Retention · weekly signup cohorts", variant="title"), 360),
-            (TextBlock("D7 Δ since first cohort", variant="caption"), 150),
-            (Metric((d7_last - d7_first) * 100.0, signed_points), 90),
-            (TextBlock("latest D30", variant="caption"), 80),
-            (Metric(d30_last * 100.0, pcts), 80),
+            (TextBlock("Retention · weekly signup cohorts", variant="title"), 630),
+            (
+                LabeledKpi(
+                    "D7 Δ since first cohort", Metric((d7_last - d7_first) * 100.0, signed_points)
+                ),
+                150,
+            ),
+            (LabeledKpi("latest D30", Metric(d30_last * 100.0, pcts)), 100),
         ),
         gap=14,
     )
-    assert tuple(width for _, width in header.cells) == (360, 150, 90, 80, 80)
-    assert all(tuple(width for _, width in row.cells) == (34, 52, 86, 240) for row in trend_rows)
+    assert tuple(width for _, width in header.cells) == (630, 150, 100)
+    assert all(tuple(width for _, width in row.cells) == (28, 44, 100, 240) for row in trend_rows)
     journey = Pane(
         "The journey",
         subtitle="retention by weeks since signup, one curve per cohort",
@@ -574,7 +590,11 @@ def test_retention_fixture_reproduces_the_panel_through_public_api():
     title_height = math.ceil(chrome.title_size * chrome.leading)
     subtitle_height = math.ceil(chrome.subtitle_size * chrome.leading)
     caption_height = math.ceil(chrome.caption_size * chrome.leading)
-    header_height = math.ceil(max(chrome.value_size, chrome.ci_size) * chrome.leading)
+    header_height = (
+        caption_height
+        + chrome.gap
+        + math.ceil(max(chrome.value_size, chrome.ci_size) * chrome.leading)
+    )
     heading_height = title_height + chrome.gap + subtitle_height
     journey_content_height = 168 + chrome.gap + journey_axis_height + chrome.gap + caption_height
     journey_height = heading_height + chrome.header_gap + journey_content_height
@@ -605,7 +625,7 @@ def test_retention_fixture_reproduces_the_panel_through_public_api():
     assert measured.width == 430 + 442 + 36 + 2 * (16 + 1) == 942
     assert measured.pane_heights == (journey_height, trend_height)
     assert measured.height == expected_height
-    assert measured.height == 408
+    assert measured.height == 431
 
     shell_style = re.match(r'<div style="([^"]+)">', html)
     assert shell_style is not None
@@ -634,3 +654,9 @@ def test_retention_fixture_reproduces_the_panel_through_public_api():
     assert f"border-top:{chrome.swatch_thickness}px dashed {event_color}" in html
     assert panel.header == (header,)
     assert html.count("· ns") == 2
+    inconclusive_color = DEFAULT.color("inconclusive")
+    favorable_color = DEFAULT.color("favorable")
+    badges = re.findall(r"<span[^>]*>([^<]*· ns[^<]*|▴ [^<]*)</span>", html)
+    assert len(badges) == 3
+    assert html.count(inconclusive_color) >= 2  # both ns badges paint the verdict color
+    assert favorable_color in html
