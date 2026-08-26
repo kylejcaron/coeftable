@@ -1,5 +1,6 @@
 """Experimental graph value types."""
 
+from coeftable.graph.metric_tree import MetricTree
 from coeftable.graph.model import (
     Atom,
     ControlRef,
@@ -16,6 +17,7 @@ __all__ = [
     "ControlRef",
     "Graph",
     "MeasuredGraph",
+    "MetricTree",
     "Slot",
     "Slotted",
     "StateRule",

@@ -4,7 +4,7 @@ import ast
 import dataclasses
 import re
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
@@ -12,11 +12,13 @@ import coeftable
 import coeftable.graph
 from coeftable.cards import Card, CardChrome, SelectControl, TextBlock
 from coeftable.errors import SpecError
+from coeftable.format import Format
 from coeftable.graph import (
     Atom,
     ControlRef,
     Graph,
     MeasuredGraph,
+    MetricTree,
     Slot,
     Slotted,
     StateRule,
@@ -24,7 +26,7 @@ from coeftable.graph import (
 )
 from coeftable.graph.state import _CompiledState
 from coeftable.graph.topology import blocker_families, check_acyclic, is_acyclic
-from coeftable.theme import DEFAULT
+from coeftable.theme import DEFAULT, Direction
 
 
 @pytest.mark.parametrize(
@@ -165,10 +167,14 @@ def test_state_rule_rejects_string_sequences():
     atom = Atom(ControlRef("card"), "checked")
     for field in ("when_all", "hide_cards", "hide_wires"):
         values = {"when_all": "atom", "hide_cards": "card", "hide_wires": "wire"}
-        kwargs = {"when_all": (atom,), "hide_cards": ("card",), "hide_wires": ("wire",)}
-        kwargs[field] = values[field]  # ty: ignore[invalid-assignment]
+        kwargs: dict[str, object] = {
+            "when_all": (atom,),
+            "hide_cards": ("card",),
+            "hide_wires": ("wire",),
+        }
+        kwargs[field] = values[field]
         with pytest.raises(SpecError, match="must be a sequence of entries, not a string"):
-            StateRule(**kwargs)
+            StateRule(**cast(Any, kwargs))
 
 
 def test_slotted_rejects_string_sequence():
@@ -212,12 +218,13 @@ def test_graph_export_surface_is_exact_and_top_level_excludes_graph():
         "ControlRef",
         "Graph",
         "MeasuredGraph",
+        "MetricTree",
         "Slot",
         "Slotted",
         "StateRule",
         "Wire",
     }
-    assert len(coeftable.graph.__all__) == 8
+    assert len(coeftable.graph.__all__) == 9
     assert set(coeftable.graph.__all__) == expected
     for name in expected:
         assert hasattr(coeftable.graph, name)
@@ -1278,3 +1285,132 @@ def test_graph_renderer_threads_keyed_control_dom_id():
 def test_graph_renderer_source_never_reaches_cached_card_template():
     source = Path(coeftable.graph.__file__).parent.joinpath("render.py").read_text()
     assert "_template" not in source
+
+
+def _metric_tree(nodes, edges, *, direction="higher_is_better"):
+    return MetricTree(nodes, edges, lambda value: f"{value:.1f}", direction=direction)
+
+
+def test_metric_tree_assigns_longest_path_layers_and_input_order_slots():
+    nodes = tuple((node_id, Card(node_id)) for node_id in ("root", "b", "a", "orphan"))
+    graph = _metric_tree(nodes, (("root", "a", 1.0), ("root", "b", -1.0)))
+    assert graph.layout.slots == (
+        Slot("root", 0, 0),
+        Slot("b", 1, 0),
+        Slot("a", 1, 1),
+        Slot("orphan", 0, 1),
+    )
+    multi_root = _metric_tree(
+        tuple((node_id, Card(node_id)) for node_id in ("second", "child", "first")),
+        (("first", "child", 1.0),),
+    )
+    assert multi_root.layout.slots == (
+        Slot("second", 0, 0),
+        Slot("child", 1, 0),
+        Slot("first", 0, 1),
+    )
+    diamond_nodes = tuple((node_id, Card(node_id)) for node_id in ("r", "b", "a", "c"))
+    diamond = _metric_tree(
+        diamond_nodes,
+        (("r", "a", 1.0), ("r", "b", 1.0), ("a", "c", 1.0), ("b", "c", 1.0)),
+    )
+    assert diamond.layout.slots == (
+        Slot("r", 0, 0),
+        Slot("b", 1, 0),
+        Slot("a", 1, 1),
+        Slot("c", 2, 0),
+    )
+
+    unequal = _metric_tree(
+        tuple((node_id, Card(node_id)) for node_id in ("r", "a", "c", "b", "d")),
+        (("r", "a", 1.0), ("a", "c", 1.0), ("r", "b", 1.0), ("b", "d", 1.0), ("d", "c", 1.0)),
+    )
+    assert dict((slot.card_id, slot.layer) for slot in unequal.layout.slots) == {
+        "r": 0,
+        "a": 1,
+        "b": 1,
+        "d": 2,
+        "c": 3,
+    }
+
+
+def test_metric_tree_formats_wire_labels_and_roles():
+    graph = _metric_tree(
+        tuple(
+            (node_id, Card(node_id)) for node_id in ("r", "positive", "negative", "none", "zero")
+        ),
+        (
+            ("r", "positive", 1.25),
+            ("r", "negative", -2.5),
+            ("r", "none", None),
+            ("r", "zero", 0.0),
+        ),
+    )
+    assert tuple(wire.label for wire in graph.wires) == ("+1.2", "-2.5", None, "0.0")
+    assert tuple(wire.label_role for wire in graph.wires) == (
+        "favorable",
+        "unfavorable",
+        None,
+        "inconclusive",
+    )
+    lower = _metric_tree(
+        (("r", Card("r")), ("child", Card("child"))),
+        (("r", "child", 1.0),),
+        direction="lower_is_better",
+    )
+    assert lower.wires[0].label_role == "unfavorable"
+
+
+def test_metric_tree_collapsible_nodes_are_exactly_non_leaves_and_renders():
+    graph = _metric_tree(
+        tuple((node_id, Card(node_id)) for node_id in ("r", "a", "b")),
+        (("r", "a", 1.0), ("r", "b", None)),
+    )
+    assert graph.collapsible == ("r",)
+    html = graph.as_raw_html()
+    assert all(f'id="g0-card-{index}"' in html for index in range(3))
+
+
+@pytest.mark.parametrize(
+    "edges",
+    [
+        (("r", "r", 1.0),),
+        (("r", "missing", 1.0),),
+        (("r", "a", 1.0), ("r", "a", 2.0)),
+        (("r", "a", 1.0), ("a", "r", 2.0)),
+    ],
+)
+def test_metric_tree_rejects_invalid_edges(edges):
+    nodes = (("r", Card("r")), ("a", Card("a")))
+    with pytest.raises(SpecError):
+        _metric_tree(nodes, edges)
+
+
+@pytest.mark.parametrize("contribution", [float("nan"), float("inf"), float("-inf")])
+def test_metric_tree_rejects_non_finite_contributions(contribution):
+    with pytest.raises(SpecError):
+        _metric_tree((("r", Card("r")), ("a", Card("a"))), (("r", "a", contribution),))
+
+
+def test_metric_tree_rejects_empty_nodes_bad_formatter_and_direction():
+    with pytest.raises(SpecError):
+        MetricTree((), (), str)
+    with pytest.raises(SpecError):
+        MetricTree((("r", Card("r")),), (), cast(Format, 1))
+    with pytest.raises(SpecError):
+        MetricTree(
+            (("r", Card("r")),),
+            (),
+            lambda value: str(value),
+            direction=cast(Direction, "sideways"),
+        )
+
+
+def test_metric_tree_module_contains_no_html_string_literals():
+    source = Path(coeftable.graph.__file__).parent.joinpath("metric_tree.py").read_text()
+    tree = ast.parse(source)
+    assert all(
+        "<" not in node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    )
