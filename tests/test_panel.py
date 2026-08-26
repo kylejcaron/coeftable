@@ -2,7 +2,7 @@
 
 import math
 import re
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -171,13 +171,14 @@ def test_rows_must_fit_their_container(where):
         _panel(pane_width=80, **kwargs)
 
 
-def test_header_and_footer_rows_use_derived_full_inner_width():
+@pytest.mark.parametrize("where", ["header", "footer"])
+def test_header_and_footer_rows_use_derived_full_inner_width(where):
     row = Row(((TextBlock("a"), 60), (TextBlock("b"), 59)), gap=1)
-    panel = Panel(
-        (Pane("a", content=(), width=60), Pane("b", content=(), width=60)),
-        gap=10,
-        header=(row,),
-    )
+    panes = (Pane("a", content=(), width=60), Pane("b", content=(), width=60))
+    if where == "header":
+        panel = Panel(panes, gap=10, header=(row,))
+    else:
+        panel = Panel(panes, gap=10, footer=(row,))
     assert panel.measure().width == 60 + 60 + 10 + 2 * (16 + 1)
 
 
@@ -248,6 +249,24 @@ def test_regions_resolve_once_in_traversal_order_and_with_theme_repeats_it():
     themed.measure()
     assert calls == expected_default + expected_blue
     assert themed is not panel
+
+
+def test_custom_chrome_and_theme_flow_into_resolution_and_rendering():
+    calls: list[tuple[str, int, CardChrome, Theme]] = []
+    chrome = replace(DEFAULT_CHROME, padding=24, border_width=2, header_gap=12)
+    region = RecordingRegion("pane", calls)
+    panel = Panel(
+        (Pane("main", content=(region,), width=50),),
+        chrome=chrome,
+        theme=BLUE,
+    )
+    assert calls == [("pane", 50, chrome, BLUE)]
+    measured = panel.measure()
+    assert measured.width == 50 + 2 * (24 + 2)
+    html = panel.as_raw_html()
+    assert "padding:24px" in html
+    assert "border:2px solid" in html
+    assert BLUE.surface in html
 
 
 def test_raw_adornment_row_wrappers_match_overflow_contract():
@@ -484,13 +503,15 @@ def test_retention_fixture_reproduces_the_panel_through_public_api():
     assert d7_first is not None and d7_last is not None and d30_last is not None
     header = Row(
         (
-            (TextBlock("Retention · weekly signup cohorts", variant="title"), 540),
-            (Metric((d7_last - d7_first) * 100.0, signed_points), 180),
-            (Metric(d30_last * 100.0, pcts), 160),
+            (TextBlock("Retention · weekly signup cohorts", variant="title"), 430),
+            (TextBlock("D7 Δ since first cohort", variant="caption"), 100),
+            (Metric((d7_last - d7_first) * 100.0, signed_points), 90),
+            (TextBlock("latest D30", variant="caption"), 70),
+            (Metric(d30_last * 100.0, pcts), 80),
         ),
         gap=14,
     )
-    assert tuple(width for _, width in header.cells) == (540, 180, 160)
+    assert tuple(width for _, width in header.cells) == (430, 100, 90, 70, 80)
     assert all(tuple(width for _, width in row.cells) == (34, 52, 86, 240) for row in trend_rows)
     journey = Pane(
         "The journey",
