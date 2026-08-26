@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Literal, cast
 
 from coeftable.cards.card import Card
@@ -586,3 +586,17 @@ class Graph:
     def measure(self) -> MeasuredGraph:
         """Return this graph's cached exact slotted layout."""
         return self._layout
+
+    def as_raw_html(self) -> str:
+        """Render this graph as deterministic standalone HTML."""
+        from coeftable.graph.render import render_graph
+
+        return render_graph(self)
+
+    def _repr_html_(self) -> str:
+        """Render this graph for notebook display."""
+        return self.as_raw_html()
+
+    def with_theme(self, theme: Theme) -> Graph:
+        """Return a copy atomically rebound to ``theme``."""
+        return replace(self, theme=theme)

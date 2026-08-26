@@ -24,6 +24,7 @@ from coeftable.graph import (
 )
 from coeftable.graph.state import _CompiledState
 from coeftable.graph.topology import blocker_families, check_acyclic, is_acyclic
+from coeftable.theme import DEFAULT
 
 
 @pytest.mark.parametrize(
@@ -1063,3 +1064,146 @@ def test_graph_state_is_empty_and_byte_deterministic():
         control_dom_ids={},
         rules=(),
     )
+
+
+def _render_fixture(*, theme=None, prefix="render") -> Graph:
+    """Build a compact graph for renderer contract tests."""
+    theme = DEFAULT if theme is None else theme
+    nodes = (
+        ("source", Card("Source")),
+        ("target", Card("Target")),
+    )
+    wires = (
+        Wire("role", "source", "target", label="role", label_role="favorable"),
+        Wire("explicit", "source", "target", label="explicit", label_color="#123456"),
+        Wire("muted", "source", "target", label="muted"),
+    )
+    return Graph(
+        nodes,
+        Slotted((Slot("source", 0, 0), Slot("target", 1, 0))),
+        wires=wires,
+        collapsible=("source",),
+        dom_prefix=prefix,
+        theme=theme,
+    )
+
+
+def test_graph_renderer_is_deterministic_and_places_svg_before_cards():
+    graph = _render_fixture()
+    first = graph.as_raw_html()
+    assert first == graph.as_raw_html() == graph._repr_html_()
+    assert first.index("<svg") < first.index('id="render-card-0"')
+    assert first.count('<g id="render-edge-') == 3
+    assert first.count('id="render-arrow"') == 1
+
+
+def test_graph_renderer_uses_measured_anchor_and_vertical_route_arithmetic():
+    graph = Graph(
+        (("source", Card("Source")), ("target", Card("Target"))),
+        Slotted((Slot("source", 0, 0), Slot("target", 1, 0))),
+        wires=(Wire("wire", "source", "target"),),
+        dom_prefix="route",
+    )
+    layout = dict(graph.measure().boxes)
+    source_left, source_top, _source_width, source_height = layout["source"]
+    target_left, target_top, target_width, _target_height = layout["target"]
+    anchor = graph.nodes[0][1].measure().anchors[1]
+    x0 = source_left + anchor.x
+    y0 = source_top + anchor.y
+    x1 = target_left + target_width / 2
+    my = (source_top + source_height + target_top) / 2
+    expected = f'd="M {x0:g},{y0:g} C {x0:g},{my:g} {x1:g},{my:g} {x1:g},{target_top - 3:g}"'
+    assert expected in graph.as_raw_html()
+
+
+def test_graph_renderer_places_label_at_cubic_three_quarters_and_rethemes_roles():
+    theme = dataclasses.replace(
+        DEFAULT,
+        favorable="#111111",
+        muted="#222222",
+        surface="#333333",
+    )
+    graph = _render_fixture(theme=theme, prefix="labels")
+    output = graph.as_raw_html()
+    assert 'fill="#111111"' in output
+    assert 'fill="#123456"' in output
+    assert 'fill="#222222"' in output
+    source = dict(graph.measure().boxes)["source"]
+    target = dict(graph.measure().boxes)["target"]
+    anchor = graph.nodes[0][1].measure().anchors[1]
+    x0 = source[0] + anchor.x
+    y0 = source[1] + anchor.y
+    x1 = target[0] + target[2] / 2
+    my = (source[1] + source[3] + target[1]) / 2
+    t = 0.75
+    x = (1 - t) ** 3 * x0 + 3 * (1 - t) ** 2 * t * x0
+    x += 3 * (1 - t) * t**2 * x1 + t**3 * x1
+    y = (1 - t) ** 3 * y0 + 3 * (1 - t) ** 2 * t * my
+    y += 3 * (1 - t) * t**2 * my + t**3 * (target[1] - 3) - 10
+    assert f'x="{x:g}" y="{y:g}"' in output
+    rethemed = graph.with_theme(dataclasses.replace(theme, favorable="#444444"))
+    assert 'fill="#444444"' in rethemed.as_raw_html()
+    assert 'fill="#123456"' in rethemed.as_raw_html()
+
+
+def test_graph_renderer_serializes_compiled_rules_and_nub_glyph_swap():
+    graph = _state_diamond(prefix="rules")
+    output = graph.as_raw_html()
+    style = output[output.rindex("<style>") :]
+    for conditions, targets in graph._compiled.rules:
+        prefix = ".rules-canvas" + "".join(f":has({condition})" for condition in conditions)
+        expected = ",".join(f"{prefix} #{target}" for target in targets)
+        assert f"{expected}{{display:none}}" in style
+    assert 'type="checkbox" id="rules-nub-1" style="display:none"' in output
+    assert "#rules-nub-1:checked + label span:first-child{display:none}" in style
+    assert "#rules-nub-1:checked + label span:last-child{display:inline}" in style
+
+
+def test_graph_renderer_mints_disjoint_ids_and_never_emits_semantic_ids():
+    hostile = Graph(
+        (("a hostile", Card("A")), ("b:hostile", Card("B"))),
+        Slotted((Slot("a hostile", 0, 0), Slot("b:hostile", 1, 0))),
+        wires=(Wire('wire "hostile"', "a hostile", "b:hostile"),),
+        collapsible=("a hostile",),
+        dom_prefix="hostile",
+    )
+    one = hostile.as_raw_html()
+    other = _render_fixture(prefix="other").as_raw_html()
+    assert all(value not in one for value in ("a hostile", "b:hostile", 'wire "hostile"'))
+    ids = set(re.findall(r'(?:id|for)="([^"]+)"', one))
+    other_ids = set(re.findall(r'(?:id|for)="([^"]+)"', other))
+    assert ids.isdisjoint(other_ids)
+
+
+def test_graph_renderer_stress_floor_has_cards_without_graph_svg_or_style():
+    graph = Graph(
+        (("first", Card("First")), ("second", Card("Second"))),
+        Slotted((Slot("first", 0, 0), Slot("second", 0, 1))),
+        dom_prefix="floor",
+    )
+    output = graph.as_raw_html()
+    assert "<svg" not in output
+    assert ".floor-canvas:has" not in output
+    assert output.count('id="floor-card-') == 2
+
+
+def test_graph_renderer_threads_keyed_control_dom_id():
+    control = SelectControl("Mode", (("left", "Left"),), selected="left", key="mode")
+    graph = Graph(
+        (("source", Card("Source")), ("controller", Card("Controller", content=(control,)))),
+        Slotted((Slot("source", 0, 0), Slot("controller", 1, 0))),
+        wires=(Wire("wire", "source", "controller"),),
+        rules=(
+            StateRule(
+                (Atom(ControlRef("controller", "mode"), "option_checked", "left"),),
+                hide_cards=("source",),
+            ),
+        ),
+        dom_prefix="controls",
+    )
+    assert '<select id="controls-ctl-1-0" ' in graph.as_raw_html()
+
+
+def test_graph_renderer_source_never_reaches_cached_card_template():
+    source = Path(coeftable.graph.__file__).parent.joinpath("render.py").read_text()
+    assert "_template" not in source
