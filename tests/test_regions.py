@@ -94,12 +94,12 @@ def test_metric_explicit_role_overrides():
         lambda: Metric(3.4, _unchecked("not callable")),
         lambda: Metric(3.4, ci=_unchecked(1), fmt=ct.Number()),
         lambda: Metric(3.4, ct.Number(), ci=(5.7, 1.2)),
-        lambda: Metric(3.4, ct.Number(), ci=(1.2,)),
+        lambda: Metric(3.4, ct.Number(), ci=_unchecked((1.2,))),
         lambda: Metric(3.4, ct.Number(), ci=(1.2, float("inf"))),
         lambda: Metric(3.4, ct.Number(), ref=float("nan")),
         lambda: Metric(3.4, ct.Number(), direction=_unchecked("sideways")),
         lambda: Metric(3.4, ct.Number(), role=_unchecked("loud")),
-        lambda: Metric(1.0, ct.Number(), ci=_unchecked("ab")),
+        lambda: Metric(3.4, ct.Number(), ci=(1.2, 5.7), ci_fmt=_unchecked("nope")),
     ],
     ids=[
         "nan-value",
@@ -112,7 +112,7 @@ def test_metric_explicit_role_overrides():
         "nan-ref",
         "bad-direction",
         "bad-role",
-        "str-ci",
+        "bad-ci-fmt",
     ],
 )
 def test_metric_validation(build):
@@ -139,7 +139,7 @@ def test_diagnostics_formats_numbers_and_passes_strings():
         lambda: Diagnostics("d", [("k", float("nan"))]),
         lambda: Diagnostics("d", _unchecked([(1, "v")])),
         lambda: Diagnostics("d", _unchecked([1])),
-        lambda: Diagnostics("d", _unchecked(["kv"])),
+        lambda: Diagnostics("d", _unchecked([("k", "v", "extra")])),
     ],
     ids=[
         "empty-label",
@@ -149,7 +149,7 @@ def test_diagnostics_formats_numbers_and_passes_strings():
         "nan-value",
         "nonstr-key",
         "malformed-item",
-        "str-item",
+        "triple-item",
     ],
 )
 def test_diagnostics_validation(build):
@@ -187,12 +187,35 @@ def test_events_rules_derive_from_positioned_events_only():
         lambda: Events([Event("", "#111111")]),
         lambda: Events([Event("x", "#111111", dash=_unchecked("wavy"))]),
         lambda: Events([Event("x", "#111111", at=float("nan"))]),
-        lambda: Events(_unchecked("xy")),
+        lambda: Events(_unchecked(["not-an-event"])),
+        lambda: Events([Event("x", "#111")], captions=_unchecked("yes")),
     ],
-    ids=["no-events", "malformed-events", "empty-label", "bad-dash", "nan-at", "str-events"],
+    ids=[
+        "no-events",
+        "malformed-events",
+        "empty-label",
+        "bad-dash",
+        "nan-at",
+        "nonevent-item",
+        "bad-captions",
+    ],
 )
 def test_events_validation(build):
     with pytest.raises(SpecError):
+        build()
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda: Metric(1.0, ct.Number(), ci=_unchecked("ab")),
+        lambda: Diagnostics("d", _unchecked(["kv"])),
+        lambda: Events(_unchecked("xy")),
+    ],
+    ids=["str-ci", "str-item", "str-events"],
+)
+def test_str_container_guard_names_the_string(build):
+    with pytest.raises(SpecError, match="not a string"):
         build()
 
 

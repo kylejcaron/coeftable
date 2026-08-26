@@ -101,7 +101,7 @@ class Metric(Region):
 
     value: float
     fmt: Format
-    ci: Sequence[float] | None = None
+    ci: tuple[float, float] | None = None
     ci_fmt: Format | None = None
     ref: float | None = None
     direction: Direction = "higher_is_better"
