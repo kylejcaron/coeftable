@@ -301,16 +301,19 @@ def test_trend_without_ribbon_emits_no_ribbon_polygon_and_is_neutral():
 
 def test_trend_ribbon_role_reads_last_fully_present_index():
     y = (0.3, 0.8, 1.1, None)
+    lower = (LO[0], LO[1], LO[2], -0.5)
+    upper = (HI[0], HI[1], HI[2], 0.5)
     (spark, _) = Trend(
         x=X,
         y=y,
-        lower=LO,
-        upper=HI,
+        lower=lower,
+        upper=upper,
         x_domain=(0.0, 3.0),
         domain=(-0.5, 2.5),
         ref=0.0,
     ).resolve(**RESOLVE_KW)
     assert DEFAULT.favorable in spark.svg
+    assert DEFAULT.inconclusive not in spark.svg
 
 
 def test_trend_spine_alignment_endpoint_on_and_off():
@@ -340,11 +343,12 @@ def test_trend_axis_fmt_is_independent_of_endpoint_fmt():
         lower=LO,
         upper=HI,
         fmt=ct.Percent(signed=True),
-        axis_fmt=ct.Number(),
+        axis_fmt=ct.Currency(),
         **TREND_KW,
     ).resolve(**RESOLVE_KW)
     assert "%" in spark.svg
-    assert "%" not in axis.svg
+    assert "$" in axis.svg
+    assert "$" not in spark.svg
 
 
 def test_trend_temporal_axis_defaults_to_dateaxis_and_taller_root():
@@ -582,6 +586,7 @@ def test_interval_role_and_axis_toggle():
         dict(estimate=1.0, lower=0.5, upper=float("nan"), domain=(0, 3)),
         dict(estimate=1.0, lower=0.5, upper=2.0, domain=(0, 3), ref=float("nan")),
         dict(estimate=1.0, lower=0.5, upper=2.0, domain=(0, 3), margin=-1),
+        dict(estimate=1.0, lower=0.5, upper=2.0, domain=(0, 3), margin=1, inset=3),
         dict(estimate=1.0, lower=0.5, upper=2.0, domain=(0, 3), fmt=_unchecked("fmt")),
         dict(estimate=1.0, lower=0.5, upper=2.0, domain=(0, 3), direction=_unchecked("sideways")),
         dict(estimate=1.0, lower=0.5, upper=2.0, domain=(0, 3), role=_unchecked("loud")),
@@ -599,6 +604,7 @@ def test_interval_role_and_axis_toggle():
         "nan-upper",
         "nan-ref",
         "negative-margin",
+        "margin-not-greater-than-inset",
         "fmt-not-callable",
         "bad-direction",
         "bad-role",

@@ -522,6 +522,11 @@ class Interval(Region):
         _require_positive_int(self.axis_height, name="Interval.axis_height")
         _require_positive_int(self.inset, name="Interval.inset")
         _require_nonnegative_int(self.margin, name="Interval.margin")
+        if self.margin != 0 and self.margin <= self.inset:
+            raise SpecError(
+                f"Interval.margin ({self.margin}) must be 0 or strictly greater than "
+                f"Interval.inset ({self.inset})"
+            )
 
     def resolve(self, *, width: int, theme: Theme, chrome: CardChrome) -> tuple[InlineSvg, ...]:
         """Render the forest bar and, when requested, its shared x-axis."""
