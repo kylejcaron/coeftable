@@ -16,6 +16,7 @@ from coeftable.cards.adornments import (
     SelectControl,
     TextBlock,
 )
+from coeftable.cards.card import Card, CardGrid
 from coeftable.cards.chrome import DEFAULT_CHROME, CardChrome
 from coeftable.cards.fragments import render_adornment
 from coeftable.cards.measure import Anchor, MeasuredCard
@@ -37,7 +38,9 @@ __all__ = [
     "Anchor",
     "Badge",
     "CaptionRow",
+    "Card",
     "CardChrome",
+    "CardGrid",
     "CardTemplate",
     "Diagnostics",
     "Event",

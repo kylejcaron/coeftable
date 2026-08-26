@@ -579,6 +579,8 @@ EXPECTED_CARD_EXPORTS = {
     "TextBlock",
     "render_adornment",
     "Anchor",
+    "Card",
+    "CardGrid",
     "CardChrome",
     "CardTemplate",
     "DEFAULT_CHROME",
@@ -604,7 +606,7 @@ ALLOWED_CARDS_IMPORT_ROOTS = {
 
 
 def test_cards_export_surface_is_exactly_the_promised_set():
-    assert len(coeftable.cards.__all__) == 24
+    assert len(coeftable.cards.__all__) == 26
 
     assert set(coeftable.cards.__all__) == EXPECTED_CARD_EXPORTS
     for name in EXPECTED_CARD_EXPORTS:
