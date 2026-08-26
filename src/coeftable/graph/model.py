@@ -549,6 +549,8 @@ def _graph_measure(
     for wire_index, wire in enumerate(wires):
         src_left, src_top, _src_width, src_height = boxes_by_id[wire.src]
         dst_left, dst_top, _dst_width, _dst_height = boxes_by_id[wire.dst]
+        src_slot = slot_by_id[wire.src]
+        dst_slot = slot_by_id[wire.dst]
         _, (out_x, out_y) = anchors_by_id[wire.src]
         in_x, in_y = anchors_by_id[wire.dst][0]
         x0 = src_left + out_x
@@ -557,7 +559,19 @@ def _graph_measure(
         y1 = dst_top + in_y
         my1 = src_top + src_height + layer_gap / 2
         my2 = dst_top - layer_gap / 2
-        path = (x0, y0, x0, my1, x1, my2, x1, y1 - 3)
+        if dst_slot.layer - src_slot.layer > 1:
+            if src_slot.slot < len(column_widths) - 1:
+                xg = (
+                    padding
+                    + column_offsets[src_slot.slot]
+                    + column_widths[src_slot.slot]
+                    + gap / 2
+                )
+            else:
+                xg = padding + column_offsets[src_slot.slot] - gap / 2
+            path = (x0, y0, xg, my1, xg, my2, x1, y1 - 3)
+        else:
+            path = (x0, y0, x0, my1, x1, my2, x1, y1 - 3)
         if wire.label is None:
             spread = 0
         else:

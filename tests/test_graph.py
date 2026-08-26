@@ -10,7 +10,7 @@ import pytest
 
 import coeftable
 import coeftable.graph
-from coeftable.cards import Card, CardChrome, SelectControl, TextBlock
+from coeftable.cards import Anchor, Card, CardChrome, SelectControl, TextBlock
 from coeftable.cards.regions import Metric
 from coeftable.errors import SpecError
 from coeftable.format import Format, Number
@@ -1347,6 +1347,74 @@ def test_graph_renderer_uses_cached_anchor_and_vertical_route_geometry():
     assert expected in output
     assert graph.as_raw_html() == output
     assert graph._layout == layout
+
+
+def test_graph_measure_swings_skip_layer_wire_through_column_corridor():
+    graph = Graph(
+        nodes=(
+            ("r", Card("Root")),
+            ("a", Card("A", width=300)),
+            ("b", Card("B")),
+            ("c", Card("C")),
+        ),
+        layout=Slotted(
+            (
+                Slot("r", 0, 0),
+                Slot("a", 1, 0),
+                Slot("b", 1, 1),
+                Slot("c", 2, 0),
+            )
+        ),
+        wires=(
+            Wire("r-a", "r", "a"),
+            Wire("a-c", "a", "c"),
+            Wire("r-c", "r", "c"),
+            Wire("r-b", "r", "b"),
+        ),
+        gap=20,
+        layer_gap=40,
+    )
+    boxes = dict(graph.measure().boxes)
+    anchors = dict(graph._layout.anchors)
+    source_left, source_top, _source_width, source_height = boxes["r"]
+    target_left, target_top, _target_width, _target_height = boxes["c"]
+    source_out = anchors["r"][1]
+    target_in = anchors["c"][0]
+    x0, y0 = source_left + source_out[0], source_top + source_out[1]
+    x1, y1 = target_left + target_in[0], target_top + target_in[1]
+    my1 = source_top + source_height + graph.layer_gap / 2
+    my2 = target_top - graph.layer_gap / 2
+    source_column_right = max(boxes[card_id][0] + boxes[card_id][2] for card_id in ("r", "a", "c"))
+    xg = source_column_right + graph.gap / 2
+
+    path, _label_anchor = dict(graph._layout.wire_geometry)["r-c"]
+    assert path == (x0, y0, xg, my1, xg, my2, x1, y1 - 3)
+    assert xg != x0
+    assert xg != x1
+
+
+def test_graph_measure_routes_to_synthetic_in_anchor(monkeypatch):
+    original_measure = Card.measure
+
+    def synthetic_measure(card):
+        measured = original_measure(card)
+        out_anchor = next(anchor for anchor in measured.anchors if anchor.name == "out")
+        return dataclasses.replace(
+            measured,
+            anchors=(Anchor("in", 10, 5), out_anchor),
+        )
+
+    monkeypatch.setattr(Card, "measure", synthetic_measure)
+    graph = Graph(
+        (("source", Card("Source")), ("target", Card("Target"))),
+        Slotted((Slot("source", 0, 0), Slot("target", 1, 0))),
+        wires=(Wire("wire", "source", "target", label="edge"),),
+    )
+    target_left, target_top, _target_width, _target_height = dict(graph.measure().boxes)["target"]
+    x1, y1 = target_left + 10, target_top + 5
+    path, label_anchor = dict(graph._layout.wire_geometry)["wire"]
+    assert path[-2:] == (x1, y1 - 3)
+    assert label_anchor == (x1, y1 - 13)
 
 
 def test_graph_renderer_does_not_remeasure_cards(monkeypatch):

@@ -579,8 +579,9 @@ Use a distinct `dom_prefix` for each tree when rendering multiple graphs in one
 document, so their generated control, card, and wire ids remain disjoint.
 
 Each card retains its native `<details>` fold control. The nub under a parent
-hides everything downstream with pure CSS, so neither interaction needs
-JavaScript.
+hides a node only when every root path to it is blocked: collapsing one parent
+of a shared child leaves that child visible via the other path, all with pure
+CSS and no JavaScript.
 
 A `MetricTree` left as the last notebook expression renders itself via
 `_repr_html_`; `with_theme()` follows the same conventions as cards.
