@@ -13,7 +13,7 @@ import coeftable.graph
 from coeftable.cards import Card, CardChrome, SelectControl
 from coeftable.errors import SpecError
 from coeftable.graph import Atom, ControlRef, Graph, Slot, Slotted, StateRule, Wire
-from coeftable.graph.topology import blocker_families, is_acyclic
+from coeftable.graph.topology import blocker_families, check_acyclic, is_acyclic
 
 
 @pytest.mark.parametrize(
@@ -367,6 +367,106 @@ def test_blocker_families_cover_diamonds_depth_and_uncuttable_paths():
             },
             "Graph.rules checked controls must be collapsible cards",
         ),
+        (
+            {"nodes": cast(tuple[tuple[str, Card], ...], "nodes")},
+            "Graph.nodes must be a sequence of entries, not a string",
+        ),
+        ({"nodes": (7,)}, "Graph.nodes[0] must be an (id, Card) pair"),
+        (
+            {"wires": cast(tuple[Wire, ...], "wires")},
+            "Graph.wires must be a sequence of entries, not a string",
+        ),
+        ({"wires": (7,)}, "Graph.wires[0] must be a Wire"),
+        (
+            {"visibility": cast(tuple[str, ...], "visibility")},
+            "Graph.visibility must be a sequence of entries, not a string",
+        ),
+        ({"visibility": (7,)}, "Graph.visibility[0] must be a non-empty str"),
+        ({"visibility": (7, 8)}, "Graph.visibility[0] must be a non-empty str"),
+        (
+            {"rules": cast(tuple[StateRule, ...], "rules")},
+            "Graph.rules must be a sequence of entries, not a string",
+        ),
+        ({"rules": (7,)}, "Graph.rules[0] must be a StateRule"),
+        (
+            {
+                "nodes": (("root", Card("root")), ("child", Card("child"))),
+                "slots": (Slot("root", 0, 0), Slot("child", 1, 0)),
+                "wires": (Wire("w", "root", "child"),),
+                "visibility": ("w", "w"),
+            },
+            "Graph.visibility entries must be unique",
+        ),
+        (
+            {
+                "rules": (
+                    StateRule(
+                        (Atom(ControlRef("root"), "checked"),),
+                        hide_cards=("unknown",),
+                    ),
+                )
+            },
+            "Graph.rules hide_cards must reference known cards",
+        ),
+        (
+            {
+                "nodes": (("root", Card("root")), ("child", Card("child"))),
+                "slots": (Slot("root", 0, 0), Slot("child", 1, 0)),
+                "wires": (Wire("w", "root", "child"),),
+                "rules": (
+                    StateRule(
+                        (Atom(ControlRef("root"), "checked"),),
+                        hide_wires=("unknown",),
+                    ),
+                ),
+                "collapsible": ("root",),
+            },
+            "Graph.rules hide_wires must reference known wires",
+        ),
+        (
+            {
+                "nodes": (
+                    (
+                        "root",
+                        Card(
+                            "root",
+                            content=[
+                                SelectControl("Mode", (("a", "A"),), selected="a", key="mode")
+                            ],
+                        ),
+                    ),
+                ),
+                "rules": (
+                    StateRule(
+                        (Atom(ControlRef("root", "other"), "option_checked", "a"),),
+                        hide_cards=("root",),
+                    ),
+                ),
+            },
+            "Graph.rules option controls must reference known selects",
+        ),
+        (
+            {
+                "nodes": (
+                    (
+                        "root",
+                        Card(
+                            "root",
+                            content=[
+                                SelectControl("Mode", (("a", "A"),), selected="a", key="mode")
+                            ],
+                        ),
+                    ),
+                ),
+                "rules": (
+                    StateRule(
+                        (Atom(ControlRef("root", "mode"), "option_checked", "other"),),
+                        hide_cards=("root",),
+                    ),
+                ),
+            },
+            "Graph.rules option must reference a known select option",
+        ),
     ],
 )
 def test_graph_validation_matrix(kwargs, message):
@@ -374,16 +474,90 @@ def test_graph_validation_matrix(kwargs, message):
         _plain_graph(**kwargs)
 
 
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"layout": cast(Slotted, 7)}, "Graph.layout must be a Slotted"),
+        ({"theme": cast(object, 7)}, "Graph.theme must be a Theme"),
+        ({"chrome": cast(object, 7)}, "Graph.chrome must be a CardChrome"),
+    ],
+)
+def test_graph_rejects_invalid_object_types(kwargs, message):
+    if "layout" in kwargs:
+        with pytest.raises(SpecError, match=f"^{re.escape(message)}$"):
+            Graph(
+                nodes=(("root", Card("root")),),
+                layout=kwargs["layout"],  # ty: ignore[arg-type]
+            )
+    else:
+        with pytest.raises(SpecError, match=f"^{re.escape(message)}$"):
+            _plain_graph(**kwargs)
+
+
+def test_visibility_topology_rejects_cycles():
+    with pytest.raises(SpecError, match=r"^visibility topology must be acyclic$"):
+        check_acyclic(("root", "child"), (("root", "child"), ("child", "root")))
+
+
 def test_graph_rethemes_cards_atomically_and_rejects_chrome_mismatch():
     theme = dataclasses.replace(Card("x").theme, text="#123456")
     card = Card("root")
-    graph = _plain_graph(theme=theme)
+    graph = _plain_graph(nodes=(("root", card),), theme=theme)
     assert graph.nodes[0][1] is not card
     assert graph.nodes[0][1].theme == theme
     assert theme.text in graph.nodes[0][1].as_raw_html()
     chrome = dataclasses.replace(CardChrome(), padding=20)
     with pytest.raises(SpecError, match=re.escape("Graph.chrome must match every Card.chrome")):
-        _plain_graph(chrome=chrome)
+        _plain_graph(nodes=(("root", card),), chrome=chrome)
+
+
+def _shared_slot_controller() -> Card:
+    return Card(
+        "controller",
+        content=[
+            SelectControl(
+                "Mode",
+                (("left", "Left"), ("right", "Right")),
+                selected="left",
+                key="mode",
+            )
+        ],
+    )
+
+
+def _shared_slot_partition_rules() -> tuple[StateRule, ...]:
+    return (
+        StateRule(
+            (Atom(ControlRef("controller", "mode"), "option_checked", "left"),),
+            hide_cards=("right",),
+        ),
+        StateRule(
+            (Atom(ControlRef("controller", "mode"), "option_checked", "right"),),
+            hide_cards=("left",),
+        ),
+    )
+
+
+def _shared_slot_graph(
+    rules: tuple[StateRule, ...],
+    *,
+    nodes: tuple[tuple[str, Card], ...] | None = None,
+    slots: tuple[Slot, ...] | None = None,
+    wires: tuple[Wire, ...] = (),
+    collapsible: tuple[str, ...] = (),
+) -> Graph:
+    return Graph(
+        nodes
+        or (
+            ("controller", _shared_slot_controller()),
+            ("left", Card("left")),
+            ("right", Card("right")),
+        ),
+        Slotted(slots or (Slot("controller", 0, 0), Slot("left", 1, 0), Slot("right", 1, 0))),
+        wires=wires,
+        collapsible=collapsible,
+        rules=rules,
+    )
 
 
 def test_graph_accepts_proven_shared_slot_alternatives():
@@ -448,4 +622,115 @@ def test_graph_rejects_unproven_shared_slot(rules):
             (("controller", controller), ("left", Card("left")), ("right", Card("right"))),
             Slotted((Slot("controller", 0, 0), Slot("left", 1, 0), Slot("right", 1, 0))),
             rules=rules,
+        )
+
+
+def test_shared_slot_controller_cannot_be_inside_the_group():
+    with pytest.raises(SpecError, match="shared slots require one governing external"):
+        _shared_slot_graph(
+            _shared_slot_partition_rules(),
+            nodes=(
+                ("controller", _shared_slot_controller()),
+                ("left", Card("left")),
+                ("right", Card("right")),
+            ),
+            slots=(Slot("controller", 0, 0), Slot("left", 0, 0), Slot("right", 1, 0)),
+        )
+
+
+def test_shared_slot_controller_cannot_be_hidden_by_a_derived_blocker():
+    with pytest.raises(SpecError, match="shared-slot controller must never be hidden"):
+        _shared_slot_graph(
+            _shared_slot_partition_rules(),
+            nodes=(
+                ("root", Card("root")),
+                ("controller", _shared_slot_controller()),
+                ("left", Card("left")),
+                ("right", Card("right")),
+            ),
+            slots=(
+                Slot("root", 0, 0),
+                Slot("controller", 1, 0),
+                Slot("left", 2, 0),
+                Slot("right", 2, 0),
+            ),
+            wires=(Wire("block", "root", "controller"),),
+            collapsible=("root",),
+        )
+
+
+def test_shared_slot_controller_cannot_be_hidden_by_a_rule():
+    with pytest.raises(SpecError, match="shared-slot controller must never be hidden"):
+        _shared_slot_graph(
+            (
+                *_shared_slot_partition_rules(),
+                StateRule(
+                    (Atom(ControlRef("controller"), "checked"),),
+                    hide_cards=("controller",),
+                ),
+            ),
+            collapsible=("controller",),
+        )
+
+
+@pytest.mark.parametrize(
+    "rules",
+    [
+        (
+            StateRule(
+                (Atom(ControlRef("controller", "mode"), "option_checked", "left"),),
+                hide_cards=("right",),
+            ),
+        ),
+        (
+            StateRule(
+                (
+                    Atom(ControlRef("controller", "mode"), "option_checked", "left"),
+                    Atom(ControlRef("controller", "mode"), "option_checked", "right"),
+                ),
+                hide_cards=("right",),
+            ),
+            StateRule(
+                (Atom(ControlRef("controller", "mode"), "option_checked", "right"),),
+                hide_cards=("left",),
+            ),
+        ),
+        (
+            StateRule(
+                (Atom(ControlRef("controller", "mode"), "option_checked", "left"),),
+                hide_cards=("left", "right"),
+            ),
+            StateRule(
+                (Atom(ControlRef("controller", "mode"), "option_checked", "right"),),
+                hide_cards=("left",),
+            ),
+        ),
+    ],
+)
+def test_shared_slot_partition_rules_must_be_exhaustive_and_exact(rules):
+    with pytest.raises(SpecError, match="shared slots require one governing external"):
+        _shared_slot_graph(rules)
+
+
+def test_shared_slot_rejects_stray_rule_intersecting_group():
+    rules = (
+        *_shared_slot_partition_rules(),
+        StateRule((Atom(ControlRef("other"), "checked"),), hide_cards=("left",)),
+    )
+    with pytest.raises(SpecError, match="shared-slot rules must be exact governing"):
+        _shared_slot_graph(
+            rules,
+            nodes=(
+                ("controller", _shared_slot_controller()),
+                ("left", Card("left")),
+                ("right", Card("right")),
+                ("other", Card("other")),
+            ),
+            slots=(
+                Slot("controller", 0, 0),
+                Slot("other", 0, 1),
+                Slot("left", 1, 0),
+                Slot("right", 1, 0),
+            ),
+            collapsible=("other",),
         )

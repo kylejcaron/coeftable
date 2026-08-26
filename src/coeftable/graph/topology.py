@@ -142,6 +142,8 @@ def blocker_families(
     ``B(v)`` is the empty family for roots and for any node with an uncuttable
     root-to-node path.  Otherwise it contains the inclusion-minimal hitting sets
     over the collapsible strict-ancestor interiors of every root-to-node path.
+    The path and subset enumeration is worst-case exponential; this helper is
+    intended for report-scale graphs.
     """
     node_ids = _canonical_ids(nodes)
     topology = _normalise_edges(node_ids, edges)
@@ -169,7 +171,12 @@ def blocker_families(
         if any(not interior for interior in interiors):
             families[node_id] = frozenset()
         else:
-            families[node_id] = _minimal_hitting_sets(interiors, candidates)
+            candidate_domain = tuple(
+                candidate
+                for candidate in candidates
+                if any(candidate in interior for interior in interiors)
+            )
+            families[node_id] = _minimal_hitting_sets(interiors, candidate_domain)
     return MappingProxyType(families)
 
 

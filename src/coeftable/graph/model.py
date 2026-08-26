@@ -204,6 +204,90 @@ def _graph_nodes(value: object) -> tuple[tuple[str, Card], ...]:
     return tuple(nodes)
 
 
+def _graph_shared_slot_groups(slots: tuple[Slot, ...]) -> tuple[frozenset[str], ...]:
+    """Collect card ids that occupy each shared layer/slot position."""
+    positions: dict[tuple[int, int], list[str]] = {}
+    for slot in slots:
+        positions.setdefault((slot.layer, slot.slot), []).append(slot.card_id)
+    return tuple(frozenset(group) for group in positions.values() if len(group) > 1)
+
+
+def _graph_partition_rules(
+    group: frozenset[str],
+    *,
+    card_id: str,
+    key: str,
+    options: tuple[str, ...],
+    rules: tuple[StateRule, ...],
+) -> tuple[StateRule, ...] | None:
+    """Return exact one-rule-per-option partition rules, if present."""
+    governing: list[StateRule] = []
+    selected: set[str] = set()
+    for option in options:
+        matches = [
+            rule
+            for rule in rules
+            if len(rule.when_all) == 1
+            and rule.when_all[0] == Atom(ControlRef(card_id, key), "option_checked", option)
+        ]
+        if len(matches) != 1:
+            return None
+        rule = matches[0]
+        hidden = set(rule.hide_cards)
+        if not hidden <= group or len(group - hidden) != 1:
+            return None
+        governing.append(rule)
+        selected.update(group - hidden)
+    if selected != group:
+        return None
+    return tuple(governing)
+
+
+def _graph_resolve_shared_slot_controller(
+    group: frozenset[str],
+    *,
+    cards: Mapping[str, Card],
+    rules: tuple[StateRule, ...],
+    blockers: Mapping[str, frozenset[frozenset[str]]],
+) -> tuple[str, tuple[StateRule, ...]]:
+    """Resolve the sole external controller and enforce its visibility."""
+    candidates: list[tuple[str, tuple[StateRule, ...]]] = []
+    for card_id, card in cards.items():
+        if card_id in group:
+            continue
+        for key, options in card.control_options().items():
+            if len(options) != len(group):
+                continue
+            governing = _graph_partition_rules(
+                group,
+                card_id=card_id,
+                key=key,
+                options=options,
+                rules=rules,
+            )
+            if governing is not None:
+                candidates.append((card_id, governing))
+
+    if len(candidates) != 1:
+        raise SpecError("shared slots require one governing external SelectControl")
+    controller, governing = candidates[0]
+    if blockers[controller] or any(controller in rule.hide_cards for rule in rules):
+        raise SpecError("shared-slot controller must never be hidden")
+    return controller, governing
+
+
+def _graph_reject_stray_shared_slot_rules(
+    group: frozenset[str],
+    *,
+    rules: tuple[StateRule, ...],
+    governing: tuple[StateRule, ...],
+) -> None:
+    """Reject card-hiding rules that are not exact partition rules."""
+    governing_set = set(governing)
+    if any(set(rule.hide_cards) & group and rule not in governing_set for rule in rules):
+        raise SpecError("shared-slot rules must be exact governing partition rules")
+
+
 def _graph_shared_slot_proof(
     group: frozenset[str],
     *,
@@ -212,51 +296,142 @@ def _graph_shared_slot_proof(
     blockers: Mapping[str, frozenset[frozenset[str]]],
 ) -> None:
     """Require one external select to prove exclusivity for a shared slot."""
-    candidates: list[tuple[str, str]] = []
-    for card_id, card in cards.items():
-        if card_id in group:
-            continue
-        for key, options in card.control_options().items():
-            if len(options) != len(group):
-                continue
-            if len(
-                {
-                    rule.when_all[0].option
-                    for rule in rules
-                    if len(rule.when_all) == 1
-                    and rule.when_all[0].predicate == "option_checked"
-                    and rule.when_all[0].control == ControlRef(card_id, key)
-                }
-            ) != len(options):
-                continue
-            selected: set[str] = set()
-            valid = True
-            for option in options:
-                matches = [
-                    rule
-                    for rule in rules
-                    if len(rule.when_all) == 1
-                    and rule.when_all[0]
-                    == Atom(ControlRef(card_id, key), "option_checked", option)
-                ]
-                if len(matches) != 1:
-                    valid = False
-                    break
-                hidden = set(matches[0].hide_cards)
-                if not hidden <= group or len(group - hidden) != 1:
-                    valid = False
-                    break
-                selected.update(group - hidden)
-            if valid and selected == group:
-                candidates.append((card_id, key))
+    _, governing = _graph_resolve_shared_slot_controller(
+        group, cards=cards, rules=rules, blockers=blockers
+    )
+    _graph_reject_stray_shared_slot_rules(group, rules=rules, governing=governing)
 
-    if len(candidates) != 1:
-        raise SpecError("shared slots require one governing external SelectControl")
-    controller, _ = candidates[0]
-    if blockers[controller]:
-        raise SpecError("shared-slot controller must never be hidden")
-    if any(controller in rule.hide_cards for rule in rules):
-        raise SpecError("shared-slot controller must never be hidden")
+
+def _graph_validate_settings(graph: Graph) -> None:
+    """Validate graph-wide scalar settings and object types."""
+    if not isinstance(graph.layout, Slotted):
+        raise SpecError("Graph.layout must be a Slotted")
+    if not isinstance(graph.theme, Theme):
+        raise SpecError("Graph.theme must be a Theme")
+    if not isinstance(graph.chrome, CardChrome):
+        raise SpecError("Graph.chrome must be a CardChrome")
+    _graph_positive_int(graph.gap, name="Graph.gap")
+    _graph_positive_int(graph.layer_gap, name="Graph.layer_gap")
+    if (
+        not isinstance(graph.dom_prefix, str)
+        or re.fullmatch(r"[a-z][a-z0-9-]*", graph.dom_prefix) is None
+    ):
+        raise SpecError("Graph.dom_prefix must match [a-z][a-z0-9-]*")
+
+
+def _graph_validate_layout(slots: tuple[Slot, ...], known_cards: set[str]) -> None:
+    """Validate that layout slots cover nodes with dense coordinates."""
+    slot_ids = tuple(slot.card_id for slot in slots)
+    if len(set(slot_ids)) != len(slot_ids) or set(slot_ids) != known_cards:
+        raise SpecError("Graph.layout.slots must cover graph node ids exactly once")
+    layers = {slot.layer for slot in slots}
+    slot_domain = {slot.slot for slot in slots}
+    if layers != set(range(max(layers) + 1)) or slot_domain != set(range(max(slot_domain) + 1)):
+        raise SpecError("Graph.layout layer and slot indices must be dense from zero")
+
+
+def _graph_wires(
+    value: object,
+    *,
+    known_cards: set[str],
+    layers_by_id: Mapping[str, int],
+) -> tuple[Wire, ...]:
+    """Canonicalize and validate graph wires."""
+    wires = _canonical(value, name="Graph.wires")
+    for index, wire in enumerate(wires):
+        if not isinstance(wire, Wire):
+            raise SpecError(f"Graph.wires[{index}] must be a Wire")
+    result = cast(tuple[Wire, ...], wires)
+    wire_ids = tuple(wire.id for wire in result)
+    if len(set(wire_ids)) != len(wire_ids):
+        raise SpecError("Graph.wires ids must be unique")
+    if any(wire.src not in known_cards or wire.dst not in known_cards for wire in result):
+        raise SpecError("Graph.wires endpoints must reference known cards")
+    if any(layers_by_id[wire.src] >= layers_by_id[wire.dst] for wire in result):
+        raise SpecError("Graph.wires must route strictly downward")
+    return result
+
+
+def _graph_collapsible(value: object, known_cards: set[str]) -> tuple[str, ...]:
+    """Canonicalize and validate collapsible card ids."""
+    collapsible = _canonical(value, name="Graph.collapsible")
+    for index, card_id in enumerate(collapsible):
+        _non_empty_str(card_id, name=f"Graph.collapsible[{index}]")
+    if len(set(collapsible)) != len(collapsible):
+        raise SpecError("Graph.collapsible entries must be unique")
+    if any(card_id not in known_cards for card_id in collapsible):
+        raise SpecError("Graph.collapsible references an unknown card")
+    return cast(tuple[str, ...], collapsible)
+
+
+def _graph_rebound_nodes(
+    nodes: tuple[tuple[str, Card], ...],
+    *,
+    theme: Theme,
+    chrome: CardChrome,
+) -> tuple[dict[str, Card], list[tuple[str, Card]]]:
+    """Validate chrome and rebind cards to the graph theme."""
+    cards: dict[str, Card] = {}
+    rebound_nodes: list[tuple[str, Card]] = []
+    for card_id, card in nodes:
+        if card.chrome != chrome:
+            raise SpecError("Graph.chrome must match every Card.chrome")
+        rebound = card.with_theme(theme) if card.theme != theme else card
+        cards[card_id] = rebound
+        rebound_nodes.append((card_id, rebound))
+    return cards, rebound_nodes
+
+
+def _graph_visibility(
+    value: object,
+    *,
+    wires: tuple[Wire, ...],
+    wire_ids: tuple[str, ...],
+) -> tuple[tuple[str, ...] | None, tuple[Wire, ...]]:
+    """Canonicalize the selected visibility wires."""
+    if value is None:
+        return None, wires
+    visibility_value = _canonical(value, name="Graph.visibility")
+    for index, wire_id in enumerate(visibility_value):
+        _non_empty_str(wire_id, name=f"Graph.visibility[{index}]")
+    if len(set(visibility_value)) != len(visibility_value):
+        raise SpecError("Graph.visibility entries must be unique")
+    if any(wire_id not in wire_ids for wire_id in visibility_value):
+        raise SpecError("Graph.visibility references an unknown wire")
+    visibility = cast(tuple[str, ...], visibility_value)
+    selected = set(visibility)
+    return visibility, tuple(wire for wire in wires if wire.id in selected)
+
+
+def _graph_rules(
+    value: object,
+    *,
+    known_cards: set[str],
+    wire_ids: tuple[str, ...],
+    collapsible: tuple[str, ...],
+    card_options: Mapping[str, Mapping[str, tuple[str, ...]]],
+) -> tuple[StateRule, ...]:
+    """Canonicalize and validate graph state rules."""
+    rules = _canonical(value, name="Graph.rules")
+    for index, rule in enumerate(rules):
+        if not isinstance(rule, StateRule):
+            raise SpecError(f"Graph.rules[{index}] must be a StateRule")
+        if any(card_id not in known_cards for card_id in rule.hide_cards):
+            raise SpecError("Graph.rules hide_cards must reference known cards")
+        if any(wire_id not in wire_ids for wire_id in rule.hide_wires):
+            raise SpecError("Graph.rules hide_wires must reference known wires")
+        for atom in rule.when_all:
+            if atom.control.card_id not in known_cards:
+                raise SpecError("Graph.rules controls must reference known cards")
+            options = card_options[atom.control.card_id]
+            if atom.predicate == "checked":
+                if atom.control.card_id not in collapsible:
+                    raise SpecError("Graph.rules checked controls must be collapsible cards")
+            elif atom.control.key not in options:
+                raise SpecError("Graph.rules option controls must reference known selects")
+            elif atom.option not in options[atom.control.key]:
+                raise SpecError("Graph.rules option must reference a known select option")
+    return cast(tuple[StateRule, ...], rules)
 
 
 @dataclass(frozen=True, slots=True)
@@ -281,115 +456,33 @@ class Graph:
 
     def __post_init__(self) -> None:
         """Canonicalize, validate, and cache graph topology."""
-        if not isinstance(self.layout, Slotted):
-            raise SpecError("Graph.layout must be a Slotted")
-        if not isinstance(self.theme, Theme):
-            raise SpecError("Graph.theme must be a Theme")
-        if not isinstance(self.chrome, CardChrome):
-            raise SpecError("Graph.chrome must be a CardChrome")
-        _graph_positive_int(self.gap, name="Graph.gap")
-        _graph_positive_int(self.layer_gap, name="Graph.layer_gap")
-        if (
-            not isinstance(self.dom_prefix, str)
-            or re.fullmatch(r"[a-z][a-z0-9-]*", self.dom_prefix) is None
-        ):
-            raise SpecError("Graph.dom_prefix must match [a-z][a-z0-9-]*")
-
+        _graph_validate_settings(self)
         nodes = _graph_nodes(self.nodes)
         node_ids = tuple(node_id for node_id, _ in nodes)
         known_cards = set(node_ids)
         slots = self.layout.slots
-        slot_ids = tuple(slot.card_id for slot in slots)
-        if len(set(slot_ids)) != len(slot_ids) or set(slot_ids) != known_cards:
-            raise SpecError("Graph.layout.slots must cover graph node ids exactly once")
-        layers = {slot.layer for slot in slots}
-        slot_domain = {slot.slot for slot in slots}
-        if layers != set(range(max(layers) + 1)) or slot_domain != set(
-            range(max(slot_domain) + 1)
-        ):
-            raise SpecError("Graph.layout layer and slot indices must be dense from zero")
-
-        wires = _canonical(self.wires, name="Graph.wires")
-        for index, wire in enumerate(wires):
-            if not isinstance(wire, Wire):
-                raise SpecError(f"Graph.wires[{index}] must be a Wire")
-        wires = cast(tuple[Wire, ...], wires)
-        wire_ids = tuple(wire.id for wire in wires)
-        if len(set(wire_ids)) != len(wire_ids):
-            raise SpecError("Graph.wires ids must be unique")
-        if any(wire.src not in known_cards or wire.dst not in known_cards for wire in wires):
-            raise SpecError("Graph.wires endpoints must reference known cards")
+        _graph_validate_layout(slots, known_cards)
         layers_by_id = {slot.card_id: slot.layer for slot in slots}
-        if any(layers_by_id[wire.src] >= layers_by_id[wire.dst] for wire in wires):
-            raise SpecError("Graph.wires must route strictly downward")
-
-        collapsible = _canonical(self.collapsible, name="Graph.collapsible")
-        for index, card_id in enumerate(collapsible):
-            _non_empty_str(card_id, name=f"Graph.collapsible[{index}]")
-        if len(set(collapsible)) != len(collapsible):
-            raise SpecError("Graph.collapsible entries must be unique")
-        if any(card_id not in known_cards for card_id in collapsible):
-            raise SpecError("Graph.collapsible references an unknown card")
-        collapsible = cast(tuple[str, ...], collapsible)
-        cards: dict[str, Card] = {}
-        rebound_nodes: list[tuple[str, Card]] = []
-        for card_id, card in nodes:
-            if card.chrome != self.chrome:
-                raise SpecError("Graph.chrome must match every Card.chrome")
-            rebound = card.with_theme(self.theme) if card.theme != self.theme else card
-            cards[card_id] = rebound
-            rebound_nodes.append((card_id, rebound))
+        wires = _graph_wires(self.wires, known_cards=known_cards, layers_by_id=layers_by_id)
+        wire_ids = tuple(wire.id for wire in wires)
+        collapsible = _graph_collapsible(self.collapsible, known_cards)
+        cards, rebound_nodes = _graph_rebound_nodes(nodes, theme=self.theme, chrome=self.chrome)
         card_options = {node_id: card.control_options() for node_id, card in rebound_nodes}
-
-        visibility: tuple[str, ...] | None
-        if self.visibility is None:
-            visibility = None
-            visibility_wires = wires
-        else:
-            visibility_value = _canonical(self.visibility, name="Graph.visibility")
-            for index, wire_id in enumerate(visibility_value):
-                _non_empty_str(wire_id, name=f"Graph.visibility[{index}]")
-            if len(set(visibility_value)) != len(visibility_value):
-                raise SpecError("Graph.visibility entries must be unique")
-            if any(wire_id not in wire_ids for wire_id in visibility_value):
-                raise SpecError("Graph.visibility references an unknown wire")
-            visibility = cast(tuple[str, ...], visibility_value)
-            visibility_wires = tuple(wire for wire in wires if wire.id in set(visibility))
-
-        rules = _canonical(self.rules, name="Graph.rules")
-        for index, rule in enumerate(rules):
-            if not isinstance(rule, StateRule):
-                raise SpecError(f"Graph.rules[{index}] must be a StateRule")
-            if any(card_id not in known_cards for card_id in rule.hide_cards):
-                raise SpecError("Graph.rules hide_cards must reference known cards")
-            if any(wire_id not in wire_ids for wire_id in rule.hide_wires):
-                raise SpecError("Graph.rules hide_wires must reference known wires")
-            for atom in rule.when_all:
-                if atom.control.card_id not in known_cards:
-                    raise SpecError("Graph.rules controls must reference known cards")
-                options = card_options[atom.control.card_id]
-                if atom.predicate == "checked":
-                    if atom.control.card_id not in collapsible:
-                        raise SpecError("Graph.rules checked controls must be collapsible cards")
-                elif atom.control.key not in options:
-                    raise SpecError("Graph.rules option controls must reference known selects")
-                elif atom.option not in options[atom.control.key]:
-                    raise SpecError("Graph.rules option must reference a known select option")
-        rules = cast(tuple[StateRule, ...], rules)
-
+        visibility, visibility_wires = _graph_visibility(
+            self.visibility, wires=wires, wire_ids=wire_ids
+        )
+        rules = _graph_rules(
+            self.rules,
+            known_cards=known_cards,
+            wire_ids=wire_ids,
+            collapsible=collapsible,
+            card_options=card_options,
+        )
         visibility_edges = tuple((wire.src, wire.dst) for wire in visibility_wires)
         check_acyclic(node_ids, visibility_edges)
         blockers = blocker_families(node_ids, visibility_edges, collapsible)
-
-        positions: dict[tuple[int, int], list[str]] = {}
-        for slot in slots:
-            positions.setdefault((slot.layer, slot.slot), []).append(slot.card_id)
-        for group_ids in positions.values():
-            if len(group_ids) > 1:
-                _graph_shared_slot_proof(
-                    frozenset(group_ids), cards=cards, rules=rules, blockers=blockers
-                )
-
+        for group in _graph_shared_slot_groups(slots):
+            _graph_shared_slot_proof(group, cards=cards, rules=rules, blockers=blockers)
         object.__setattr__(self, "nodes", tuple(rebound_nodes))
         object.__setattr__(self, "wires", wires)
         object.__setattr__(self, "collapsible", collapsible)
