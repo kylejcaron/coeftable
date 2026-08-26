@@ -765,16 +765,60 @@ def test_graph_rejects_unproven_shared_slot(rules):
 
 
 def test_shared_slot_controller_cannot_be_inside_the_group():
-    with pytest.raises(SpecError, match="shared slots require one governing external"):
+    # The partition itself is exhaustive over the group {controller, left};
+    # the ONLY defects are the controller sitting in its own group (and the
+    # never-hidden law it necessarily drags in).
+    rules = (
+        StateRule(
+            (Atom(ControlRef("controller", "mode"), "option_checked", "left"),),
+            hide_cards=("controller",),
+        ),
+        StateRule(
+            (Atom(ControlRef("controller", "mode"), "option_checked", "right"),),
+            hide_cards=("left",),
+        ),
+    )
+    with pytest.raises(SpecError, match="shared"):
         _shared_slot_graph(
-            _shared_slot_partition_rules(),
-            nodes=(
-                ("controller", _shared_slot_controller()),
-                ("left", Card("left")),
-                ("right", Card("right")),
-            ),
+            rules,
             slots=(Slot("controller", 0, 0), Slot("left", 0, 0), Slot("right", 1, 0)),
         )
+
+
+def test_visibility_subset_controls_shared_slot_blocker_derivation():
+    # A painted wire from a collapsible root to the controller makes the
+    # controller hideable ONLY when that wire is part of the visibility
+    # topology; excluding it must make the same graph constructible.
+    nodes = (
+        ("root", Card("root")),
+        ("controller", _shared_slot_controller()),
+        ("left", Card("left")),
+        ("right", Card("right")),
+    )
+    slots = (
+        Slot("root", 0, 0),
+        Slot("controller", 1, 0),
+        Slot("left", 2, 0),
+        Slot("right", 2, 0),
+    )
+    wires = (Wire("w", "root", "controller"),)
+    with pytest.raises(SpecError, match="shared-slot controller must never be hidden"):
+        Graph(
+            nodes,
+            Slotted(slots),
+            wires=wires,
+            collapsible=("root",),
+            rules=_shared_slot_partition_rules(),
+        )
+    accepted = Graph(
+        nodes,
+        Slotted(slots),
+        wires=wires,
+        collapsible=("root",),
+        visibility=(),
+        rules=_shared_slot_partition_rules(),
+    )
+    assert accepted.measure().width > 0
 
 
 def test_shared_slot_controller_cannot_be_hidden_by_a_derived_blocker():
