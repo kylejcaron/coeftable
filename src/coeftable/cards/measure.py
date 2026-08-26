@@ -323,8 +323,7 @@ def measure_card(
         if isinstance(adornment, MetricValue):
             chip_width = _est(adornment.value, chrome.value_size, chrome.data_char_width_ratio)
             candidate = int(usable - chip_width - chrome.gap)
-            title_budget = 2 * chrome.char_width_ratio * chrome.title_size
-            if chip_width <= usable / 2 and candidate >= title_budget:
+            if chip_width <= usable / 2 and candidate >= 1:
                 try:
                     header_rows = resolve_rows(
                         header,

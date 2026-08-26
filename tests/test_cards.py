@@ -903,37 +903,37 @@ def test_chip_comes_from_body_never_header():
     assert chip is None
 
 
-def test_chip_refused_when_title_budget_would_not_fit():
+def test_one_character_title_header_keeps_chip_at_reduced_width():
     chip_value = "+3"
-    chip_width = len(chip_value) * DEFAULT_CHROME.value_size * DEFAULT_CHROME.data_char_width_ratio
-    usable = int(2 * chip_width)
+    usable = 45
     width = usable + 2 * (DEFAULT_CHROME.padding + DEFAULT_CHROME.border_width)
+    chip_width = len(chip_value) * DEFAULT_CHROME.value_size * DEFAULT_CHROME.data_char_width_ratio
+    candidate = int(usable - chip_width - DEFAULT_CHROME.gap)
     title_budget = 2 * DEFAULT_CHROME.char_width_ratio * DEFAULT_CHROME.title_size
     assert chip_width <= usable / 2
-    assert usable - chip_width - DEFAULT_CHROME.gap < title_budget
+    assert 1 <= candidate < title_budget  # old title-size heuristic suppressed this chip
 
-    _, _, _, chip = measure_card(
+    measured, header_rows, _body_rows, chip = measure_card(
         width=width,
-        header=(),
+        header=(TextBlock("t", variant="title"),),
         body=(MetricValue(chip_value),),
         chrome=DEFAULT_CHROME,
     )
-    assert chip is None
+    assert measured.width == width
+    assert chip == chip_value
+    assert isinstance(header_rows[0].adornment, TextBlock)
+    assert header_rows[0].adornment.text == "t"
 
 
-def test_chip_refused_when_only_fractional_sliver_meets_budget():
-    # Float remainder clears the title budget, but its integer floor does not:
-    # the eligibility check must use the same integer the header actually gets.
-    chrome = CardChrome(data_char_width_ratio=0.61)
-    chip_value = "8"
-    width = 34 + 2 * (chrome.padding + chrome.border_width)
-    usable = width - 2 * (chrome.padding + chrome.border_width)
+def test_chip_refused_when_candidate_is_less_than_one():
+    chrome = CardChrome(gap=24)
+    chip_value = "+3"
+    usable = 45
+    width = usable + 2 * (chrome.padding + chrome.border_width)
     chip_width = len(chip_value) * chrome.value_size * chrome.data_char_width_ratio
-    title_budget = 2 * chrome.char_width_ratio * chrome.title_size
-    remainder = usable - chip_width - chrome.gap
+    candidate = int(usable - chip_width - chrome.gap)
     assert chip_width <= usable / 2
-    assert remainder >= title_budget  # old float check would admit the chip
-    assert int(remainder) < title_budget  # the integer budget cannot honor it
+    assert candidate < 1
 
     _, _, _, chip = measure_card(
         width=width,
@@ -1048,7 +1048,8 @@ def test_summary_shows_the_chip():
     assert "[1.2, 5.7]" not in summary  # chip is value-only
     assert "box-sizing:content-box" in summary
     assert "min-width:0" in summary
-    chip_span = re.search(r'<span style="([^"]+)">\+3\.4%</span>', summary)
+    assert "<style>details[open]>summary>.ct-card-chip{display:none}</style>" in html_out
+    chip_span = re.search(r'<span class="ct-card-chip" style="([^"]+)">\+3\.4%</span>', summary)
     assert chip_span is not None
     chip_style = chip_span.group(1)
     chip_est = math.ceil(
