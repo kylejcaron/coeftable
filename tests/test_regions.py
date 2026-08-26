@@ -1,19 +1,30 @@
 """Contract tests for the built-in card regions."""
 
+import re
 from typing import Any, TypedDict
 
 import pytest
 
 import coeftable as ct
+from coeftable.annotations import ResolvedBand, ResolvedRule
 from coeftable.cards import (
     DEFAULT_CHROME,
     CaptionRow,
     CardChrome,
+    InlineSvg,
     MetricValue,
     RuleStrip,
     TextBlock,
 )
-from coeftable.cards.regions import Diagnostics, Event, Events, Metric, resolve_content
+from coeftable.cards.regions import (
+    Diagnostics,
+    Event,
+    Events,
+    Interval,
+    Metric,
+    Trend,
+    resolve_content,
+)
 from coeftable.errors import SpecError
 from coeftable.theme import DEFAULT, Theme
 
@@ -225,3 +236,356 @@ def test_events_canonicalization_snapshots_caller_lists():
     (strip,) = events.resolve(**RESOLVE_KW)
     assert isinstance(strip, RuleStrip)
     assert strip.entries == (("launch", "#4C72B0", "dotted"),)
+
+
+X = (0.0, 1.0, 2.0, 3.0)
+Y = (0.3, 0.8, 1.1, 1.5)
+LO = (-0.1, 0.3, 0.6, 0.9)
+HI = (0.7, 1.3, 1.6, 2.1)
+
+
+class TrendKw(TypedDict):
+    """Parameters shared by Trend tests."""
+
+    x: tuple[float, ...]
+    y: tuple[float, ...]
+    x_domain: tuple[float, float]
+    domain: tuple[float, float]
+    ref: float
+
+
+TREND_KW: TrendKw = dict(x=X, y=Y, x_domain=(0.0, 3.0), domain=(-0.5, 2.5), ref=0.0)
+
+
+def _svg_root_height(svg: str) -> int:
+    match = re.search(r"<svg\b[^>]*\bheight=\"([0-9]+)\"", svg)
+    assert match is not None
+    return int(match.group(1))
+
+
+def test_trend_with_ribbon_resolves_two_svgs_with_shared_width():
+    spark, axis = Trend(lower=LO, upper=HI, **TREND_KW).resolve(**RESOLVE_KW)
+    assert isinstance(spark, InlineSvg) and isinstance(axis, InlineSvg)
+    assert spark.width == axis.width == 220
+    assert spark.height == 30 and axis.height == 22
+
+
+def test_trend_without_ribbon_emits_no_ribbon_polygon_and_is_neutral():
+    (spark, _) = Trend(**TREND_KW).resolve(**RESOLVE_KW)
+    assert "<polygon" not in spark.svg
+    assert DEFAULT.neutral in spark.svg
+
+
+def test_trend_ribbon_role_reads_last_fully_present_index():
+    y = (0.3, 0.8, 1.1, None)
+    (spark, _) = Trend(
+        x=X,
+        y=y,
+        lower=LO,
+        upper=HI,
+        x_domain=(0.0, 3.0),
+        domain=(-0.5, 2.5),
+        ref=0.0,
+    ).resolve(**RESOLVE_KW)
+    assert DEFAULT.favorable in spark.svg
+
+
+def test_trend_spine_alignment_endpoint_on_and_off():
+    for show_endpoint in (True, False):
+        spark, axis = Trend(
+            lower=LO,
+            upper=HI,
+            show_endpoint=show_endpoint,
+            endpoint_width=60,
+            inset=5,
+            **TREND_KW,
+        ).resolve(**RESOLVE_KW)
+        plot = re.search(r'<polyline[^>]*points="([^"]+)"', spark.svg)
+        assert plot is not None
+        point_xs = [float(point.split(",", 1)[0]) for point in plot.group(1).split()]
+        tick_xs = [
+            float(value)
+            for value in re.findall(r'<line x1="([0-9.]+)" y1="[0-9.]+" x2="\1"', axis.svg)
+        ]
+        assert point_xs and tick_xs
+        assert abs(point_xs[0] - min(tick_xs)) < 0.01
+        assert abs(point_xs[-1] - max(tick_xs)) < 0.01
+
+
+def test_trend_axis_fmt_is_independent_of_endpoint_fmt():
+    spark, axis = Trend(
+        lower=LO,
+        upper=HI,
+        fmt=ct.Percent(signed=True),
+        axis_fmt=ct.Number(),
+        **TREND_KW,
+    ).resolve(**RESOLVE_KW)
+    assert "%" in spark.svg
+    assert "%" not in axis.svg
+
+
+def test_trend_temporal_axis_defaults_to_dateaxis_and_taller_root():
+    import datetime as dt
+
+    epoch = [dt.datetime(2024, 1, 1 + i).timestamp() for i in range(4)]
+    _, axis = Trend(
+        x=epoch,
+        y=Y,
+        x_domain=(epoch[0], epoch[-1]),
+        domain=(-0.5, 2.5),
+        ref=0.0,
+        temporal=True,
+    ).resolve(**RESOLVE_KW)
+    assert axis.height == _svg_root_height(axis.svg)
+    assert axis.height > 22
+
+
+def test_trend_affect_domain_annotation_outside_domain_raises():
+    band = ResolvedBand(
+        start=10.0,
+        end=12.0,
+        axis="x",
+        layer="underlay",
+        affect_domain=True,
+        color=None,
+        opacity=0.2,
+    )
+    trend = Trend(annotations=(band,), lower=LO, upper=HI, **TREND_KW)
+    with pytest.raises(SpecError) as excinfo:
+        trend.resolve(**RESOLVE_KW)
+    assert "domain" in str(excinfo.value)
+    assert "10.0" in str(excinfo.value)
+
+
+def test_trend_affect_domain_annotation_inside_domain_renders():
+    rule = ResolvedRule(
+        at=1.5,
+        axis="x",
+        layer="overlay",
+        affect_domain=True,
+        color="#4C72B0",
+        opacity=1.0,
+        width=1.0,
+        dash="dotted",
+    )
+    spark, _ = Trend(annotations=(rule,), lower=LO, upper=HI, **TREND_KW).resolve(**RESOLVE_KW)
+    assert "#4C72B0" in spark.svg
+
+
+def test_trend_events_rules_render_on_plot():
+    events = Events([Event("launch", "#4C72B0", at=1.5)])
+    (spark, _) = Trend(annotations=events.rules(), lower=LO, upper=HI, **TREND_KW).resolve(
+        **RESOLVE_KW
+    )
+    assert "#4C72B0" in spark.svg
+
+
+def test_trend_canonicalization_snapshots_caller_lists():
+    x = list(X)
+    y = list(Y)
+    lower = list(LO)
+    upper = list(HI)
+    annotations = [
+        ResolvedRule(
+            at=1.5,
+            axis="x",
+            layer="overlay",
+            affect_domain=False,
+            color="#4C72B0",
+            opacity=1.0,
+            width=1.0,
+            dash="dotted",
+        )
+    ]
+    trend = Trend(
+        x=x,
+        y=y,
+        lower=lower,
+        upper=upper,
+        x_domain=(0.0, 3.0),
+        domain=(-0.5, 2.5),
+        annotations=annotations,
+    )
+    x.append(4.0)
+    y.append(2.0)
+    lower.append(1.0)
+    upper.append(2.5)
+    annotations.append(
+        ResolvedRule(
+            at=2.5,
+            axis="x",
+            layer="overlay",
+            affect_domain=False,
+            color="#C44E52",
+            opacity=1.0,
+            width=1.0,
+            dash="dashed",
+        )
+    )
+    spark, _ = trend.resolve(**RESOLVE_KW)
+    assert "#C44E52" not in spark.svg
+    assert len(trend.x) == len(trend.y) == 4
+    assert trend.lower is not None and trend.upper is not None
+    assert len(trend.lower) == len(trend.upper) == 4
+    assert len(trend.annotations) == 1
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        dict(x=(), y=(), x_domain=(0, 1), domain=(0, 1)),
+        dict(x=X, y=Y[:3], x_domain=(0, 3), domain=(0, 1)),
+        dict(x=X, y=Y, lower=LO, upper=None, x_domain=(0, 3), domain=(0, 1)),
+        dict(x=X, y=Y, lower=HI, upper=LO, x_domain=(0, 3), domain=(0, 1)),
+        dict(x=X, y=Y, lower=LO, upper=(0.7, 1.3, 1.6), x_domain=(0, 3), domain=(0, 1)),
+        dict(x=X, y=Y, x_domain=(3, 0), domain=(0, 1)),
+        dict(x=X, y=Y, x_domain=(0, 3), domain=(1, 0)),
+        dict(x=X, y=(None, None, None, None), x_domain=(0, 3), domain=(0, 1)),
+        dict(x=X, y=(0.3, float("inf"), 1.1, 1.5), x_domain=(0, 3), domain=(0, 1)),
+        dict(
+            x=X,
+            y=Y,
+            lower=(0.0, 0.3, float("-inf"), 0.9),
+            upper=HI,
+            x_domain=(0, 3),
+            domain=(0, 1),
+        ),
+        dict(x=(0.0, True, 2.0, 3.0), y=Y, x_domain=(0, 3), domain=(0, 1)),
+        dict(x=X, y=Y, x_domain=(0, 3), domain=(0, 1), fmt=_unchecked("fmt")),
+        dict(x=X, y=Y, x_domain=(0, 3), domain=(0, 1), axis_fmt=_unchecked("fmt")),
+        dict(x=X, y=Y, x_domain=(0, 3), domain=(0, 1), ref=float("nan")),
+        dict(x=X, y=Y, x_domain=(0, 3), domain=(0, 1), direction=_unchecked("sideways")),
+        dict(x=X, y=Y, x_domain=(0, 3), domain=(0, 1), role=_unchecked("loud")),
+        dict(x=X, y=Y, x_domain=(0, 3), domain=(0, 1), temporal=_unchecked(1)),
+        dict(x=X, y=Y, x_domain=(0, 3), domain=(0, 1), show_axis=_unchecked(1)),
+        dict(x=X, y=Y, x_domain=(0, 3), domain=(0, 1), show_endpoint=_unchecked(1)),
+        dict(x=X, y=Y, x_domain=(0, 3), domain=(0, 1), height=True),
+        dict(x=X, y=Y, x_domain=(0, 3), domain=(0, 1), axis_height=True),
+        dict(x=X, y=Y, x_domain=(0, 3), domain=(0, 1), axis_height=0),
+        dict(x=X, y=Y, x_domain=(0, 3), domain=(0, 1), endpoint_width=True),
+        dict(x=X, y=Y, x_domain=(0, 3), domain=(0, 1), endpoint_width=0),
+        dict(x=X, y=Y, x_domain=(0, 3), domain=(0, 1), inset=True),
+        dict(x=X, y=Y, x_domain=(0, 3), domain=(0, 1), inset=0),
+        dict(x=X, y=Y, x_domain=(0, 3), domain=(0, 1), annotations=("rule",)),
+    ],
+    ids=[
+        "empty",
+        "ragged",
+        "one-sided-ribbon",
+        "inverted-ribbon",
+        "ragged-lower-upper",
+        "unordered-x-domain",
+        "unordered-domain",
+        "no-drawable-point",
+        "inf-y",
+        "inf-bound",
+        "bool-x",
+        "fmt-not-callable",
+        "axis-fmt-not-callable",
+        "nan-ref",
+        "bad-direction",
+        "bad-role",
+        "non-bool-temporal",
+        "non-bool-show-axis",
+        "non-bool-show-endpoint",
+        "bool-height",
+        "bool-axis-height",
+        "zero-axis-height",
+        "bool-endpoint-width",
+        "zero-endpoint-width",
+        "bool-inset",
+        "zero-inset",
+        "non-annotation",
+    ],
+)
+def test_trend_validation(kwargs):
+    with pytest.raises(SpecError):
+        Trend(**kwargs)
+
+
+def test_trend_nan_gaps_are_accepted():
+    trend = Trend(
+        x=X,
+        y=(0.3, float("nan"), 1.1, 1.5),
+        lower=(-0.1, float("nan"), 0.6, 0.9),
+        upper=(0.7, float("nan"), 1.6, 2.1),
+        x_domain=(0.0, 3.0),
+        domain=(-0.5, 2.5),
+    )
+    spark, _ = trend.resolve(**RESOLVE_KW)
+    assert "<polyline" in spark.svg
+
+
+def test_interval_resolves_bar_and_axis_sharing_domain_and_margin():
+    bar, axis = Interval(1.2, 0.4, 2.0, domain=(-1.0, 3.0), ref=0.0, margin=18).resolve(
+        **RESOLVE_KW
+    )
+    from coeftable.cards import InlineSvg
+
+    assert isinstance(bar, InlineSvg) and isinstance(axis, InlineSvg)
+    assert bar.width == axis.width == 220
+    assert DEFAULT.favorable in bar.svg
+
+
+def test_interval_forest_alignment_with_nonzero_margin():
+    bar, axis = Interval(1.0, -1.0, 3.0, domain=(-1.0, 3.0), ref=0.0, margin=18).resolve(
+        **RESOLVE_KW
+    )
+    rect = re.search(r'<rect x="([0-9.]+)"[^>]*?width="([0-9.]+)"', bar.svg)
+    tick_xs = [
+        float(value)
+        for value in re.findall(r'<line x1="([0-9.]+)" y1="[0-9.]+" x2="\1"', axis.svg)
+    ]
+    assert rect is not None and tick_xs
+    x, rect_width = (float(value) for value in rect.groups())
+    assert abs(x - (18 + 3)) < 0.01
+    assert abs(x + rect_width - (220 - 18 - 3)) < 0.01
+    assert abs(min(tick_xs) - x) < 0.01
+    assert abs(max(tick_xs) - (x + rect_width)) < 0.01
+
+
+def test_interval_role_and_axis_toggle():
+    (bar,) = Interval(0.0, -1.0, 1.0, domain=(-2.0, 2.0), show_axis=False).resolve(**RESOLVE_KW)
+    assert DEFAULT.inconclusive in bar.svg
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        dict(estimate=1.0, lower=2.0, upper=0.5, domain=(0, 3)),
+        dict(estimate=1.0, lower=0.5, upper=2.0, domain=(3, 0)),
+        dict(estimate=float("nan"), lower=0.5, upper=2.0, domain=(0, 3)),
+        dict(estimate=1.0, lower=float("nan"), upper=2.0, domain=(0, 3)),
+        dict(estimate=1.0, lower=0.5, upper=float("nan"), domain=(0, 3)),
+        dict(estimate=1.0, lower=0.5, upper=2.0, domain=(0, 3), ref=float("nan")),
+        dict(estimate=1.0, lower=0.5, upper=2.0, domain=(0, 3), margin=-1),
+        dict(estimate=1.0, lower=0.5, upper=2.0, domain=(0, 3), fmt=_unchecked("fmt")),
+        dict(estimate=1.0, lower=0.5, upper=2.0, domain=(0, 3), direction=_unchecked("sideways")),
+        dict(estimate=1.0, lower=0.5, upper=2.0, domain=(0, 3), role=_unchecked("loud")),
+        dict(estimate=1.0, lower=0.5, upper=2.0, domain=(0, 3), show_axis=_unchecked(1)),
+        dict(estimate=1.0, lower=0.5, upper=2.0, domain=(0, 3), height=True),
+        dict(estimate=1.0, lower=0.5, upper=2.0, domain=(0, 3), axis_height=True),
+        dict(estimate=1.0, lower=0.5, upper=2.0, domain=(0, 3), inset=True),
+        dict(estimate=1.0, lower=0.5, upper=2.0, domain=(0, 3), inset=0),
+    ],
+    ids=[
+        "inverted-bounds",
+        "unordered-domain",
+        "nan-estimate",
+        "nan-lower",
+        "nan-upper",
+        "nan-ref",
+        "negative-margin",
+        "fmt-not-callable",
+        "bad-direction",
+        "bad-role",
+        "non-bool-show-axis",
+        "bool-height",
+        "bool-axis-height",
+        "bool-inset",
+        "zero-inset",
+    ],
+)
+def test_interval_validation(kwargs):
+    with pytest.raises(SpecError):
+        Interval(**kwargs)
