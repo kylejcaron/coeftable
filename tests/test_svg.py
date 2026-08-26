@@ -199,6 +199,48 @@ def test_sparkline_axis_escapes_hostile_theme_axis_and_text_colors():
     assert '" onclick="' not in svg
 
 
+def test_forest_bar_escapes_hostile_theme_on_estimate_tick_and_ref_line():
+    hostile = 'red" onclick="alert(1)'
+    svg = forest_bar(
+        1.0,
+        0.5,
+        1.5,
+        domain=(0.0, 2.0),
+        ref=0.0,
+        color="#000000",
+        theme=Theme(surface=hostile, axis=hostile),
+    )
+    assert "&quot;" in svg
+    assert '" onclick="' not in svg
+
+
+def test_forest_axis_escapes_hostile_theme_axis_color():
+    hostile = 'red" onclick="alert(1)'
+    svg = forest_axis(
+        domain=(0.0, 2.0),
+        ref=0.0,
+        fmt=Number(decimals=0),
+        theme=Theme(axis=hostile),
+    )
+    assert "&quot;" in svg
+    assert '" onclick="' not in svg
+
+
+def test_sparkline_axis_escapes_hostile_theme_muted_in_super_row():
+    hostile = 'red" onclick="alert(1)'
+    low = datetime(2024, 1, 17, tzinfo=UTC).timestamp()
+    high = datetime(2024, 3, 17, tzinfo=UTC).timestamp()
+    svg = sparkline_axis(
+        x_domain=(low, high),
+        fmt=DateAxis(),
+        theme=Theme(muted=hostile),
+        temporal=True,
+        show_endpoint=False,
+    )
+    assert "&quot;" in svg
+    assert '" onclick="' not in svg
+
+
 def test_forest_bar_reference_line_spans_the_passed_height():
     svg = forest_bar(
         1.0, 0.5, 1.5, domain=(0.0, 2.0), ref=0.0, color="#000", theme=DEFAULT, height=48

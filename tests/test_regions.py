@@ -683,6 +683,10 @@ def test_interval_non_default_fields_project_and_render():
     # 84.25, and the reference line is 161.50.
     rect = re.search(r'<rect x="([0-9.]+)"[^>]*?width="([0-9.]+)"', bar.svg)
     assert rect is not None
+    x, rect_width = (float(value) for value in rect.groups())
+    assert abs(x - 32.75) < 0.01
+    assert abs(rect_width - 103.00) < 0.01
+    assert abs(x + rect_width - 135.75) < 0.01
     assert '<line x1="84.25" y1="7.50" x2="84.25" y2="16.50"' in bar.svg
     assert '<line x1="161.50" y1="0" x2="161.50" y2="24"' in bar.svg
     assert ">M0<" in axis.svg
