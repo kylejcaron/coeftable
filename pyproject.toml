@@ -72,14 +72,23 @@ src = ["src", "tests"]
 docstring-code-format = true
 
 [tool.ruff.lint]
-select = ["B", "D", "E", "F", "I", "RUF", "S", "UP", "W"]
+select = ["B", "C90", "D", "E", "F", "I", "PLR0911", "PLR0912", "PLR0915", "RUF", "S", "UP", "W"]
 ignore = ["RUF001", "RUF002", "RUF012"]
+
+[tool.ruff.lint.mccabe]
+# Anti-spaghetti gate: flag functions with cyclomatic complexity >= 25.
+max-complexity = 24
+
+[tool.ruff.lint.pylint]
+max-branches = 24
+max-statements = 100
+max-returns = 12
 
 [tool.ruff.lint.pydocstyle]
 convention = "numpy"
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["D", "S101"]
+"tests/*" = ["D", "S101", "PLR0915"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -92,7 +92,7 @@ def _check_columns(frame: nw.DataFrame, table: CoefTable) -> None:
         )
 
 
-def resolve(table: CoefTable) -> Resolved:
+def resolve(table: CoefTable) -> Resolved:  # noqa: C901
     """Resolve `table` against its frame.
 
     Parameters
