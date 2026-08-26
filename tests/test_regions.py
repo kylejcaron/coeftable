@@ -1,6 +1,7 @@
 """Contract tests for the built-in card regions."""
 
 import re
+from dataclasses import replace
 from typing import Any, TypedDict
 
 import pytest
@@ -342,6 +343,16 @@ def test_trend_explicit_role_override_and_axis_toggle():
     assert DEFAULT.favorable not in spark.svg
 
 
+def test_trend_escapes_hostile_theme_favorable_color():
+    theme = replace(DEFAULT, favorable='red" onclick="alert(1)')
+    spark, _ = Trend(lower=LO, upper=HI, **TREND_KW).resolve(
+        width=RESOLVE_KW["width"], theme=theme, chrome=RESOLVE_KW["chrome"]
+    )
+    assert isinstance(spark, InlineSvg)
+    assert "&quot;" in spark.svg
+    assert '" onclick="' not in spark.svg
+
+
 def test_trend_lower_is_better_flips_role():
     (spark, _) = Trend(direction="lower_is_better", lower=LO, upper=HI, **TREND_KW).resolve(
         **RESOLVE_KW
@@ -560,8 +571,41 @@ def test_trend_canonicalization_snapshots_caller_lists():
     ],
 )
 def test_trend_validation(kwargs):
+
     with pytest.raises(SpecError):
         Trend(**kwargs)
+
+
+def test_trend_horizontal_projection_span_guard_boundaries():
+    # horizontal_span = width - endpoint_width - 2*inset; defaults make
+    # width=50 the rejected zero-span boundary and width=51 one-pixel.
+    trend = Trend(**TREND_KW)
+    with pytest.raises(SpecError, match="horizontal projection span"):
+        trend.resolve(width=50, theme=DEFAULT, chrome=DEFAULT_CHROME)
+    spark, _ = trend.resolve(width=51, theme=DEFAULT, chrome=DEFAULT_CHROME)
+    assert isinstance(spark, InlineSvg)
+
+
+def test_trend_vertical_projection_span_guard_boundaries():
+    # vertical_span = height - 2*inset; defaults make height=6 the rejected
+    # zero-span boundary and height=7 one-pixel.
+    zero = Trend(height=6, **TREND_KW)
+    with pytest.raises(SpecError, match="vertical projection span"):
+        zero.resolve(**RESOLVE_KW)
+    one = Trend(height=7, **TREND_KW)
+    spark, _ = one.resolve(**RESOLVE_KW)
+    assert isinstance(spark, InlineSvg)
+
+
+def test_interval_horizontal_projection_span_guard_boundaries():
+    # horizontal_span = width - 2*(margin + inset); margin=18 and inset=3
+    # make width=42 the rejected zero-span boundary and width=43 one-pixel.
+    zero = Interval(1.2, 0.4, 2.0, domain=(-1.0, 3.0), margin=18)
+    with pytest.raises(SpecError, match="horizontal projection span"):
+        zero.resolve(width=42, theme=DEFAULT, chrome=DEFAULT_CHROME)
+    one = Interval(1.2, 0.4, 2.0, domain=(-1.0, 3.0), margin=18)
+    bar, _ = one.resolve(width=43, theme=DEFAULT, chrome=DEFAULT_CHROME)
+    assert isinstance(bar, InlineSvg)
 
 
 def test_trend_nan_gaps_are_accepted():

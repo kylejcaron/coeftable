@@ -83,6 +83,51 @@ def test_forest_bar_is_well_formed_svg():
     assert "#55A868" in svg
 
 
+def test_forest_bar_escapes_caller_color_attributes():
+    svg = forest_bar(
+        1.0,
+        0.5,
+        1.5,
+        domain=(0.0, 2.0),
+        ref=0.0,
+        color='red" onclick="alert(1)',
+        theme=DEFAULT,
+    )
+    assert "&quot;" in svg
+    assert '" onclick="' not in svg
+
+
+def test_sparkline_bar_escapes_caller_color_attributes():
+    svg = sparkline_bar(
+        [0.0, 1.0, 2.0],
+        [1.0, 1.2, 0.9],
+        [0.8, 1.0, 0.7],
+        [1.2, 1.4, 1.1],
+        x_domain=(0.0, 2.0),
+        domain=(0.0, 2.0),
+        ref=0.0,
+        color='red" onclick="alert(1)',
+        fmt=Number(decimals=1),
+    )
+    assert "&quot;" in svg
+    assert '" onclick="' not in svg
+
+
+def test_annotation_color_escapes_caller_color_attributes():
+    svg = forest_bar(
+        1.0,
+        0.5,
+        1.5,
+        domain=(0.0, 2.0),
+        ref=0.0,
+        color="#000000",
+        theme=DEFAULT,
+        annotations=(_rule(at=1.0, color='red" onclick="alert(1)'),),
+    )
+    assert "&quot;" in svg
+    assert '" onclick="' not in svg
+
+
 def test_forest_bar_reference_line_spans_the_passed_height():
     svg = forest_bar(
         1.0, 0.5, 1.5, domain=(0.0, 2.0), ref=0.0, color="#000", theme=DEFAULT, height=48
