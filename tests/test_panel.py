@@ -457,10 +457,8 @@ def test_retention_fixture_reproduces_the_panel_through_public_api():
             direction="higher_is_better",
             role=verdict,
             height=30,
-            show_axis=True,
-            axis_height=22,
+            show_axis=False,
             show_endpoint=False,
-            endpoint_width=44,
             inset=3,
             annotations=events.rules(),
         )
@@ -539,9 +537,8 @@ def test_retention_fixture_reproduces_the_panel_through_public_api():
     journey_svg = next(svg for svg in journey_svgs if 'height="168"' in svg)
     journey_axis_svg = next(svg for svg in journey_svgs if svg != journey_svg)
     journey_axis_height = _svg_height(journey_axis_svg)
-    trend_axis_height = _svg_height(
-        next(svg for svg in svg_blocks if 'width="240"' in svg and 'height="22"' in svg)
-    )
+    for svg in trend_svgs:
+        assert "<text" not in svg  # compact rows: no axis, no endpoint label
 
     title_height = math.ceil(chrome.title_size * chrome.leading)
     subtitle_height = math.ceil(chrome.subtitle_size * chrome.leading)
@@ -550,7 +547,7 @@ def test_retention_fixture_reproduces_the_panel_through_public_api():
     heading_height = title_height + chrome.gap + subtitle_height
     journey_content_height = 168 + chrome.gap + journey_axis_height + chrome.gap + caption_height
     journey_height = heading_height + chrome.header_gap + journey_content_height
-    trend_row_height = 30 + chrome.gap + trend_axis_height
+    trend_row_height = 30
     trend_content_height = (
         trend_row_height
         + chrome.gap
