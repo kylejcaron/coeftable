@@ -444,6 +444,15 @@ def _graph_rules(
     return cast(tuple[StateRule, ...], rules)
 
 
+def _graph_validate_rule_controllers(rules: tuple[StateRule, ...]) -> None:
+    """Reject injected rules that can hide any injected-rule controller card."""
+    controllers = {atom.control.card_id for rule in rules for atom in rule.when_all}
+    if any(set(rule.hide_cards) & controllers for rule in rules):
+        raise SpecError(
+            "injected rules may not hide cards owning controls referenced by injected rules"
+        )
+
+
 type Box = tuple[int, int, int, int]
 
 
@@ -465,6 +474,9 @@ class MeasuredGraph:
 
 type AnchorOffset = tuple[float, float]
 type GraphAnchors = tuple[tuple[str, tuple[AnchorOffset, AnchorOffset]], ...]
+type WirePath = tuple[float, ...]
+type WireGeometry = tuple[WirePath, AnchorOffset]
+type GraphWireGeometry = tuple[tuple[str, WireGeometry], ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -473,6 +485,7 @@ class _GraphLayout:
 
     measured: MeasuredGraph
     anchors: GraphAnchors
+    wire_geometry: GraphWireGeometry
 
 
 def _graph_layout_offsets(sizes: tuple[int, ...], gap: int) -> tuple[int, ...]:
@@ -488,6 +501,7 @@ def _graph_layout_offsets(sizes: tuple[int, ...], gap: int) -> tuple[int, ...]:
 def _graph_measure(
     nodes: tuple[tuple[str, Card], ...],
     slots: tuple[Slot, ...],
+    wires: tuple[Wire, ...],
     *,
     gap: int,
     layer_gap: int,
@@ -520,7 +534,35 @@ def _graph_measure(
     for card_id, _ in nodes:
         by_name = {anchor.name: (anchor.x, anchor.y) for anchor in measured[card_id].anchors}
         anchor_offsets.append((card_id, (by_name["in"], by_name["out"])))
-    return _GraphLayout(footprint, tuple(anchor_offsets))
+    boxes_by_id = dict(boxes)
+    anchors_by_id = dict(anchor_offsets)
+    wire_geometry: list[tuple[str, WireGeometry]] = []
+    for wire in wires:
+        src_left, src_top, _src_width, src_height = boxes_by_id[wire.src]
+        dst_left, dst_top, _dst_width, _dst_height = boxes_by_id[wire.dst]
+        _, (out_x, out_y) = anchors_by_id[wire.src]
+        in_x, in_y = anchors_by_id[wire.dst][0]
+        x0 = src_left + out_x
+        y0 = src_top + out_y
+        x1 = dst_left + in_x
+        y1 = dst_top + in_y
+        my1 = src_top + src_height + layer_gap / 2
+        my2 = dst_top - layer_gap / 2
+        path = (x0, y0, x0, my1, x1, my2, x1, y1 - 3)
+        t = 0.5
+        inverse = 1 - t
+        label_x = (
+            inverse**3 * x0 + 3 * inverse**2 * t * x0 + 3 * inverse * t**2 * x1 + t**3 * x1 + 14
+        )
+        label_y = (
+            inverse**3 * y0
+            + 3 * inverse**2 * t * my1
+            + 3 * inverse * t**2 * my2
+            + t**3 * (y1 - 3)
+            - 10
+        )
+        wire_geometry.append((wire.id, (path, (label_x, label_y))))
+    return _GraphLayout(footprint, tuple(anchor_offsets), tuple(wire_geometry))
 
 
 @dataclass(frozen=True, slots=True)
@@ -574,6 +616,7 @@ class Graph:
         blockers = blocker_families(node_ids, visibility_edges, collapsible)
         for group in _graph_shared_slot_groups(slots):
             _graph_shared_slot_proof(group, cards=cards, rules=rules, blockers=blockers)
+        _graph_validate_rule_controllers(rules)
         object.__setattr__(self, "nodes", tuple(rebound_nodes))
         object.__setattr__(self, "wires", wires)
         object.__setattr__(self, "collapsible", collapsible)
@@ -601,6 +644,7 @@ class Graph:
             _graph_measure(
                 tuple(rebound_nodes),
                 slots,
+                wires,
                 gap=self.gap,
                 layer_gap=self.layer_gap,
                 padding=self.chrome.padding,

@@ -663,6 +663,37 @@ def test_graph_rejects_self_trapping_option_checked_rule():
         )
 
 
+def test_graph_rejects_mutually_hidden_option_controllers():
+    left = Card(
+        "Left",
+        content=(SelectControl("Mode", (("on", "On"),), selected="on", key="mode"),),
+    )
+    right = Card(
+        "Right",
+        content=(SelectControl("Mode", (("on", "On"),), selected="on", key="mode"),),
+    )
+    with pytest.raises(
+        SpecError,
+        match=re.escape(
+            "injected rules may not hide cards owning controls referenced by injected rules"
+        ),
+    ):
+        _plain_graph(
+            nodes=(("left", left), ("right", right)),
+            slots=(Slot("left", 0, 0), Slot("right", 1, 0)),
+            rules=(
+                StateRule(
+                    (Atom(ControlRef("left", "mode"), "option_checked", "on"),),
+                    hide_cards=("right",),
+                ),
+                StateRule(
+                    (Atom(ControlRef("right", "mode"), "option_checked", "on"),),
+                    hide_cards=("left",),
+                ),
+            ),
+        )
+
+
 @pytest.mark.parametrize(
     ("kwargs", "message"),
     [
@@ -1283,41 +1314,39 @@ def test_graph_renderer_is_deterministic_and_places_svg_before_cards():
     assert first.count('id="render-arrow"') == 1
 
 
-def test_graph_renderer_uses_measured_anchor_and_vertical_route_arithmetic():
+def test_graph_renderer_uses_cached_anchor_and_vertical_route_geometry():
     graph = Graph(
         (("source", Card("Source")), ("target", Card("Target"))),
         Slotted((Slot("source", 0, 0), Slot("target", 1, 0))),
         wires=(Wire("wire", "source", "target"),),
         dom_prefix="route",
     )
-    layout = dict(graph.measure().boxes)
-    source_left, source_top, _source_width, source_height = layout["source"]
-    target_left, target_top, target_width, _target_height = layout["target"]
-    source_out = dict(graph._layout.anchors)["source"][1]
-    synthetic_anchors = dict(graph._layout.anchors)
-    synthetic_anchors["target"] = ((10.0, 5.0), synthetic_anchors["target"][1])
-    object.__setattr__(
-        graph,
-        "_layout",
-        dataclasses.replace(graph._layout, anchors=tuple(synthetic_anchors.items())),
-    )
+    layout = graph._layout
+    source_left, source_top, _source_width, source_height = dict(graph.measure().boxes)["source"]
+    target_left, target_top, _target_width, _target_height = dict(graph.measure().boxes)["target"]
+    source_out = dict(layout.anchors)["source"][1]
+    target_in = dict(layout.anchors)["target"][0]
     x0 = source_left + source_out[0]
     y0 = source_top + source_out[1]
-    target_in = synthetic_anchors["target"][0]
     x1 = target_left + target_in[0]
     y1 = target_top + target_in[1]
     my1 = source_top + source_height + graph.layer_gap / 2
     my2 = target_top - graph.layer_gap / 2
+    expected_geometry = (
+        (
+            "wire",
+            (
+                (x0, y0, x0, my1, x1, my2, x1, y1 - 3),
+                (x0 + 0.5 * (x1 - x0) + 14, (y0 + 3 * my1 + 3 * my2 + (y1 - 3)) / 8 - 10),
+            ),
+        ),
+    )
+    assert layout.wire_geometry == expected_geometry
     expected = f'd="M {x0:g},{y0:g} C {x0:g},{my1:g} {x1:g},{my2:g} {x1:g},{y1 - 3:g}"'
     output = graph.as_raw_html()
     assert expected in output
-    my = (source_top + source_height + target_top) / 2
-    old_top_center = (
-        f'd="M {x0:g},{y0:g} C {x0:g},{my:g} '
-        f"{target_left + target_width / 2:g},{my:g} "
-        f'{target_left + target_width / 2:g},{target_top - 3:g}"'
-    )
-    assert old_top_center not in output
+    assert graph.as_raw_html() == output
+    assert graph._layout == layout
 
 
 def test_graph_renderer_does_not_remeasure_cards(monkeypatch):
@@ -1361,7 +1390,7 @@ def test_graph_renderer_places_label_at_cubic_midpoint_and_rethemes_roles():
     x += 3 * (1 - t) * t**2 * x1 + t**3 * x1
     y = (1 - t) ** 3 * y0 + 3 * (1 - t) ** 2 * t * my1
     y += 3 * (1 - t) * t**2 * my2 + t**3 * (target[1] - 3) - 10
-    assert f'x="{x + 10:g}" y="{y:g}" text-anchor="start"' in output
+    assert f'x="{x + 14:g}" y="{y:g}" text-anchor="start"' in output
     rethemed = graph.with_theme(dataclasses.replace(theme, favorable="#444444"))
     assert 'fill="#444444"' in rethemed.as_raw_html()
     assert 'fill="#123456"' in rethemed.as_raw_html()
@@ -1398,6 +1427,8 @@ def test_graph_renderer_contains_nubs_inside_their_card_wrappers():
     label_start = output.index(nub_label)
     assert source_start < input_start < target_start
     assert source_start < label_start < target_start
+    assert '<div style="position:relative"><details' in output
+    assert "left:50%;transform:translateX(-50%);top:100%" in output
 
 
 def test_graph_renderer_mints_disjoint_ids_and_never_emits_semantic_ids():

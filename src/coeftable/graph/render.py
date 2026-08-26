@@ -35,8 +35,7 @@ def _label_color(theme: Theme, label_role: Role | None, label_color: str | None)
 def _wire_svg(graph: Graph, layout: _GraphLayout, compiled: _CompiledState) -> str:
     """Render the underlay SVG from the graph's cached geometry."""
     measured = layout.measured
-    boxes = dict(measured.boxes)
-    anchors = dict(layout.anchors)
+    geometry = dict(layout.wire_geometry)
     axis = _esc(graph.theme.axis)
     surface = _esc(graph.theme.surface)
     marker_id = f"{graph.dom_prefix}-arrow"
@@ -53,37 +52,19 @@ def _wire_svg(graph: Graph, layout: _GraphLayout, compiled: _CompiledState) -> s
         )
     ]
     for wire, wire_dom_id in zip(graph.wires, compiled.wire_dom_ids, strict=True):
-        src_left, src_top, _src_width, src_height = boxes[wire.src]
-        dst_left, dst_top, _dst_width, _dst_height = boxes[wire.dst]
-        _, (out_x, out_y) = anchors[wire.src]
-        in_x, in_y = anchors[wire.dst][0]
-        x0 = src_left + out_x
-        y0 = src_top + out_y
-        x1 = dst_left + in_x
-        y1 = dst_top + in_y
-        my1 = src_top + src_height + graph.layer_gap / 2
-        my2 = dst_top - graph.layer_gap / 2
+        path_coordinates, label_anchor = geometry[wire.id]
+        x0, y0, control_x0, control_y1, x1, control_y2, end_x, end_y = path_coordinates
+        label_x, label_y = label_anchor
         path = (
-            f'<path d="M {_number(x0)},{_number(y0)} C {_number(x0)},{_number(my1)} '
-            f'{_number(x1)},{_number(my2)} {_number(x1)},{_number(y1 - 3)}" '
+            f'<path d="M {_number(x0)},{_number(y0)} '
+            f"C {_number(control_x0)},{_number(control_y1)} "
+            f'{_number(x1)},{_number(control_y2)} {_number(end_x)},{_number(end_y)}" '
             f'fill="none" stroke="{axis}" stroke-width="1.5" marker-end="url(#{marker_id})"/>'
         )
         label = ""
         if wire.label is not None:
-            t = 0.5
-            inverse = 1 - t
-            label_x = (
-                inverse**3 * x0 + 3 * inverse**2 * t * x0 + 3 * inverse * t**2 * x1 + t**3 * x1
-            )
-            label_y = (
-                inverse**3 * y0
-                + 3 * inverse**2 * t * my1
-                + 3 * inverse * t**2 * my2
-                + t**3 * (y1 - 3)
-                - 10
-            )
             label = (
-                f'<text x="{_number(label_x + 10)}" y="{_number(label_y)}" text-anchor="start" '
+                f'<text x="{_number(label_x)}" y="{_number(label_y)}" text-anchor="start" '
                 f'fill="{_esc(_label_color(graph.theme, wire.label_role, wire.label_color))}" '
                 f'style="paint-order:stroke;stroke:{surface};stroke-width:4px;'
                 f'stroke-linejoin:round">{_esc(wire.label)}</text>'
@@ -97,15 +78,13 @@ def _nub_markup(
     graph: Graph, layout: _GraphLayout, compiled: _CompiledState
 ) -> tuple[dict[str, str], str]:
     """Render each checkbox nub for its card and its sibling glyph rules."""
-    boxes = dict(layout.measured.boxes)
     markup: dict[str, str] = {}
     rules: list[str] = []
     for card_id, nub_id in compiled.nub_dom_ids.items():
-        _left, _top, width, height = boxes[card_id]
         markup[card_id] = (
             f'<input type="checkbox" id="{nub_id}" style="display:none">'
-            f'<label for="{nub_id}" style="position:absolute;left:{_number((width - 18) / 2)}px;'
-            f"top:{_number(height)}px;width:18px;height:18px;box-sizing:border-box;"
+            f'<label for="{nub_id}" style="position:absolute;left:50%;transform:translateX(-50%);'
+            f"top:100%;width:18px;height:18px;box-sizing:border-box;"
             f"display:flex;align-items:center;justify-content:center;border:1px solid "
             f"{_esc(graph.theme.axis)};border-radius:50%;background:{_esc(graph.theme.surface)};"
             f'color:{_esc(graph.theme.axis)};font-size:13px;line-height:16px;cursor:pointer">'
@@ -148,7 +127,9 @@ def render_graph(graph: Graph) -> str:
         cards_html.append(
             f'<div id="{card_dom_id}" style="position:absolute;left:{_number(left)}px;'
             f'top:{_number(top)}px;width:{_number(width)}px;height:{_number(height)}px">'
-            f"{card.as_raw_html(control_dom_ids=control_dom_ids)}{nubs.get(card_id, '')}</div>"
+            f'<div style="position:relative">'
+            f"{card.as_raw_html(control_dom_ids=control_dom_ids)}"
+            f"{nubs.get(card_id, '')}</div></div>"
         )
     style = _state_style(graph, compiled, nub_rules) if (compiled.rules or nub_rules) else ""
     return (
