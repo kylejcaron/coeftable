@@ -1107,13 +1107,29 @@ def test_graph_renderer_uses_measured_anchor_and_vertical_route_arithmetic():
     layout = dict(graph.measure().boxes)
     source_left, source_top, _source_width, source_height = layout["source"]
     target_left, target_top, target_width, _target_height = layout["target"]
-    anchor = graph.nodes[0][1].measure().anchors[1]
-    x0 = source_left + anchor.x
-    y0 = source_top + anchor.y
+    anchor = dict(graph._layout.anchors)["source"][1]
+    x0 = source_left + anchor[0]
+    y0 = source_top + anchor[1]
     x1 = target_left + target_width / 2
     my = (source_top + source_height + target_top) / 2
     expected = f'd="M {x0:g},{y0:g} C {x0:g},{my:g} {x1:g},{my:g} {x1:g},{target_top - 3:g}"'
     assert expected in graph.as_raw_html()
+
+
+def test_graph_renderer_does_not_remeasure_cards(monkeypatch):
+    graph = _render_fixture()
+    calls = 0
+    original_measure = Card.measure
+
+    def record_measure(card):
+        nonlocal calls
+        calls += 1
+        return original_measure(card)
+
+    monkeypatch.setattr(Card, "measure", record_measure)
+    graph.as_raw_html()
+    graph.as_raw_html()
+    assert calls == 0
 
 
 def test_graph_renderer_places_label_at_cubic_three_quarters_and_rethemes_roles():
@@ -1130,9 +1146,9 @@ def test_graph_renderer_places_label_at_cubic_three_quarters_and_rethemes_roles(
     assert 'fill="#222222"' in output
     source = dict(graph.measure().boxes)["source"]
     target = dict(graph.measure().boxes)["target"]
-    anchor = graph.nodes[0][1].measure().anchors[1]
-    x0 = source[0] + anchor.x
-    y0 = source[1] + anchor.y
+    anchor = dict(graph._layout.anchors)["source"][1]
+    x0 = source[0] + anchor[0]
+    y0 = source[1] + anchor[1]
     x1 = target[0] + target[2] / 2
     my = (source[1] + source[3] + target[1]) / 2
     t = 0.75

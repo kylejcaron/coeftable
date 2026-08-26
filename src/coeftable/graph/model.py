@@ -456,6 +456,18 @@ class MeasuredGraph:
     boxes: tuple[tuple[str, Box], ...]
 
 
+type AnchorOffset = tuple[float, float]
+type GraphAnchors = tuple[tuple[str, tuple[AnchorOffset, AnchorOffset]], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _GraphLayout:
+    """Internal graph geometry, including the measured wire attachments."""
+
+    measured: MeasuredGraph
+    anchors: GraphAnchors
+
+
 def _graph_layout_offsets(sizes: tuple[int, ...], gap: int) -> tuple[int, ...]:
     """Return each column/layer's offset from the canvas origin."""
     offsets: list[int] = []
@@ -473,7 +485,7 @@ def _graph_measure(
     gap: int,
     layer_gap: int,
     padding: int,
-) -> MeasuredGraph:
+) -> _GraphLayout:
     """Measure rebound cards once and resolve their slotted border boxes."""
     measured = {card_id: card.measure() for card_id, card in nodes}
     slot_by_id = {slot.card_id: slot for slot in slots}
@@ -496,7 +508,12 @@ def _graph_measure(
         boxes.append((card_id, (left, top, footprint.width, footprint.expanded_height)))
     width = sum(column_widths) + gap * (len(column_widths) - 1) + 2 * padding
     height = sum(layer_heights) + layer_gap * (len(layer_heights) - 1) + 2 * padding
-    return MeasuredGraph(width, height, tuple(boxes))
+    footprint = MeasuredGraph(width, height, tuple(boxes))
+    anchor_offsets: list[tuple[str, tuple[AnchorOffset, AnchorOffset]]] = []
+    for card_id, _ in nodes:
+        by_name = {anchor.name: (anchor.x, anchor.y) for anchor in measured[card_id].anchors}
+        anchor_offsets.append((card_id, (by_name["in"], by_name["out"])))
+    return _GraphLayout(footprint, tuple(anchor_offsets))
 
 
 @dataclass(frozen=True, slots=True)
@@ -519,7 +536,7 @@ class Graph:
         init=False, repr=False, compare=False
     )
     _compiled: _CompiledState = field(init=False, repr=False, compare=False)
-    _layout: MeasuredGraph = field(init=False, repr=False, compare=False)
+    _layout: _GraphLayout = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         """Canonicalize, validate, and cache graph topology."""
@@ -585,7 +602,7 @@ class Graph:
 
     def measure(self) -> MeasuredGraph:
         """Return this graph's cached exact slotted layout."""
-        return self._layout
+        return self._layout.measured
 
     def as_raw_html(self) -> str:
         """Render this graph as deterministic standalone HTML."""

@@ -8,8 +8,7 @@ from typing import TYPE_CHECKING
 from coeftable.theme import Theme
 
 if TYPE_CHECKING:
-    from coeftable.cards.card import Card
-    from coeftable.graph.model import Graph, MeasuredGraph
+    from coeftable.graph.model import Graph, _GraphLayout
     from coeftable.graph.state import _CompiledState
     from coeftable.theme import Role
 
@@ -24,14 +23,6 @@ def _number(value: float | int) -> str:
     return f"{value:g}"
 
 
-def _anchor(card: Card, name: str) -> tuple[float, float]:
-    """Read one of the card's measured wire anchors."""
-    for anchor in card.measure().anchors:
-        if anchor.name == name:
-            return anchor.x, anchor.y
-    raise RuntimeError(f"missing card anchor {name!r}")
-
-
 def _label_color(theme: Theme, label_role: Role | None, label_color: str | None) -> str:
     """Resolve a wire label's semantic, explicit, or muted color."""
     if label_role is not None:
@@ -41,20 +32,20 @@ def _label_color(theme: Theme, label_role: Role | None, label_color: str | None)
     return theme.muted
 
 
-def _wire_svg(graph: Graph, layout: MeasuredGraph, compiled: _CompiledState) -> str:
-    """Render the underlay SVG from the graph's measured boxes."""
-    boxes = dict(layout.boxes)
-    cards = {card_id: card for card_id, card in graph.nodes}
-    out_anchors = {card_id: _anchor(card, "out") for card_id, card in cards.items()}
+def _wire_svg(graph: Graph, layout: _GraphLayout, compiled: _CompiledState) -> str:
+    """Render the underlay SVG from the graph's cached geometry."""
+    measured = layout.measured
+    boxes = dict(measured.boxes)
+    anchors = dict(layout.anchors)
     axis = _esc(graph.theme.axis)
     surface = _esc(graph.theme.surface)
     marker_id = f"{graph.dom_prefix}-arrow"
     fragments = [
         (
-            f'<svg width="{layout.width}" height="{layout.height}" '
-            f'viewBox="0 0 {layout.width} {layout.height}" '
-            f'style="position:absolute;left:0;top:0;width:{layout.width}px;'
-            f'height:{layout.height}px;margin:0;padding:0;overflow:visible" '
+            f'<svg width="{measured.width}" height="{measured.height}" '
+            f'viewBox="0 0 {measured.width} {measured.height}" '
+            f'style="position:absolute;left:0;top:0;width:{measured.width}px;'
+            f'height:{measured.height}px;margin:0;padding:0;overflow:visible" '
             f'xmlns="http://www.w3.org/2000/svg">'
             f'<defs><marker id="{marker_id}" markerWidth="8" markerHeight="8" '
             f'refX="6" refY="3" orient="auto" markerUnits="strokeWidth">'
@@ -63,12 +54,13 @@ def _wire_svg(graph: Graph, layout: MeasuredGraph, compiled: _CompiledState) -> 
     ]
     for wire, wire_dom_id in zip(graph.wires, compiled.wire_dom_ids, strict=True):
         src_left, src_top, _src_width, src_height = boxes[wire.src]
-        dst_left, dst_top, dst_width, _dst_height = boxes[wire.dst]
-        out_x, out_y = out_anchors[wire.src]
+        dst_left, dst_top, _dst_width, _dst_height = boxes[wire.dst]
+        _, (out_x, out_y) = anchors[wire.src]
+        in_x, in_y = anchors[wire.dst][0]
         x0 = src_left + out_x
         y0 = src_top + out_y
-        x1 = dst_left + dst_width / 2
-        y1 = dst_top
+        x1 = dst_left + in_x
+        y1 = dst_top + in_y
         my = (src_top + src_height + dst_top) / 2
         path = (
             f'<path d="M {_number(x0)},{_number(y0)} C {_number(x0)},{_number(my)} '
@@ -100,9 +92,9 @@ def _wire_svg(graph: Graph, layout: MeasuredGraph, compiled: _CompiledState) -> 
     return "".join(fragments)
 
 
-def _nub_markup(graph: Graph, layout: MeasuredGraph, compiled: _CompiledState) -> tuple[str, str]:
+def _nub_markup(graph: Graph, layout: _GraphLayout, compiled: _CompiledState) -> tuple[str, str]:
     """Render checkbox nubs and their sibling glyph rules."""
-    boxes = dict(layout.boxes)
+    boxes = dict(layout.measured.boxes)
     markup: list[str] = []
     rules: list[str] = []
     for card_id, nub_id in compiled.nub_dom_ids.items():
@@ -143,10 +135,11 @@ def _state_style(graph: Graph, compiled: _CompiledState, nub_rules: str) -> str:
 def render_graph(graph: Graph) -> str:
     """Render a graph from its cached layout and compiled state."""
     layout = graph._layout
+    measured = layout.measured
     compiled = graph._compiled
     svg = _wire_svg(graph, layout, compiled) if graph.wires else ""
     cards_html: list[str] = []
-    boxes = dict(layout.boxes)
+    boxes = dict(measured.boxes)
     for (card_id, card), card_dom_id in zip(graph.nodes, compiled.card_dom_ids, strict=True):
         left, top, _width, _height = boxes[card_id]
         control_dom_ids = compiled.control_dom_ids.get(card_id)
@@ -158,7 +151,7 @@ def render_graph(graph: Graph) -> str:
     style = _state_style(graph, compiled, nub_rules) if (compiled.rules or nub_rules) else ""
     return (
         f'<div class="{graph.dom_prefix}-canvas" style="position:relative;box-sizing:border-box;'
-        f'width:{layout.width}px;height:{layout.height}px;margin:0;padding:0;overflow:visible">'
+        f'width:{measured.width}px;height:{measured.height}px;margin:0;padding:0;overflow:visible">'
         f"{svg}{''.join(cards_html)}{nubs}{style}</div>"
     )
 
