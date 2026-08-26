@@ -582,6 +582,12 @@ EXPECTED_CARD_EXPORTS = {
     "CardChrome",
     "CardTemplate",
     "DEFAULT_CHROME",
+    "Diagnostics",
+    "Event",
+    "Events",
+    "Metric",
+    "Region",
+    "resolve_content",
     "MeasuredCard",
 }
 
@@ -596,7 +602,7 @@ ALLOWED_CARDS_IMPORT_ROOTS = {
 
 
 def test_cards_export_surface_is_exactly_the_promised_set():
-    assert len(coeftable.cards.__all__) == 16
+    assert len(coeftable.cards.__all__) == 22
 
     assert set(coeftable.cards.__all__) == EXPECTED_CARD_EXPORTS
     for name in EXPECTED_CARD_EXPORTS:

@@ -19,6 +19,7 @@ from coeftable.cards.adornments import (
 from coeftable.cards.chrome import DEFAULT_CHROME, CardChrome
 from coeftable.cards.fragments import render_adornment
 from coeftable.cards.measure import Anchor, MeasuredCard
+from coeftable.cards.regions import Diagnostics, Event, Events, Metric, Region, resolve_content
 from coeftable.cards.template import CardTemplate
 
 __all__ = [
@@ -29,13 +30,19 @@ __all__ = [
     "CaptionRow",
     "CardChrome",
     "CardTemplate",
+    "Diagnostics",
+    "Event",
+    "Events",
     "InlineSvg",
     "KeyValuePopover",
     "Legend",
     "MeasuredCard",
+    "Metric",
     "MetricValue",
+    "Region",
     "RuleStrip",
     "SelectControl",
     "TextBlock",
     "render_adornment",
+    "resolve_content",
 ]
