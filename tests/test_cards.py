@@ -1049,6 +1049,7 @@ def test_summary_shows_the_chip():
     assert "box-sizing:content-box" in summary
     assert "min-width:0" in summary
     assert "<style>details[open]>summary>.ct-card-chip{display:none}</style>" in html_out
+    assert html_out.index("<summary") < html_out.index("<style")
     chip_span = re.search(r'<span class="ct-card-chip" style="([^"]+)">\+3\.4%</span>', summary)
     assert chip_span is not None
     chip_style = chip_span.group(1)

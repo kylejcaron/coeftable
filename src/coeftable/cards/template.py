@@ -91,13 +91,14 @@ class CardTemplate:
             f"margin:0;padding:0 0 {chrome.padding}px 0;"
             f"border:{chrome.border_width}px solid {_esc(theme.rule)};"
             f"border-radius:{chrome.radius}px;background:{_esc(theme.surface)};"
-            f'overflow:visible"><style>details[open]>summary>.ct-card-chip{{display:none}}</style>'
+            f'overflow:visible">'
             f'<summary style="box-sizing:content-box;display:flex;'
             f"column-gap:{chrome.gap}px;list-style:none;margin:0;"
             f"justify-content:space-between;align-items:flex-start;"
             f"padding:{chrome.padding}px {chrome.padding}px 0 {chrome.padding}px;"
             f'height:{summary_content}px;cursor:pointer">'
             f'<div style="min-width:0;flex:1 1 auto">{header_html}</div>{chip_html}</summary>'
+            f"<style>details[open]>summary>.ct-card-chip{{display:none}}</style>"
             f"{body_block}</details>"
         )
 
