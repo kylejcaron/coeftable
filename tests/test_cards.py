@@ -80,6 +80,7 @@ def test_adornments_are_hashable():
         lambda: TextBlock("x", variant=7),  # ty: ignore[invalid-argument-type]
         lambda: MetricValue("+1", role="good"),  # ty: ignore[invalid-argument-type]
         lambda: MetricValue(3.4),  # ty: ignore[invalid-argument-type]
+        lambda: MetricValue(""),
         lambda: MetricValue("+1", detail=7),  # ty: ignore[invalid-argument-type]
         lambda: MetricValue("+1", detail=""),
         lambda: MetricValue("+1", role=7),  # ty: ignore[invalid-argument-type]
@@ -100,6 +101,7 @@ def test_adornments_are_hashable():
         "nonstr-variant",
         "bad-role",
         "nonstr-value",
+        "empty-value",
         "nonstr-detail",
         "empty-detail",
         "nonstr-role",
@@ -811,6 +813,20 @@ def test_metric_value_overflow_names_section_and_field():
     assert "wider card" in message
 
 
+def test_metric_value_overflow_with_detail_blames_value():
+    with pytest.raises(SpecError) as excinfo:
+        resolve_rows(
+            (MetricValue("+123,456,789.00% " * 4, detail="[1.2, 5.7]"),),
+            usable=60,
+            chrome=DEFAULT_CHROME,
+            section="body",
+        )
+    message = str(excinfo.value)
+    assert "body[0]" in message
+    assert "MetricValue.value" in message
+    assert "wider card" in message
+
+
 def test_metric_detail_overflow_names_section_index_and_detail_field():
     with pytest.raises(SpecError) as excinfo:
         resolve_rows(
@@ -1040,6 +1056,10 @@ def test_template_shell_pins_measured_heights():
     assert "box-sizing:border-box" in html_out
     assert html_out.startswith("<details open")
     assert re.search(r"\bid=", html_out) is None
+    assert (
+        f"border-width:{DEFAULT_CHROME.border_width}px;"
+        f"border-style:solid;border-color:{_esc(DEFAULT.rule)};"
+    ) in html_out
 
 
 def test_bottom_padding_lives_on_details_in_both_fold_states():

@@ -90,7 +90,8 @@ class CardTemplate:
         return (
             f'<details open style="box-sizing:border-box;width:{self.width}px;'
             f"margin:0;padding:0 0 {chrome.padding}px 0;"
-            f"border:{chrome.border_width}px solid {_esc(theme.rule)};"
+            f"border-width:{chrome.border_width}px;border-style:solid;"
+            f"border-color:{_esc(theme.rule)};"
             f"border-radius:{chrome.radius}px;background:{_esc(theme.surface)};"
             f'overflow:visible">'
             f'<summary style="box-sizing:content-box;display:flex;'
