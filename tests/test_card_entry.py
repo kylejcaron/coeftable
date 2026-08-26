@@ -2,6 +2,7 @@
 
 import re
 from dataclasses import replace
+from typing import cast
 
 import pytest
 
@@ -11,6 +12,7 @@ from coeftable.cards import (
     Card,
     CardGrid,
     CardTemplate,
+    SelectControl,
     TextBlock,
 )
 from coeftable.cards.regions import Metric, resolve_content
@@ -75,6 +77,65 @@ def test_regions_resolve_exactly_once_per_construction():
     card.with_theme(BLUE)
     assert len(calls) == 2  # replace() re-resolves under the new theme
     assert calls[1] == BLUE.favorable
+
+
+def test_control_options_cache_resolved_keyed_selects_from_region():
+    calls = []
+
+    class RecordingRegion:
+        def resolve(self, *, width, theme, chrome):
+            calls.append((width, theme, chrome))
+            return (
+                SelectControl(
+                    "Breakout",
+                    (("drivers", "By driver"), ("region", "By region")),
+                    selected="drivers",
+                    key="breakout",
+                ),
+            )
+
+    card = Card("Revenue", content=[RecordingRegion()])
+    options = card.control_options()
+    assert options == {"breakout": ("drivers", "region")}
+    assert card.control_options() is options
+    assert len(calls) == 1
+    with pytest.raises(TypeError):
+        cast(dict[str, tuple[str, ...]], options)["breakout"] = ("other",)
+
+
+def test_duplicate_keyed_selects_are_rejected_per_card():
+    with pytest.raises(SpecError, match=r"duplicate SelectControl\.key"):
+        Card(
+            "Revenue",
+            content=[
+                SelectControl("First", (("a", "A"),), selected="a", key="breakout"),
+                SelectControl("Second", (("b", "B"),), selected="b", key="breakout"),
+            ],
+        )
+
+
+def test_card_threads_handed_control_dom_id_to_select_serializer():
+    card = Card(
+        "Revenue",
+        content=[SelectControl("Breakout", (("a", "A"),), selected="a", key="breakout")],
+    )
+    html_out = card.as_raw_html(control_dom_ids={"breakout": "g0-ctl-0-0"})
+    assert '<select id="g0-ctl-0-0" ' in html_out
+
+
+def test_card_select_without_dom_mapping_keeps_rendered_snapshot():
+    card = Card(
+        "Revenue",
+        content=[SelectControl("Breakout", (("a", "A"),), selected="a", key="breakout")],
+    )
+    snapshot = card.as_raw_html()
+    assert snapshot == card.as_raw_html(control_dom_ids=None)
+    assert snapshot == card.as_raw_html(control_dom_ids={})
+    select_tag = snapshot[
+        snapshot.index("<select") : snapshot.index(">", snapshot.index("<select"))
+    ]
+    assert "id=" not in select_tag
+    assert snapshot.count("<select") == snapshot.count("</select>") == 1
 
 
 def test_chrome_overrides_propagate_to_regions_measurement_and_html():

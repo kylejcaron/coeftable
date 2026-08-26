@@ -1,17 +1,18 @@
 """Serialize adornments to HTML fragments.
 
 The one place the closed adornment vocabulary meets HTML. Invariants:
-no ``id=`` in any HTML this module emits (`InlineSvg` payloads are
-producer-owned and may carry deterministic SVG-internal ids); every text
-and theme value is escaped; `InlineSvg` payloads are verbatim; output is
-deterministic; all geometry comes from `CardChrome` (colors from
-`Theme`), and every text row declares the exact integer line-height
-measurement assumes.
+no ``id=`` in any HTML this module emits unless a caller explicitly binds a
+control DOM id; `InlineSvg` payloads are producer-owned and may carry
+deterministic SVG-internal ids); every text and theme value is escaped;
+`InlineSvg` payloads are verbatim; output is deterministic; all geometry
+comes from `CardChrome` (colors from `Theme`), and every text row declares
+the exact integer line-height measurement assumes.
 """
 
 from __future__ import annotations
 
 import html
+from collections.abc import Mapping
 from typing import assert_never
 
 from coeftable.cards.adornments import (
@@ -83,6 +84,7 @@ def render_adornment(
     *,
     theme: Theme = DEFAULT,
     chrome: CardChrome = DEFAULT_CHROME,
+    control_dom_ids: Mapping[str, str] | None = None,
 ) -> str:
     """Render one adornment as a self-contained HTML fragment."""
     match adornment:
@@ -134,13 +136,18 @@ def render_adornment(
                 f"padding:{_POPOVER_PANEL_PADDING}px;"
                 f'font-size:{chrome.control_size}px">{rows}</div></details>'
             )
-        case SelectControl(label=label, options=options, selected=selected):
+        case SelectControl(label=label, options=options, selected=selected, key=key):
             rendered = "".join(
                 f'<option value="{_esc(value)}"'
                 f"{' selected' if value == selected else ''}>{_esc(text)}</option>"
                 for value, text in options
             )
             row_height = line_height(chrome.control_size, chrome) + chrome.select_padding
+            control_id = (
+                ""
+                if control_dom_ids is None or key is None or key not in control_dom_ids
+                else f' id="{_esc(control_dom_ids[key])}"'
+            )
             return (
                 f'<label style="color:{_esc(theme.muted)};'
                 f"font-size:{chrome.control_size}px;"
@@ -149,7 +156,7 @@ def render_adornment(
                 f'height:{row_height}px;overflow:hidden;white-space:nowrap">'
                 f'<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'
                 f'width:calc(40% - {chrome.swatch_gap}px);flex:none">{_esc(label)}</span>'
-                f'<select style="font-size:{chrome.control_size}px;'
+                f'<select{control_id} style="font-size:{chrome.control_size}px;'
                 f"box-sizing:border-box;height:{line_height(chrome.control_size, chrome)}px;"
                 f'line-height:{line_height(chrome.control_size, chrome)}px;width:60%;flex:none">'
                 f"{rendered}</select>"
@@ -209,7 +216,13 @@ def render_adornment(
             assert_never(adornment)
 
 
-def _wrap(row: RenderRow, theme: Theme, chrome: CardChrome) -> str:
+def _wrap(
+    row: RenderRow,
+    theme: Theme,
+    chrome: CardChrome,
+    *,
+    control_dom_ids: Mapping[str, str] | None = None,
+) -> str:
     """Render one exact-height row, preserving measurement-owned spacing."""
     gap = f";margin-top:{row.gap_above}px" if row.gap_above else ""
     svg_containment = ";line-height:0" if isinstance(row.adornment, InlineSvg) else ""
@@ -217,6 +230,7 @@ def _wrap(row: RenderRow, theme: Theme, chrome: CardChrome) -> str:
         row.adornment,
         theme=theme,
         chrome=chrome,
+        control_dom_ids=control_dom_ids,
     )
     return (
         f'<div style="height:{row.height}px;'

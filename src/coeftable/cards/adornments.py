@@ -177,6 +177,8 @@ class SelectControl:
         _require_entry_tuples(self.options, name="SelectControl.options", arity=2)
         _require_str(self.selected, name="SelectControl.selected")
         _require_optional_str(self.key, name="SelectControl.key")
+        if self.key == "":
+            raise SpecError("SelectControl.key must not be empty")
         values = [value for value, _ in self.options]
         if len(set(values)) != len(values):
             raise SpecError("SelectControl.options values must be unique")
