@@ -361,8 +361,8 @@ def test_trend_lower_is_better_flips_role():
     assert DEFAULT.favorable not in spark.svg
 
 
-def test_trend_spine_alignment_endpoint_on_and_off():
-    for show_endpoint in (True, False):
+def test_trend_spine_alignment_endpoint_reserve_and_visibility():
+    for show_endpoint, expected_end in ((True, 155.0), (False, 215.0)):
         spark, axis = Trend(
             lower=LO,
             upper=HI,
@@ -379,8 +379,32 @@ def test_trend_spine_alignment_endpoint_on_and_off():
             for value in re.findall(r'<line x1="([0-9.]+)" y1="[0-9.]+" x2="\1"', axis.svg)
         ]
         assert point_xs and tick_xs
-        assert abs(point_xs[0] - min(tick_xs)) < 0.01
-        assert abs(point_xs[-1] - max(tick_xs)) < 0.01
+        assert point_xs[0] == pytest.approx(5.0)
+        assert point_xs[-1] == pytest.approx(expected_end)
+        assert min(tick_xs) == pytest.approx(5.0)
+        assert max(tick_xs) == pytest.approx(expected_end)
+        if show_endpoint:
+            assert "<text" in spark.svg
+        else:
+            assert "<text" not in spark.svg
+
+
+def test_trend_axis_fmt_height_and_inset_are_forwarded():
+    spark, axis = Trend(
+        lower=LO,
+        upper=HI,
+        fmt=ct.Percent(signed=True),
+        axis_fmt=ct.Currency(),
+        height=36,
+        axis_height=28,
+        inset=7,
+        **TREND_KW,
+    ).resolve(**RESOLVE_KW)
+    assert spark.width == axis.width == 220
+    assert spark.height == _svg_root_height(spark.svg) == 36
+    assert axis.height == _svg_root_height(axis.svg) == 28
+    assert "%" in spark.svg
+    assert "$" in axis.svg
 
 
 def test_trend_axis_fmt_is_independent_of_endpoint_fmt():
@@ -630,6 +654,39 @@ def test_interval_resolves_bar_and_axis_sharing_domain_and_margin():
     assert isinstance(bar, InlineSvg) and isinstance(axis, InlineSvg)
     assert bar.width == axis.width == 220
     assert DEFAULT.favorable in bar.svg
+
+
+def test_interval_non_default_fields_project_and_render():
+    def marker(value: float) -> str:
+        return f"M{value:g}"
+
+    bar, axis = Interval(
+        estimate=1.5,
+        lower=0.5,
+        upper=2.5,
+        domain=(0.0, 4.0),
+        ref=3.0,
+        fmt=marker,
+        direction="lower_is_better",
+        height=24,
+        axis_height=31,
+        inset=7,
+    ).resolve(**RESOLVE_KW)
+    assert bar.width == axis.width == 220
+    assert bar.height == _svg_root_height(bar.svg) == 24
+    assert axis.height == _svg_root_height(axis.svg) == 31
+    assert DEFAULT.favorable in bar.svg
+    assert DEFAULT.unfavorable not in bar.svg
+
+    # Projection uses inset + (value / domain span) * (width - 2*inset).
+    # Thus the interval edges are 32.75 and 135.75, the estimate tick is
+    # 84.25, and the reference line is 161.50.
+    rect = re.search(r'<rect x="([0-9.]+)"[^>]*?width="([0-9.]+)"', bar.svg)
+    assert rect is not None
+    assert '<line x1="84.25" y1="7.50" x2="84.25" y2="16.50"' in bar.svg
+    assert '<line x1="161.50" y1="0" x2="161.50" y2="24"' in bar.svg
+    assert ">M0<" in axis.svg
+    assert ">M4<" in axis.svg
 
 
 def test_interval_forest_alignment_with_nonzero_margin():

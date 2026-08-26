@@ -128,6 +128,77 @@ def test_annotation_color_escapes_caller_color_attributes():
     assert '" onclick="' not in svg
 
 
+def test_forest_bar_escapes_color_in_clipped_fade_gradient():
+    svg = forest_bar(
+        1.0,
+        0.5,
+        99.0,
+        domain=(0.0, 2.0),
+        ref=0.0,
+        color='red" onclick="alert(1)',
+        theme=DEFAULT,
+        inset=3,
+        margin=8,
+    )
+    assert "&quot;" in svg
+    assert '" onclick="' not in svg
+
+
+def test_forest_bar_escapes_color_in_clipped_triangular_cap():
+    svg = forest_bar(
+        1.0,
+        0.5,
+        99.0,
+        domain=(0.0, 2.0),
+        ref=0.0,
+        color='red" onclick="alert(1)',
+        theme=DEFAULT,
+        inset=3,
+        margin=0,
+    )
+    assert "&quot;" in svg
+    assert '" onclick="' not in svg
+
+
+def test_sparkline_bar_escapes_color_in_clipped_ghost_and_cap():
+    svg = sparkline_bar(
+        [0.0, 1.0, 2.0],
+        [1.0, 3.0, 1.0],
+        [0.8, 2.8, 0.8],
+        [1.2, 3.2, 1.2],
+        x_domain=(0.0, 2.0),
+        domain=(0.0, 2.0),
+        ref=0.0,
+        color='red" onclick="alert(1)',
+        fmt=Number(decimals=1),
+    )
+    assert "&quot;" in svg
+    assert '" onclick="' not in svg
+
+
+def test_sparkline_axis_escapes_color_in_legend_entries():
+    svg = sparkline_axis(
+        x_domain=(0.0, 2.0),
+        fmt=Number(decimals=0),
+        theme=DEFAULT,
+        legend=[("series", 'red" onclick="alert(1)')],
+    )
+    assert "&quot;" in svg
+    assert '" onclick="' not in svg
+
+
+def test_sparkline_axis_escapes_hostile_theme_axis_and_text_colors():
+    hostile = 'red" onclick="alert(1)'
+    svg = sparkline_axis(
+        x_domain=(0.0, 10.0),
+        fmt=Number(decimals=0),
+        theme=Theme(axis=hostile, text=hostile),
+        legend=[("series", "#123456")],
+    )
+    assert "&quot;" in svg
+    assert '" onclick="' not in svg
+
+
 def test_forest_bar_reference_line_spans_the_passed_height():
     svg = forest_bar(
         1.0, 0.5, 1.5, domain=(0.0, 2.0), ref=0.0, color="#000", theme=DEFAULT, height=48
