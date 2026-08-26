@@ -72,7 +72,7 @@ src = ["src", "tests"]
 docstring-code-format = true
 
 [tool.ruff.lint]
-select = ["B", "C90", "D", "E", "F", "I", "PLR0911", "PLR0912", "PLR0915", "RUF", "S", "UP", "W"]
+select = ["B", "C90", "D", "E", "F", "I", "PLR0911", "PLR0912", "PLR0913", "PLR0915", "RUF", "S", "UP", "W"]
 ignore = ["RUF001", "RUF002", "RUF012"]
 
 [tool.ruff.lint.mccabe]
@@ -83,6 +83,9 @@ max-complexity = 24
 max-branches = 24
 max-statements = 100
 max-returns = 12
+# Wide keyword-only APIs (plot primitives, table builders) are deliberate;
+# only flag genuine monsters.
+max-args = 24
 
 [tool.ruff.lint.pydocstyle]
 convention = "numpy"
