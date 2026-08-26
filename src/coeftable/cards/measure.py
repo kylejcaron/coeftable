@@ -133,7 +133,7 @@ def text_line_plan(text: str, *, budget: int, max_lines: int) -> tuple[str, ...]
         lines.append(current)
     if len(lines) > max_lines:
         kept = lines[:max_lines]
-        kept[-1] = _clip(kept[-1] + " " + lines[max_lines], budget)
+        kept[-1] = " ".join([kept[-1], *lines[max_lines:]])
         return tuple(kept)
     return tuple(lines)
 

@@ -743,19 +743,16 @@ def test_line_plan_empty_text_is_one_blank_line():
     assert text_line_plan("", budget=10, max_lines=3) == ("",)
 
 
-def test_line_plan_caps_and_ellipsizes_the_last_line():
+def test_line_plan_cap_keeps_full_remainder_on_last_line():
     plan = text_line_plan("one two three four five", budget=9, max_lines=2)
     assert len(plan) == 2
-    assert plan[1].endswith("…")
-    assert len(plan[1]) <= 9
+    assert plan[0] == "one two"
+    assert plan[1] == "three four five"
 
 
-def test_line_plan_cap_preserves_word_boundary_and_ellipsis():
+def test_line_plan_cap_joins_remainder_with_single_spaces():
     plan = text_line_plan("ab cd ef", budget=4, max_lines=1)
-    assert len(plan) == 1
-    assert plan[0].endswith("…")
-    assert len(plan[0]) <= 4
-    assert "abcd" not in plan[0]
+    assert plan == ("ab cd ef",)
 
 
 def test_wrapping_textblock_height_is_lines_times_line_height():
