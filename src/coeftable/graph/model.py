@@ -436,6 +436,68 @@ def _graph_rules(
     return cast(tuple[StateRule, ...], rules)
 
 
+type Box = tuple[int, int, int, int]
+
+
+@dataclass(frozen=True, slots=True)
+class MeasuredGraph:
+    """Cached canvas footprint and boxes in node declaration order.
+
+    ``boxes`` is a tuple rather than a mutable mapping so the measured record
+    remains an immutable snapshot while retaining deterministic iteration.
+    Each entry is ``(card_id, (left, top, width, expanded_height))``; centered
+    spare widths use floor integer division when the difference is odd.
+
+    """
+
+    width: int
+    height: int
+    boxes: tuple[tuple[str, Box], ...]
+
+
+def _graph_layout_offsets(sizes: tuple[int, ...], gap: int) -> tuple[int, ...]:
+    """Return each column/layer's offset from the canvas origin."""
+    offsets: list[int] = []
+    offset = 0
+    for size in sizes:
+        offsets.append(offset)
+        offset += size + gap
+    return tuple(offsets)
+
+
+def _graph_measure(
+    nodes: tuple[tuple[str, Card], ...],
+    slots: tuple[Slot, ...],
+    *,
+    gap: int,
+    layer_gap: int,
+    padding: int,
+) -> MeasuredGraph:
+    """Measure rebound cards once and resolve their slotted border boxes."""
+    measured = {card_id: card.measure() for card_id, card in nodes}
+    slot_by_id = {slot.card_id: slot for slot in slots}
+    column_widths = [0] * (max(slot.slot for slot in slots) + 1)
+    layer_heights = [0] * (max(slot.layer for slot in slots) + 1)
+    for slot in slots:
+        footprint = measured[slot.card_id]
+        column_widths[slot.slot] = max(column_widths[slot.slot], footprint.width)
+        layer_heights[slot.layer] = max(layer_heights[slot.layer], footprint.expanded_height)
+    column_offsets = _graph_layout_offsets(tuple(column_widths), gap)
+    layer_offsets = _graph_layout_offsets(tuple(layer_heights), layer_gap)
+    boxes: list[tuple[str, Box]] = []
+    for card_id, _ in nodes:
+        slot = slot_by_id[card_id]
+        footprint = measured[card_id]
+        left = (
+            padding + column_offsets[slot.slot] + (column_widths[slot.slot] - footprint.width) // 2
+        )
+        top = padding + layer_offsets[slot.layer]
+        boxes.append((card_id, (left, top, footprint.width, footprint.expanded_height)))
+    width = sum(column_widths) + gap * (len(column_widths) - 1) + 2 * padding
+    height = sum(layer_heights) + layer_gap * (len(layer_heights) - 1) + 2 * padding
+    return MeasuredGraph(width, height, tuple(boxes))
+
+
 @dataclass(frozen=True, slots=True)
 class Graph:
     """A validated, themed graph of cards and explicit vertical wires."""
@@ -455,6 +517,7 @@ class Graph:
     _blocker_families: Mapping[str, frozenset[frozenset[str]]] = field(
         init=False, repr=False, compare=False
     )
+    _layout: MeasuredGraph = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         """Canonicalize, validate, and cache graph topology."""
@@ -492,3 +555,19 @@ class Graph:
         object.__setattr__(self, "rules", rules)
         object.__setattr__(self, "_rebound_cards", tuple(card for _, card in rebound_nodes))
         object.__setattr__(self, "_blocker_families", blockers)
+
+        object.__setattr__(
+            self,
+            "_layout",
+            _graph_measure(
+                tuple(rebound_nodes),
+                slots,
+                gap=self.gap,
+                layer_gap=self.layer_gap,
+                padding=self.chrome.padding,
+            ),
+        )
+
+    def measure(self) -> MeasuredGraph:
+        """Return this graph's cached exact slotted layout."""
+        return self._layout

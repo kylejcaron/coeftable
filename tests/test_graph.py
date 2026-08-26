@@ -10,9 +10,18 @@ import pytest
 
 import coeftable
 import coeftable.graph
-from coeftable.cards import Card, CardChrome, SelectControl
+from coeftable.cards import Card, CardChrome, SelectControl, TextBlock
 from coeftable.errors import SpecError
-from coeftable.graph import Atom, ControlRef, Graph, Slot, Slotted, StateRule, Wire
+from coeftable.graph import (
+    Atom,
+    ControlRef,
+    Graph,
+    MeasuredGraph,
+    Slot,
+    Slotted,
+    StateRule,
+    Wire,
+)
 from coeftable.graph.topology import blocker_families, check_acyclic, is_acyclic
 
 
@@ -196,12 +205,120 @@ def test_every_leaf_is_frozen_slotted_and_without_dict():
 
 
 def test_graph_export_surface_is_exact_and_top_level_excludes_graph():
-    expected = {"Atom", "ControlRef", "Graph", "Slot", "Slotted", "StateRule", "Wire"}
-    assert len(coeftable.graph.__all__) == 7
+    expected = {
+        "Atom",
+        "ControlRef",
+        "Graph",
+        "MeasuredGraph",
+        "Slot",
+        "Slotted",
+        "StateRule",
+        "Wire",
+    }
+    assert len(coeftable.graph.__all__) == 8
     assert set(coeftable.graph.__all__) == expected
     for name in expected:
         assert hasattr(coeftable.graph, name)
     assert "graph" not in coeftable.__all__
+
+
+def test_measured_graph_is_frozen_slotted_and_tuple_backed():
+    measured = MeasuredGraph(100, 200, (("card", (1, 2, 3, 4)),))
+
+    assert dataclasses.is_dataclass(measured)
+    assert hasattr(type(measured), "__slots__")
+    assert not hasattr(measured, "__dict__")
+    assert isinstance(measured.boxes, tuple)
+    assert measured.boxes[0] == ("card", (1, 2, 3, 4))
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        measured.width = 101
+
+
+def test_graph_measure_single_card_is_exact_and_cached():
+    graph = _plain_graph()
+    footprint = graph.nodes[0][1].measure()
+
+    measured = graph.measure()
+    assert measured is graph.measure()
+    assert measured.width == footprint.width + 2 * graph.chrome.padding
+    assert measured.height == footprint.expanded_height + 2 * graph.chrome.padding
+    assert measured.boxes == (
+        (
+            "root",
+            (
+                graph.chrome.padding,
+                graph.chrome.padding,
+                footprint.width,
+                footprint.expanded_height,
+            ),
+        ),
+    )
+
+
+def test_graph_measure_sums_different_column_widths_and_layer_heights():
+    left = Card("left", width=200)
+    right = Card("right", width=301)
+    graph = _plain_graph(
+        nodes=(("left", left), ("right", right)),
+        slots=(Slot("left", 0, 0), Slot("right", 0, 1)),
+        gap=13,
+    )
+    left_size = graph.nodes[0][1].measure()
+    right_size = graph.nodes[1][1].measure()
+    pad = graph.chrome.padding
+    measured = graph.measure()
+
+    assert measured.width == left_size.width + right_size.width + 13 + 2 * pad
+    assert measured.boxes == (
+        ("left", (pad, pad, left_size.width, left_size.expanded_height)),
+        ("right", (pad + left_size.width + 13, pad, right_size.width, right_size.expanded_height)),
+    )
+
+    tall = Card("tall", content=(TextBlock("body"),))
+    layered = _plain_graph(
+        nodes=(("short", Card("short")), ("tall", tall)),
+        slots=(Slot("short", 0, 0), Slot("tall", 1, 0)),
+        layer_gap=17,
+    )
+    short_size = layered.nodes[0][1].measure()
+    tall_size = layered.nodes[1][1].measure()
+    layered_measure = layered.measure()
+    assert (
+        layered_measure.height
+        == short_size.expanded_height + tall_size.expanded_height + 17 + 2 * pad
+    )
+    assert layered_measure.boxes[1] == (
+        "tall",
+        (pad, pad + short_size.expanded_height + 17, tall_size.width, tall_size.expanded_height),
+    )
+
+
+def test_graph_measure_centers_shared_slot_alternatives_by_max_width():
+    graph = Graph(
+        nodes=(
+            ("controller", _shared_slot_controller()),
+            ("left", Card("left", width=200)),
+            ("right", Card("right", width=301)),
+        ),
+        layout=Slotted((Slot("controller", 0, 0), Slot("left", 1, 0), Slot("right", 1, 0))),
+        gap=13,
+        rules=_shared_slot_partition_rules(),
+    )
+    boxes = dict(graph.measure().boxes)
+    pad = graph.chrome.padding
+    assert boxes["left"][0] == pad + (301 - 200) // 2
+    assert boxes["right"][0] == pad
+    assert boxes["left"][1] == boxes["right"][1]
+    assert graph.measure().width == 301 + 2 * pad
+
+
+def test_graph_measure_boxes_cover_each_node_once():
+    graph = _plain_graph(
+        nodes=(("a", Card("a")), ("b", Card("b"))),
+        slots=(Slot("a", 0, 0), Slot("b", 0, 1)),
+    )
+
+    assert tuple(card_id for card_id, _ in graph.measure().boxes) == ("a", "b")
 
 
 def test_every_graph_module_imports_only_foundation_or_cards_roots():
