@@ -735,6 +735,19 @@ def test_line_plan_hard_splits_an_overlong_token():
     )
 
 
+@pytest.mark.parametrize(
+    ("text", "budget", "max_lines", "expected"),
+    [
+        ("ab cdefgh", 4, 1, ("ab cdefgh",)),
+        ("abcdefghij", 4, 2, ("abcd", "efghij")),
+        ("one two three", 7, 1, ("one two three",)),
+        ("xy abcdefgh z", 4, 1, ("xy abcdefgh z",)),
+    ],
+)
+def test_line_plan_tracks_line_start_continuation_flags(text, budget, max_lines, expected):
+    assert text_line_plan(text, budget=budget, max_lines=max_lines) == expected
+
+
 def test_line_plan_normalizes_whitespace():
     assert text_line_plan("  a\tb\n\nc  ", budget=20, max_lines=3) == ("a b c",)
 
@@ -939,10 +952,11 @@ def test_one_character_title_header_keeps_chip_at_reduced_width():
 def test_chip_refused_when_candidate_is_less_than_one():
     chrome = CardChrome(gap=24)
     chip_value = "+3"
-    usable = 40
+    usable = 45
     width = usable + 2 * (chrome.padding + chrome.border_width)
     chip_width = len(chip_value) * chrome.value_size * chrome.data_char_width_ratio
     candidate = int(usable - chip_width - chrome.gap)
+    assert chip_width <= usable / 2
     assert candidate < 1
 
     _, _, _, chip = measure_card(

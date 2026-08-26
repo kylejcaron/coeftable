@@ -121,15 +121,18 @@ def text_line_plan(text: str, *, budget: int, max_lines: int) -> tuple[str, ...]
             if current:
                 lines.append((current, current_continuation))
                 current = ""
-            lines.append((word[:budget], True))
+            lines.append((word[:budget], word_continuation))
             word = word[budget:]
             word_continuation = True
         if not word:
             continue
         candidate = f"{current} {word}" if current else word
         if len(candidate) <= budget:
-            current = candidate
-            current_continuation = word_continuation
+            if current:
+                current = candidate
+            else:
+                current = word
+                current_continuation = word_continuation
         else:
             lines.append((current, current_continuation))
             current = word
