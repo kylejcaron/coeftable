@@ -183,6 +183,15 @@ def test_header_and_footer_rows_use_derived_full_inner_width(where):
     assert panel.measure().width == 60 + 60 + 10 + 2 * (16 + 1)
 
 
+def test_row_gap_is_honored_at_the_fit_boundary():
+    # 60 + 59 + gap(1) == 120 fits exactly; the default gap of 10 would overflow.
+    row = Row(((TextBlock("a"), 60), (TextBlock("b"), 59)), gap=1)
+    panel = _panel(pane_width=120, content=(row,))
+    assert "column-gap:1px" in panel.as_raw_html()
+    with pytest.raises(SpecError):
+        _panel(pane_width=120, content=(Row(((TextBlock("a"), 60), (TextBlock("b"), 59))),))
+
+
 def test_multiline_cell_stacks_and_row_height_uses_max_cell_height():
     trend = Trend(
         x=(0, 1),
