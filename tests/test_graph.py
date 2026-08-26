@@ -780,7 +780,7 @@ def test_shared_slot_controller_cannot_be_inside_the_group():
             hide_cards=("left",),
         ),
     )
-    with pytest.raises(SpecError, match="shared"):
+    with pytest.raises(SpecError, match="shared-slot controller must be external to its group"):
         _shared_slot_graph(
             rules,
             slots=(Slot("controller", 0, 0), Slot("left", 0, 0), Slot("right", 1, 0)),
@@ -1053,6 +1053,42 @@ def test_graph_compiler_merges_injected_closure_and_escapes_options():
     )
 
 
+def test_graph_renderer_escapes_style_terminators_in_option_values():
+    option = "</style><script>"
+    graph = Graph(
+        (
+            (
+                "controller",
+                Card(
+                    "controller",
+                    content=(
+                        SelectControl(
+                            "Mode",
+                            ((option, "Mode"),),
+                            selected=option,
+                            key="mode",
+                        ),
+                    ),
+                ),
+            ),
+            ("hidden", Card("hidden")),
+        ),
+        Slotted((Slot("controller", 0, 0), Slot("hidden", 1, 0))),
+        rules=(
+            StateRule(
+                (Atom(ControlRef("controller", "mode"), "option_checked", option),),
+                hide_cards=("hidden",),
+            ),
+        ),
+        dom_prefix="escape",
+    )
+    output = graph.as_raw_html()
+    style_body = output[output.rindex("<style>") + len("<style>") : output.rindex("</style>")]
+    assert "</style>" not in style_body
+    assert "<script>" not in style_body
+    assert r"\3C /style\3E \3C script\3E " in style_body
+
+
 def test_graph_state_is_empty_and_byte_deterministic():
     first = _state_diamond(collapsible=(), prefix="x")
     second = _state_diamond(collapsible=(), prefix="x")
@@ -1173,6 +1209,25 @@ def test_graph_renderer_serializes_compiled_rules_and_nub_glyph_swap():
     assert 'type="checkbox" id="rules-nub-1" style="display:none"' in output
     assert "#rules-nub-1:checked + label span:first-child{display:none}" in style
     assert "#rules-nub-1:checked + label span:last-child{display:inline}" in style
+
+
+def test_graph_renderer_contains_nubs_inside_their_card_wrappers():
+    graph = Graph(
+        (("source", Card("Source")), ("target", Card("Target"))),
+        Slotted((Slot("source", 0, 0), Slot("target", 1, 0))),
+        collapsible=("source",),
+        rules=(StateRule((Atom(ControlRef("source"), "checked"),), hide_cards=("source",)),),
+        dom_prefix="contain",
+    )
+    output = graph.as_raw_html()
+    source_start = output.index('<div id="contain-card-0"')
+    target_start = output.index('<div id="contain-card-1"')
+    nub_input = '<input type="checkbox" id="contain-nub-0" style="display:none">'
+    nub_label = '<label for="contain-nub-0"'
+    input_start = output.index(nub_input)
+    label_start = output.index(nub_label)
+    assert source_start < input_start < target_start
+    assert source_start < label_start < target_start
 
 
 def test_graph_renderer_mints_disjoint_ids_and_never_emits_semantic_ids():

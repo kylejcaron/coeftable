@@ -92,19 +92,19 @@ def _wire_svg(graph: Graph, layout: _GraphLayout, compiled: _CompiledState) -> s
     return "".join(fragments)
 
 
-def _nub_markup(graph: Graph, layout: _GraphLayout, compiled: _CompiledState) -> tuple[str, str]:
-    """Render checkbox nubs and their sibling glyph rules."""
+def _nub_markup(
+    graph: Graph, layout: _GraphLayout, compiled: _CompiledState
+) -> tuple[dict[str, str], str]:
+    """Render each checkbox nub for its card and its sibling glyph rules."""
     boxes = dict(layout.measured.boxes)
-    markup: list[str] = []
+    markup: dict[str, str] = {}
     rules: list[str] = []
     for card_id, nub_id in compiled.nub_dom_ids.items():
-        left, top, width, height = boxes[card_id]
-        glyph_left = left + (width - 18) / 2
-        glyph_top = top + height
-        markup.append(
+        _left, _top, width, height = boxes[card_id]
+        markup[card_id] = (
             f'<input type="checkbox" id="{nub_id}" style="display:none">'
-            f'<label for="{nub_id}" style="position:absolute;left:{_number(glyph_left)}px;'
-            f"top:{_number(glyph_top)}px;width:18px;height:18px;box-sizing:border-box;"
+            f'<label for="{nub_id}" style="position:absolute;left:{_number((width - 18) / 2)}px;'
+            f"top:{_number(height)}px;width:18px;height:18px;box-sizing:border-box;"
             f"display:flex;align-items:center;justify-content:center;border:1px solid "
             f"{_esc(graph.theme.axis)};border-radius:50%;background:{_esc(graph.theme.surface)};"
             f'color:{_esc(graph.theme.axis)};font-size:13px;line-height:16px;cursor:pointer">'
@@ -117,7 +117,7 @@ def _nub_markup(graph: Graph, layout: _GraphLayout, compiled: _CompiledState) ->
                 f"#{nub_id}:checked + label span:last-child{{display:inline}}",
             )
         )
-    return "".join(markup), "".join(rules)
+    return markup, "".join(rules)
 
 
 def _state_style(graph: Graph, compiled: _CompiledState, nub_rules: str) -> str:
@@ -138,21 +138,22 @@ def render_graph(graph: Graph) -> str:
     measured = layout.measured
     compiled = graph._compiled
     svg = _wire_svg(graph, layout, compiled) if graph.wires else ""
+    nubs, nub_rules = _nub_markup(graph, layout, compiled)
     cards_html: list[str] = []
     boxes = dict(measured.boxes)
     for (card_id, card), card_dom_id in zip(graph.nodes, compiled.card_dom_ids, strict=True):
-        left, top, _width, _height = boxes[card_id]
+        left, top, width, height = boxes[card_id]
         control_dom_ids = compiled.control_dom_ids.get(card_id)
         cards_html.append(
             f'<div id="{card_dom_id}" style="position:absolute;left:{_number(left)}px;'
-            f'top:{_number(top)}px">{card.as_raw_html(control_dom_ids=control_dom_ids)}</div>'
+            f'top:{_number(top)}px;width:{_number(width)}px;height:{_number(height)}px">'
+            f"{card.as_raw_html(control_dom_ids=control_dom_ids)}{nubs.get(card_id, '')}</div>"
         )
-    nubs, nub_rules = _nub_markup(graph, layout, compiled)
     style = _state_style(graph, compiled, nub_rules) if (compiled.rules or nub_rules) else ""
     return (
         f'<div class="{graph.dom_prefix}-canvas" style="position:relative;box-sizing:border-box;'
         f'width:{measured.width}px;height:{measured.height}px;margin:0;padding:0;overflow:visible">'
-        f"{svg}{''.join(cards_html)}{nubs}{style}</div>"
+        f"{svg}{''.join(cards_html)}{style}</div>"
     )
 
 

@@ -254,8 +254,6 @@ def _graph_resolve_shared_slot_controller(
     """Resolve the sole external controller and enforce its visibility."""
     candidates: list[tuple[str, tuple[StateRule, ...]]] = []
     for card_id, card in cards.items():
-        if card_id in group:
-            continue
         for key, options in card.control_options().items():
             if len(options) != len(group):
                 continue
@@ -269,6 +267,8 @@ def _graph_resolve_shared_slot_controller(
             if governing is not None:
                 candidates.append((card_id, governing))
 
+    if any(card_id in group for card_id, _ in candidates):
+        raise SpecError("shared-slot controller must be external to its group")
     if len(candidates) != 1:
         raise SpecError("shared slots require one governing external SelectControl")
     controller, governing = candidates[0]

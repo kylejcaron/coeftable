@@ -41,6 +41,10 @@ def _css_string(value: str) -> str:
             escaped.append("\\C ")
         elif codepoint == 0:
             escaped.append("\\FFFD ")
+        elif character == "<":
+            escaped.append("\\3C ")
+        elif character == ">":
+            escaped.append("\\3E ")
         elif codepoint < 0x20 or codepoint == 0x7F:
             escaped.append(f"\\{codepoint:X} ")
         else:
