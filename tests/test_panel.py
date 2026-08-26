@@ -503,15 +503,15 @@ def test_retention_fixture_reproduces_the_panel_through_public_api():
     assert d7_first is not None and d7_last is not None and d30_last is not None
     header = Row(
         (
-            (TextBlock("Retention · weekly signup cohorts", variant="title"), 430),
-            (TextBlock("D7 Δ since first cohort", variant="caption"), 100),
+            (TextBlock("Retention · weekly signup cohorts", variant="title"), 360),
+            (TextBlock("D7 Δ since first cohort", variant="caption"), 150),
             (Metric((d7_last - d7_first) * 100.0, signed_points), 90),
-            (TextBlock("latest D30", variant="caption"), 70),
+            (TextBlock("latest D30", variant="caption"), 80),
             (Metric(d30_last * 100.0, pcts), 80),
         ),
         gap=14,
     )
-    assert tuple(width for _, width in header.cells) == (430, 100, 90, 70, 80)
+    assert tuple(width for _, width in header.cells) == (360, 150, 90, 80, 80)
     assert all(tuple(width for _, width in row.cells) == (34, 52, 86, 240) for row in trend_rows)
     journey = Pane(
         "The journey",
