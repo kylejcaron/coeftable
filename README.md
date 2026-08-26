@@ -545,6 +545,42 @@ A `Panel` left as the last notebook expression renders itself via
 `_repr_html_`; `with_theme()` returns the same composition under another
 theme.
 
+## Metric trees (experimental)
+
+`coeftable.graph` turns metric cards wired into a driver DAG into a metric
+tree: the graph layer adds slotted layout, vertical wires, and zero-JS
+fold/downstream-hide behavior. The API is experimental and may change; it is
+deliberately not exported from the top-level `coeftable` namespace yet.
+
+```python
+import coeftable as ct
+from coeftable.cards import Card
+from coeftable.graph import MetricTree
+
+tree = MetricTree(
+    nodes=(
+        ("revenue", Card("Revenue")),
+        ("price", Card("Price")),
+        ("volume", Card("Volume")),
+        ("retention", Card("Retention")),
+    ),
+    edges=(
+        ("revenue", "price", 0.012),
+        ("revenue", "volume", 0.021),
+        ("volume", "retention", -0.006),
+    ),
+    fmt=ct.Percent(signed=True),
+)
+html = tree.as_raw_html()
+```
+
+Each card retains its native `<details>` fold control. The nub under a parent
+hides everything downstream with pure CSS, so neither interaction needs
+JavaScript.
+
+A `MetricTree` left as the last notebook expression renders itself via
+`_repr_html_`; `with_theme()` follows the same conventions as cards.
+
 ## Plot annotations
 
 `ct.Rule` draws a line and `ct.Band` shades an interval in a forest plot or
