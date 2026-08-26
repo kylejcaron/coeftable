@@ -490,9 +490,10 @@ grid = CardGrid([revenue, revenue.with_theme(ct.theme.BLUE)])
 
 A `Card` (or `CardGrid`) left as the last notebook expression renders
 itself; `as_raw_html()` is the string entry point. Cards are fixed-width
-with exact measured heights, fold via a native `<details>` header (the
-headline value stays visible as a chip), and hold their footprint in
-both states.
+with exact measured heights and fold via a native `<details>` header (the
+headline value stays visible as a chip). A standalone card collapses to
+its header; inside a `CardGrid` each card's expanded footprint stays
+reserved, so folding never reflows neighbors.
 
 ## Plot annotations
 

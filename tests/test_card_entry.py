@@ -1,6 +1,7 @@
 """Contract tests for the public Card and CardGrid entry points."""
 
 import re
+from dataclasses import replace
 
 import pytest
 
@@ -74,6 +75,27 @@ def test_regions_resolve_exactly_once_per_construction():
     card.with_theme(BLUE)
     assert len(calls) == 2  # replace() re-resolves under the new theme
     assert calls[1] == BLUE.favorable
+
+
+def test_chrome_overrides_propagate_to_regions_measurement_and_html():
+    widths = []
+
+    class Recording:
+        def resolve(self, *, width, theme, chrome):
+            widths.append(width)
+            return (TextBlock("resolved"),)
+
+    chrome = replace(DEFAULT_CHROME, padding=24, title_size=20)
+    card = Card("t", content=[Recording()], chrome=chrome)
+    assert widths == [card.width - 2 * (24 + chrome.border_width)]
+
+    default = Card("t", content=[Recording()])
+    assert card.measure().collapsed_height != default.measure().collapsed_height
+    assert card.measure().expanded_height != default.measure().expanded_height
+
+    html_out = card.as_raw_html()
+    assert "padding:24px 24px 0 24px" in html_out
+    assert "font-size:20px" in html_out
 
 
 def test_region_errors_surface_at_card_construction():
