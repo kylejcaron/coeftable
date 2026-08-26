@@ -326,7 +326,9 @@ def _graph_validate_layout(slots: tuple[Slot, ...], known_cards: set[str]) -> No
         raise SpecError("Graph.layout.slots must cover graph node ids exactly once")
     layers = {slot.layer for slot in slots}
     slot_domain = {slot.slot for slot in slots}
-    if layers != set(range(max(layers) + 1)) or slot_domain != set(range(max(slot_domain) + 1)):
+    layers_dense = min(layers) == 0 and max(layers) == len(layers) - 1
+    slots_dense = min(slot_domain) == 0 and max(slot_domain) == len(slot_domain) - 1
+    if not (layers_dense and slots_dense):
         raise SpecError("Graph.layout layer and slot indices must be dense from zero")
 
 
