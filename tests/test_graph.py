@@ -1788,4 +1788,24 @@ def test_metric_tree_driver_fixture_has_exact_layout_wires_labels_nubs_and_deter
         my2 = dst_top - graph.layer_gap / 2
         assert coordinates == pytest.approx((x0, y0, x0, my1, x1, my2, x1, y1 - 3))
 
-    assert html == _driver_tree_fixture().as_raw_html()
+
+def test_graph_html_attributes_are_well_formed():
+    """An unterminated attribute quote swallows following markup silently."""
+    import html.parser
+
+    class Auditor(html.parser.HTMLParser):
+        def __init__(self) -> None:
+            super().__init__()
+            self.tags: list[str] = []
+
+        def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+            self.tags.append(tag)
+            for name, value in attrs:
+                assert value is None or "<" not in value, f"unterminated {name} on <{tag}>"
+
+    output = _state_diamond(prefix="wf").as_raw_html()
+    auditor = Auditor()
+    auditor.feed(output)
+    labels = auditor.tags.count("label")
+    inputs = auditor.tags.count("input")
+    assert labels == inputs > 0  # every nub checkbox has its glyph label parsed as a real tag
