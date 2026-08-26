@@ -63,11 +63,13 @@ def test_panel_box_model_counts_header_footer_dividers_only_when_nonempty():
     expected = (
         2 * (chrome.border_width + chrome.padding)
         + 16
+        + chrome.header_gap
         + chrome.border_width
         + chrome.header_gap
         + 19
         + chrome.header_gap
         + chrome.border_width
+        + chrome.header_gap
         + 16
     )
     assert measured.height == expected
@@ -276,10 +278,7 @@ def test_empty_resolving_regions_produce_no_dividers_or_gaps():
     bare = Panel((pane,))
     phantom = Panel((pane,), header=(Empty(),), footer=(Empty(),))
     assert phantom.measure() == bare.measure()
-    assert phantom.as_raw_html().count("border-bottom") == bare.as_raw_html().count(
-        "border-bottom"
-    )
-    assert phantom.as_raw_html().count("border-top") == bare.as_raw_html().count("border-top")
+    assert phantom.as_raw_html() == bare.as_raw_html()
 
     empty_content = Panel((Pane("x", content=(Empty(),), width=200),))
     truly_empty = Panel((Pane("x", content=(), width=200),))
@@ -573,17 +572,19 @@ def test_retention_fixture_reproduces_the_panel_through_public_api():
     expected_height = (
         2 * (chrome.border_width + chrome.padding)
         + header_height
+        + chrome.header_gap
         + chrome.border_width
         + chrome.header_gap
         + max(journey_height, trend_height)
         + chrome.header_gap
         + chrome.border_width
+        + chrome.header_gap
         + footer_height
     )
     assert measured.width == 430 + 442 + 36 + 2 * (16 + 1) == 942
     assert measured.pane_heights == (journey_height, trend_height)
     assert measured.height == expected_height
-    assert measured.height == 388
+    assert measured.height == 408
 
     shell_style = re.match(r'<div style="([^"]+)">', html)
     assert shell_style is not None

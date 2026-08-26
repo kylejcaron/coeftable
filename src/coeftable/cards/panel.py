@@ -236,10 +236,10 @@ class Panel:
         height = 2 * (self.chrome.border_width + self.chrome.padding)
         height += _stack_height(header_layout)
         if _stack_height(header_layout):
-            height += self.chrome.border_width + self.chrome.header_gap
+            height += 2 * self.chrome.header_gap + self.chrome.border_width
         height += max(pane.height for pane in pane_layouts)
         if _stack_height(footer_layout):
-            height += self.chrome.header_gap + self.chrome.border_width
+            height += 2 * self.chrome.header_gap + self.chrome.border_width
         height += _stack_height(footer_layout)
         measured = MeasuredPanel(
             width=width,
@@ -340,15 +340,19 @@ class Panel:
         if _stack_height(layout.header):
             header_divider = (
                 f'<div style="box-sizing:border-box;'
-                f"height:{chrome.header_gap + chrome.border_width}px;"
-                f'border-bottom:{chrome.border_width}px solid {_esc(self.theme.rule)}"></div>'
+                f"height:{2 * chrome.header_gap + chrome.border_width}px;"
+                f"padding:{chrome.header_gap}px 0;"
+                f'margin:0"><div style="height:{chrome.border_width}px;'
+                f'background:{_esc(self.theme.rule)}"></div></div>'
             )
         footer_divider = ""
         if _stack_height(layout.footer):
             footer_divider = (
                 f'<div style="box-sizing:border-box;'
-                f"height:{chrome.header_gap + chrome.border_width}px;"
-                f'border-top:{chrome.border_width}px solid {_esc(self.theme.rule)}"></div>'
+                f"height:{2 * chrome.header_gap + chrome.border_width}px;"
+                f"padding:{chrome.header_gap}px 0;"
+                f'margin:0"><div style="height:{chrome.border_width}px;'
+                f'background:{_esc(self.theme.rule)}"></div></div>'
             )
         footer_html = _render_stack(layout.footer, theme=self.theme, chrome=chrome)
         panes_html = (
