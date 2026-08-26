@@ -1789,6 +1789,8 @@ def test_metric_tree_driver_fixture_has_exact_layout_wires_labels_nubs_and_deter
         my1 = src_top + src_height + graph.layer_gap / 2
         my2 = dst_top - graph.layer_gap / 2
         assert coordinates == pytest.approx((x0, y0, x0, my1, x1, my2, x1, y1 - 3))
+    # Construction-level determinism: a FRESH fixture build yields identical HTML.
+    assert html == _driver_tree_fixture().as_raw_html()
 
 
 def test_graph_html_attributes_are_well_formed():
