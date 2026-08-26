@@ -10,8 +10,10 @@ import pytest
 
 import coeftable
 import coeftable.graph
+from coeftable.cards import Card, CardChrome, SelectControl
 from coeftable.errors import SpecError
-from coeftable.graph import Atom, ControlRef, Slot, Slotted, StateRule, Wire
+from coeftable.graph import Atom, ControlRef, Graph, Slot, Slotted, StateRule, Wire
+from coeftable.graph.topology import blocker_families, is_acyclic
 
 
 @pytest.mark.parametrize(
@@ -194,8 +196,8 @@ def test_every_leaf_is_frozen_slotted_and_without_dict():
 
 
 def test_graph_export_surface_is_exact_and_top_level_excludes_graph():
-    expected = {"Atom", "ControlRef", "Slot", "Slotted", "StateRule", "Wire"}
-    assert len(coeftable.graph.__all__) == 6
+    expected = {"Atom", "ControlRef", "Graph", "Slot", "Slotted", "StateRule", "Wire"}
+    assert len(coeftable.graph.__all__) == 7
     assert set(coeftable.graph.__all__) == expected
     for name in expected:
         assert hasattr(coeftable.graph, name)
@@ -235,3 +237,215 @@ def test_every_graph_module_imports_only_foundation_or_cards_roots():
                     else:
                         imported_roots.update(alias.name for alias in node.names)
         assert not imported_roots - allowed, f"{module.name}: {imported_roots - allowed}"
+
+
+def _plain_graph(
+    *,
+    nodes: tuple[tuple[str, Card], ...] = (("root", Card("root")),),
+    slots: tuple[Slot, ...] = (Slot("root", 0, 0),),
+    **kwargs: object,
+) -> Graph:
+    """Build a small graph for validation tests."""
+    return Graph(nodes=nodes, layout=Slotted(slots), **kwargs)  # ty: ignore[invalid-argument-type]
+
+
+def test_blocker_families_cover_diamonds_depth_and_uncuttable_paths():
+    diamond = blocker_families(
+        ("r", "a", "b", "c"),
+        (("r", "a"), ("r", "b"), ("a", "c"), ("b", "c")),
+        ("a", "b"),
+    )
+    assert diamond["c"] == frozenset({frozenset({"a", "b"})})
+    rooted = blocker_families(
+        ("r", "a", "b", "c"),
+        (("r", "a"), ("r", "b"), ("a", "c"), ("b", "c")),
+        ("r", "a", "b"),
+    )
+    assert rooted["c"] == frozenset({frozenset({"a", "b"}), frozenset({"r"})})
+    unequal = blocker_families(
+        ("r", "a", "b", "c", "d"),
+        (("r", "a"), ("a", "c"), ("r", "b"), ("b", "d"), ("d", "c")),
+        ("a", "b", "d"),
+    )
+    assert unequal["c"] == frozenset({frozenset({"a", "b"}), frozenset({"a", "d"})})
+    mixed = blocker_families(
+        ("r", "a", "c"),
+        (("r", "c"), ("r", "a"), ("a", "c")),
+        ("a",),
+    )
+    assert mixed["c"] == frozenset()
+    assert blocker_families((), (), ()) == {}
+    assert is_acyclic(("r", "a"), (("r", "a"),))
+    assert not is_acyclic(("r", "a"), (("r", "a"), ("a", "r")))
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"nodes": (), "slots": (Slot("root", 0, 0),)}, "Graph.nodes must not be empty"),
+        ({"nodes": (("root", cast(Card, 7)),)}, "Graph.nodes[0].card must be a Card"),
+        (
+            {"nodes": (("root", Card("root")), ("root", Card("other")))},
+            "Graph.nodes ids must be unique",
+        ),
+        (
+            {"nodes": (("root", Card("root")),), "slots": (Slot("other", 0, 0),)},
+            "Graph.layout.slots must cover graph node ids exactly once",
+        ),
+        (
+            {"slots": (Slot("root", 1, 0),)},
+            "Graph.layout layer and slot indices must be dense from zero",
+        ),
+        (
+            {
+                "nodes": (("root", Card("root")), ("child", Card("child"))),
+                "slots": (Slot("root", 0, 0), Slot("child", 0, 2)),
+            },
+            "Graph.layout layer and slot indices must be dense from zero",
+        ),
+        (
+            {
+                "nodes": (("root", Card("root")), ("child", Card("child"))),
+                "slots": (Slot("root", 0, 0), Slot("child", 1, 0)),
+                "wires": (Wire("w", "unknown", "child"),),
+            },
+            "Graph.wires endpoints must reference known cards",
+        ),
+        (
+            {
+                "nodes": (("root", Card("root")), ("child", Card("child"))),
+                "slots": (Slot("root", 0, 0), Slot("child", 1, 0)),
+                "wires": (Wire("w", "root", "child"), Wire("w", "root", "child")),
+            },
+            "Graph.wires ids must be unique",
+        ),
+        (
+            {
+                "nodes": (("root", Card("root")), ("child", Card("child"))),
+                "slots": (Slot("root", 0, 0), Slot("child", 0, 0)),
+                "wires": (Wire("w", "root", "child"),),
+            },
+            "Graph.wires must route strictly downward",
+        ),
+        (
+            {"collapsible": ("unknown",)},
+            "Graph.collapsible references an unknown card",
+        ),
+        (
+            {"collapsible": ("root", "root")},
+            "Graph.collapsible entries must be unique",
+        ),
+        (
+            {"visibility": ("unknown",)},
+            "Graph.visibility references an unknown wire",
+        ),
+        (
+            {"gap": True},
+            "Graph.gap must be a positive int",
+        ),
+        (
+            {"layer_gap": 0},
+            "Graph.layer_gap must be a positive int",
+        ),
+        (
+            {"dom_prefix": "0bad"},
+            "Graph.dom_prefix must match [a-z][a-z0-9-]*",
+        ),
+        (
+            {
+                "rules": (
+                    StateRule((Atom(ControlRef("unknown"), "checked"),), hide_cards=("root",)),
+                ),
+            },
+            "Graph.rules controls must reference known cards",
+        ),
+        (
+            {
+                "rules": (
+                    StateRule((Atom(ControlRef("root"), "checked"),), hide_cards=("root",)),
+                ),
+            },
+            "Graph.rules checked controls must be collapsible cards",
+        ),
+    ],
+)
+def test_graph_validation_matrix(kwargs, message):
+    with pytest.raises(SpecError, match=f"^{re.escape(message)}$"):
+        _plain_graph(**kwargs)
+
+
+def test_graph_rethemes_cards_atomically_and_rejects_chrome_mismatch():
+    theme = dataclasses.replace(Card("x").theme, text="#123456")
+    card = Card("root")
+    graph = _plain_graph(theme=theme)
+    assert graph.nodes[0][1] is not card
+    assert graph.nodes[0][1].theme == theme
+    assert theme.text in graph.nodes[0][1].as_raw_html()
+    chrome = dataclasses.replace(CardChrome(), padding=20)
+    with pytest.raises(SpecError, match=re.escape("Graph.chrome must match every Card.chrome")):
+        _plain_graph(chrome=chrome)
+
+
+def test_graph_accepts_proven_shared_slot_alternatives():
+    controller = Card(
+        "controller",
+        content=[
+            SelectControl(
+                "Mode",
+                (("left", "Left"), ("right", "Right")),
+                selected="left",
+                key="mode",
+            )
+        ],
+    )
+    graph = Graph(
+        (
+            ("controller", controller),
+            ("left", Card("left")),
+            ("right", Card("right")),
+        ),
+        Slotted((Slot("controller", 0, 0), Slot("left", 1, 0), Slot("right", 1, 0))),
+        rules=(
+            StateRule(
+                (Atom(ControlRef("controller", "mode"), "option_checked", "left"),),
+                hide_cards=("right",),
+            ),
+            StateRule(
+                (Atom(ControlRef("controller", "mode"), "option_checked", "right"),),
+                hide_cards=("left",),
+            ),
+        ),
+    )
+    assert graph.nodes[0][0] == "controller"
+
+
+@pytest.mark.parametrize(
+    "rules",
+    [
+        (),
+        (
+            StateRule(
+                (Atom(ControlRef("controller", "mode"), "option_checked", "left"),),
+                hide_cards=("right",),
+            ),
+        ),
+    ],
+)
+def test_graph_rejects_unproven_shared_slot(rules):
+    controller = Card(
+        "controller",
+        content=[
+            SelectControl(
+                "Mode",
+                (("left", "Left"), ("right", "Right")),
+                selected="left",
+                key="mode",
+            )
+        ],
+    )
+    with pytest.raises(SpecError, match="shared slots require one governing external"):
+        Graph(
+            (("controller", controller), ("left", Card("left")), ("right", Card("right"))),
+            Slotted((Slot("controller", 0, 0), Slot("left", 1, 0), Slot("right", 1, 0))),
+            rules=rules,
+        )
