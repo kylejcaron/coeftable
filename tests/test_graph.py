@@ -994,7 +994,9 @@ def test_graph_compiler_keeps_uncuttable_cards_visible():
         wires=(Wire("rc", "r", "c"), Wire("ra", "r", "a"), Wire("ac", "a", "c")),
         collapsible=("a",),
     )
-    assert all("g-card-2" not in targets for _, targets in graph._compiled.rules)
+    # Every root->card path is uncuttable, so no CARD is ever hidden; the
+    # only rule hides the wire leaving the collapsible a (edge index 2).
+    assert graph._compiled.rules == ((("#g0-nub-1:checked",), ("g0-edge-2",)),)
 
 
 def test_graph_compiler_merges_injected_closure_and_escapes_options():

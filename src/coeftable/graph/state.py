@@ -23,7 +23,13 @@ class _CompiledState:
 
 
 def _css_string(value: str) -> str:
-    """Quote and CSS-string-escape a select option value."""
+    """Quote and CSS-string-escape a select option value.
+
+    CR and CRLF are normalized to LF first, matching the HTML input
+    preprocessing the browser applies to the rendered ``value`` attribute
+    — otherwise a CR escape could never match the DOM.
+    """
+    value = value.replace("\r\n", "\n").replace("\r", "\n")
     escaped: list[str] = []
     for character in value:
         codepoint = ord(character)
