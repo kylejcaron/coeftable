@@ -22,7 +22,7 @@ from coeftable.cards.adornments import (
     TextBlock,
 )
 from coeftable.cards.chrome import DEFAULT_CHROME, CardChrome, line_height
-from coeftable.cards.fragments import render_adornment
+from coeftable.cards.fragments import _esc, render_adornment
 from coeftable.cards.measure import measure_card, resolve_rows, text_line_plan
 from coeftable.cards.template import CardTemplate
 from coeftable.errors import SpecError
@@ -442,6 +442,9 @@ def test_popover_is_a_native_details_element():
     html_out = render_adornment(popover, theme=DEFAULT)
     assert html_out.startswith("<details")
     assert "<summary" in html_out
+    summary_tag = html_out.split("</summary>", 1)[0]
+    assert "display:block" in summary_tag
+    assert "list-style:none" in summary_tag
 
 
 def test_popover_panel_is_a_non_reflowing_overlay():
@@ -1086,6 +1089,90 @@ def test_long_select_label_keeps_measured_allocation():
     )
     html_out = template.render(theme=DEFAULT)
     assert f"width:calc(40% - {DEFAULT_CHROME.swatch_gap}px);flex:none" in html_out
+
+
+def test_clipped_interactive_labels_preserve_accessible_names():
+    select_label = 'Select "label" & a long original name'
+    popover_label = 'Popover "label" & a long original name for diagnostics'
+    template = CardTemplate(
+        width=252,
+        header=(TextBlock("Revenue", variant="title"),),
+        body=(
+            SelectControl(select_label, (("a", "Alpha"),), selected="a"),
+            KeyValuePopover(popover_label, (("n", "412"),)),
+        ),
+    )
+    _, _, body_rows, _ = measure_card(
+        width=template.width,
+        header=template.header,
+        body=template.body,
+        chrome=template.chrome,
+    )
+    html_out = template.render(theme=DEFAULT)
+    assert body_rows[0].accessible_label == select_label
+    assert body_rows[1].accessible_label == popover_label
+    clipped_select = cast(SelectControl, body_rows[0].adornment).label
+    clipped_popover = cast(KeyValuePopover, body_rows[1].adornment).label
+    assert clipped_select != select_label
+    assert clipped_popover != popover_label
+    assert _esc(clipped_select) in html_out
+    assert _esc(clipped_popover) in html_out
+    assert f'aria-label="{_esc(select_label)}"' in html_out
+    assert f'aria-label="{_esc(popover_label)}"' in html_out
+
+
+def test_unclipped_interactive_labels_have_no_accessible_label_override():
+    template = CardTemplate(
+        width=252,
+        header=(TextBlock("Revenue", variant="title"),),
+        body=(
+            SelectControl("short", (("a", "Alpha"),), selected="a"),
+            KeyValuePopover("details", (("n", "412"),)),
+        ),
+    )
+    assert "aria-label=" not in template.render(theme=DEFAULT)
+
+
+def test_select_clipping_uses_its_live_width_allocation():
+    chrome = DEFAULT_CHROME
+    shell = 2 * (chrome.padding + chrome.border_width)
+    width = next(
+        width
+        for width in range(80, 400)
+        if (
+            (usable := width - shell) > 0
+            and max(
+                int(
+                    (usable * 0.4 - chrome.swatch_gap)
+                    / (chrome.char_width_ratio * chrome.control_size)
+                ),
+                2,
+            )
+            != max(
+                int((usable / 2) / (chrome.char_width_ratio * chrome.control_size)),
+                2,
+            )
+        )
+    )
+    usable = width - shell
+    new_budget = max(
+        int((usable * 0.4 - chrome.swatch_gap) / (chrome.char_width_ratio * chrome.control_size)),
+        2,
+    )
+    old_budget = max(
+        int((usable / 2) / (chrome.char_width_ratio * chrome.control_size)),
+        2,
+    )
+    assert new_budget != old_budget
+    label = "abcdefghijklmnopqrstuvwxyz"
+    _, _, body_rows, _ = measure_card(
+        width=width,
+        header=(),
+        body=(SelectControl(label, (("a", "Alpha"),), selected="a"),),
+        chrome=chrome,
+    )
+    clipped_select = cast(SelectControl, body_rows[0].adornment).label
+    assert clipped_select == label[: new_budget - 1] + "…"
 
 
 def test_narrow_select_label_budget_raises():

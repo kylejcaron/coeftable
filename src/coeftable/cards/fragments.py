@@ -78,7 +78,11 @@ def _line_swatch(color: str, dash: str, chrome: CardChrome) -> str:
 
 
 def render_adornment(
-    adornment: Adornment, *, theme: Theme = DEFAULT, chrome: CardChrome = DEFAULT_CHROME
+    adornment: Adornment,
+    *,
+    theme: Theme = DEFAULT,
+    chrome: CardChrome = DEFAULT_CHROME,
+    accessible_label: str | None = None,
 ) -> str:
     """Render one adornment as a self-contained HTML fragment."""
     match adornment:
@@ -114,10 +118,18 @@ def render_adornment(
                 f'<span style="color:{_esc(theme.text)}">{_esc(value)}</span></div>'
                 for key, value in items
             )
-            summary_style = _row(chrome.control_size, theme.text, chrome, ";cursor:pointer")
+            summary_style = _row(
+                chrome.control_size,
+                theme.text,
+                chrome,
+                ";cursor:pointer;display:block;list-style:none",
+            )
+            aria_label = (
+                "" if accessible_label is None else f' aria-label="{_esc(accessible_label)}"'
+            )
             return (
                 '<details style="position:relative">'
-                f'<summary style="{summary_style}">{_esc(label)}</summary>'
+                f'<summary{aria_label} style="{summary_style}">{_esc(label)}</summary>'
                 f'<div style="position:absolute;left:0;top:100%;z-index:10;'
                 f"min-width:{_POPOVER_PANEL_MIN_WIDTH}px;"
                 f"background:{_esc(theme.surface)};"
@@ -132,6 +144,9 @@ def render_adornment(
                 for value, text in options
             )
             row_height = line_height(chrome.control_size, chrome) + chrome.select_padding
+            aria_label = (
+                "" if accessible_label is None else f' aria-label="{_esc(accessible_label)}"'
+            )
             return (
                 f'<label style="color:{_esc(theme.muted)};'
                 f"font-size:{chrome.control_size}px;"
@@ -140,7 +155,7 @@ def render_adornment(
                 f'height:{row_height}px;overflow:hidden;white-space:nowrap">'
                 f'<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'
                 f'width:calc(40% - {chrome.swatch_gap}px);flex:none">{_esc(label)}</span>'
-                f'<select style="font-size:{chrome.control_size}px;'
+                f'<select{aria_label} style="font-size:{chrome.control_size}px;'
                 f"box-sizing:border-box;height:{line_height(chrome.control_size, chrome)}px;"
                 f'line-height:{line_height(chrome.control_size, chrome)}px;width:60%;flex:none">'
                 f"{rendered}</select>"

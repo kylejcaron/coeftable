@@ -144,6 +144,7 @@ class Row:
     adornment: Adornment
     height: int
     gap_above: int = 0
+    accessible_label: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -235,10 +236,12 @@ def resolve_rows(
                 rows.append(Row(adornment, svg_height))
             case KeyValuePopover(label=label):
                 budget = _budget(usable, chrome.control_size, chrome.char_width_ratio)
+                clipped = _clip(label, budget)
                 rows.append(
                     Row(
-                        replace(adornment, label=_clip(label, budget)),
+                        replace(adornment, label=clipped),
                         line_height(chrome.control_size, chrome),
+                        accessible_label=label if clipped != label else None,
                     )
                 )
             case SelectControl(label=label):
@@ -247,10 +250,12 @@ def resolve_rows(
                     chrome.control_size,
                     chrome.char_width_ratio,
                 )
+                clipped = _clip(label, budget)
                 rows.append(
                     Row(
-                        replace(adornment, label=_clip(label, budget)),
+                        replace(adornment, label=clipped),
                         line_height(chrome.control_size, chrome) + chrome.select_padding,
+                        accessible_label=label if clipped != label else None,
                     )
                 )
             case Badge(text=text):

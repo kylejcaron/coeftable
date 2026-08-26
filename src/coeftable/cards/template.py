@@ -106,9 +106,15 @@ def _wrap(row: Row, theme: Theme, chrome: CardChrome) -> str:
     """Render one exact-height row, preserving measurement-owned spacing."""
     gap = f";margin-top:{row.gap_above}px" if row.gap_above else ""
     svg_containment = ";line-height:0" if isinstance(row.adornment, InlineSvg) else ""
+    rendered = render_adornment(
+        row.adornment,
+        theme=theme,
+        chrome=chrome,
+        accessible_label=row.accessible_label,
+    )
     return (
         f'<div style="height:{row.height}px;'
         f"overflow:{'visible' if isinstance(row.adornment, KeyValuePopover) else 'hidden'};"
         f'margin:0{gap}{svg_containment}">'
-        f"{render_adornment(row.adornment, theme=theme, chrome=chrome)}</div>"
+        f"{rendered}</div>"
     )
