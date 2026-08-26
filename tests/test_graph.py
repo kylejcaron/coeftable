@@ -22,6 +22,7 @@ from coeftable.graph import (
     StateRule,
     Wire,
 )
+from coeftable.graph.state import _CompiledState
 from coeftable.graph.topology import blocker_families, check_acyclic, is_acyclic
 
 
@@ -173,7 +174,7 @@ def test_slotted_rejects_string_sequence():
     with pytest.raises(
         SpecError, match=r"Slotted\.slots must be a sequence of entries, not a string"
     ):
-        Slotted(cast(tuple[Slot, ...], "slot"))  # ty: ignore[invalid-argument-type]
+        Slotted(cast(tuple[Slot, ...], "slot"))
 
 
 def test_valid_leaf_values_and_optional_wire_labels():
@@ -626,7 +627,7 @@ def test_graph_rejects_invalid_object_types(kwargs, message):
         with pytest.raises(SpecError, match=f"^{re.escape(message)}$"):
             Graph(
                 nodes=(("root", Card("root")),),
-                layout=kwargs["layout"],  # ty: ignore[arg-type]
+                layout=cast(Slotted, kwargs["layout"]),
             )
     else:
         with pytest.raises(SpecError, match=f"^{re.escape(message)}$"):
@@ -917,3 +918,146 @@ def test_shared_slot_rejects_stray_rule_intersecting_group():
             ),
             collapsible=("other",),
         )
+
+
+def _state_diamond(*, collapsible=("a", "b"), prefix="g") -> Graph:
+    nodes = tuple((card_id, Card(card_id)) for card_id in ("r", "a", "b", "c"))
+    layout = Slotted(
+        tuple(Slot(card_id, layer, 0) for layer, card_id in enumerate(("r", "a", "b", "c")))
+    )
+    wires = (
+        Wire("ra", "r", "a"),
+        Wire("rb", "r", "b"),
+        Wire("ac", "a", "c"),
+        Wire("bc", "b", "c"),
+    )
+    return Graph(nodes, layout, wires=wires, collapsible=collapsible, dom_prefix=prefix)
+
+
+def test_graph_compiles_diamond_state_to_exact_record():
+    graph = _state_diamond()
+    assert graph._compiled == _CompiledState(
+        card_dom_ids=("g-card-0", "g-card-1", "g-card-2", "g-card-3"),
+        wire_dom_ids=("g-edge-0", "g-edge-1", "g-edge-2", "g-edge-3"),
+        nub_dom_ids={"a": "g-nub-1", "b": "g-nub-2"},
+        control_dom_ids={},
+        rules=(
+            (("#g-nub-1:checked",), ("g-edge-2",)),
+            (("#g-nub-1:checked", "#g-nub-2:checked"), ("g-card-3",)),
+            (("#g-nub-2:checked",), ("g-edge-3",)),
+        ),
+    )
+
+
+def test_graph_compiles_root_and_unequal_depth_blockers():
+    rooted = _state_diamond(collapsible=("r", "a", "b"))
+    assert rooted._compiled.rules == (
+        (
+            ("#g-nub-0:checked",),
+            ("g-card-1", "g-card-2", "g-card-3", "g-edge-0", "g-edge-1", "g-edge-2", "g-edge-3"),
+        ),
+        (("#g-nub-1:checked",), ("g-edge-2",)),
+        (("#g-nub-1:checked", "#g-nub-2:checked"), ("g-card-3",)),
+        (("#g-nub-2:checked",), ("g-edge-3",)),
+    )
+    nodes = tuple((card_id, Card(card_id)) for card_id in ("r", "a", "b", "d", "c"))
+    layout = Slotted(
+        tuple(Slot(card_id, layer, 0) for layer, card_id in enumerate(("r", "a", "b", "d", "c")))
+    )
+    graph = Graph(
+        nodes,
+        layout,
+        wires=(
+            Wire("ra", "r", "a"),
+            Wire("ac", "a", "c"),
+            Wire("rb", "r", "b"),
+            Wire("bd", "b", "d"),
+            Wire("dc", "d", "c"),
+        ),
+        collapsible=("a", "b", "d"),
+        dom_prefix="g",
+    )
+    assert graph._compiled.rules == (
+        (("#g-nub-1:checked",), ("g-edge-1",)),
+        (("#g-nub-1:checked", "#g-nub-2:checked"), ("g-card-4",)),
+        (("#g-nub-1:checked", "#g-nub-3:checked"), ("g-card-4",)),
+        (("#g-nub-2:checked",), ("g-card-3", "g-edge-3", "g-edge-4")),
+        (("#g-nub-3:checked",), ("g-edge-4",)),
+    )
+
+
+def test_graph_compiler_keeps_uncuttable_cards_visible():
+    nodes = (("r", Card("r")), ("a", Card("a")), ("c", Card("c")))
+    graph = Graph(
+        nodes,
+        Slotted((Slot("r", 0, 0), Slot("a", 1, 0), Slot("c", 2, 0))),
+        wires=(Wire("rc", "r", "c"), Wire("ra", "r", "a"), Wire("ac", "a", "c")),
+        collapsible=("a",),
+    )
+    assert all("g-card-2" not in targets for _, targets in graph._compiled.rules)
+
+
+def test_graph_compiler_merges_injected_closure_and_escapes_options():
+    option = 'quote"\\value'
+    nodes = (
+        ("root hostile", Card("root")),
+        (
+            "controller:hostile",
+            Card(
+                "controller",
+                content=(
+                    SelectControl(
+                        "Mode",
+                        ((option, "Mode"),),
+                        selected=option,
+                        key="mode",
+                    ),
+                ),
+            ),
+        ),
+        ("hidden'card", Card("hidden")),
+    )
+    graph = Graph(
+        nodes,
+        Slotted(
+            (
+                Slot("root hostile", 0, 0),
+                Slot("controller:hostile", 0, 1),
+                Slot("hidden'card", 1, 0),
+            )
+        ),
+        wires=(Wire('wire "hostile"', "root hostile", "hidden'card"),),
+        rules=(
+            StateRule(
+                (Atom(ControlRef("controller:hostile", "mode"), "option_checked", option),),
+                hide_cards=("hidden'card",),
+            ),
+        ),
+        dom_prefix="p",
+    )
+    assert graph._compiled.control_dom_ids == {"controller:hostile": {"mode": "p-ctl-1-0"}}
+    assert graph._compiled.rules == (
+        (
+            ('#p-ctl-1-0 option[value="quote\\"\\\\value"]:checked',),
+            ("p-card-2", "p-edge-0"),
+        ),
+    )
+    assert all(
+        hostile not in selector
+        for conditions, _ in graph._compiled.rules
+        for selector in conditions
+        for hostile in ("root hostile", "controller:hostile", "hidden'card", 'wire "hostile"')
+    )
+
+
+def test_graph_state_is_empty_and_byte_deterministic():
+    first = _state_diamond(collapsible=(), prefix="x")
+    second = _state_diamond(collapsible=(), prefix="x")
+    assert first._compiled == second._compiled
+    assert first._compiled == _CompiledState(
+        card_dom_ids=("x-card-0", "x-card-1", "x-card-2", "x-card-3"),
+        wire_dom_ids=("x-edge-0", "x-edge-1", "x-edge-2", "x-edge-3"),
+        nub_dom_ids={},
+        control_dom_ids={},
+        rules=(),
+    )

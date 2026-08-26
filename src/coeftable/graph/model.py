@@ -10,6 +10,7 @@ from typing import Literal, cast
 from coeftable.cards.card import Card
 from coeftable.cards.chrome import DEFAULT_CHROME, CardChrome
 from coeftable.errors import SpecError
+from coeftable.graph.state import _compile_state, _CompiledState
 from coeftable.graph.topology import blocker_families, check_acyclic
 from coeftable.theme import DEFAULT, Role, Theme
 
@@ -517,6 +518,7 @@ class Graph:
     _blocker_families: Mapping[str, frozenset[frozenset[str]]] = field(
         init=False, repr=False, compare=False
     )
+    _compiled: _CompiledState = field(init=False, repr=False, compare=False)
     _layout: MeasuredGraph = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -555,6 +557,19 @@ class Graph:
         object.__setattr__(self, "rules", rules)
         object.__setattr__(self, "_rebound_cards", tuple(card for _, card in rebound_nodes))
         object.__setattr__(self, "_blocker_families", blockers)
+        object.__setattr__(
+            self,
+            "_compiled",
+            _compile_state(
+                nodes=rebound_nodes,
+                wires=wires,
+                collapsible=collapsible,
+                blockers=blockers,
+                rules=rules,
+                card_options=card_options,
+                dom_prefix=self.dom_prefix,
+            ),
+        )
 
         object.__setattr__(
             self,
