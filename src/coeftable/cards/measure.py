@@ -27,6 +27,7 @@ from coeftable.cards.adornments import (
 )
 from coeftable.cards.chrome import CardChrome, line_height
 from coeftable.errors import SpecError
+from coeftable.theme import Role
 
 _ELLIPSIS = "…"
 _FIXES = "fixes: wider card, smaller chrome scale, or shorter formatted text"
@@ -144,7 +145,6 @@ class Row:
     adornment: Adornment
     height: int
     gap_above: int = 0
-    accessible_label: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -234,28 +234,13 @@ def resolve_rows(
                         f"{usable}px; {_FIXES}"
                     )
                 rows.append(Row(adornment, svg_height))
-            case KeyValuePopover(label=label):
-                budget = _budget(usable, chrome.control_size, chrome.char_width_ratio)
-                clipped = _clip(label, budget)
+            case KeyValuePopover():
+                rows.append(Row(adornment, line_height(chrome.control_size, chrome)))
+            case SelectControl():
                 rows.append(
                     Row(
-                        replace(adornment, label=clipped),
-                        line_height(chrome.control_size, chrome),
-                        accessible_label=label if clipped != label else None,
-                    )
-                )
-            case SelectControl(label=label):
-                budget = _budget(
-                    usable * 0.4 - chrome.swatch_gap,
-                    chrome.control_size,
-                    chrome.char_width_ratio,
-                )
-                clipped = _clip(label, budget)
-                rows.append(
-                    Row(
-                        replace(adornment, label=clipped),
+                        adornment,
                         line_height(chrome.control_size, chrome) + chrome.select_padding,
-                        accessible_label=label if clipped != label else None,
                     )
                 )
             case Badge(text=text):
@@ -270,15 +255,8 @@ def resolve_rows(
                         line_height(chrome.chip_size, chrome) + 2 * chrome.chip_padding_y,
                     )
                 )
-            case CaptionRow(text=text, color=color):
-                fixed = 0 if color is None else chrome.swatch_width + chrome.swatch_gap
-                budget = _budget(usable - fixed, chrome.caption_size, chrome.char_width_ratio)
-                rows.append(
-                    Row(
-                        replace(adornment, text=_clip(text, budget)),
-                        line_height(chrome.caption_size, chrome),
-                    )
-                )
+            case CaptionRow():
+                rows.append(Row(adornment, line_height(chrome.caption_size, chrome)))
             case Legend(entries=entries):
                 fixed = chrome.legend_swatch + chrome.swatch_gap + chrome.chip_gap
                 rows.append(
@@ -308,7 +286,7 @@ def measure_card(
     header: tuple[Adornment, ...],
     body: tuple[Adornment, ...],
     chrome: CardChrome,
-) -> tuple[MeasuredCard, tuple[Row, ...], tuple[Row, ...], str | None]:
+) -> tuple[MeasuredCard, tuple[Row, ...], tuple[Row, ...], tuple[str, Role] | None]:
     """Measure one card; returns footprints plus the exact rows to render."""
     usable = width - 2 * (chrome.padding + chrome.border_width)
     if usable < 1:
@@ -317,11 +295,11 @@ def measure_card(
             f"card width {width}px leaves {usable}px usable after shell overhead "
             f"{shell_overhead}px; width must leave at least 1px usable; {_FIXES}"
         )
-    chip: str | None = None
+    chip: tuple[str, Role] | None = None
     header_rows: tuple[Row, ...] | None = None
     for adornment in body:
         if isinstance(adornment, MetricValue):
-            chip_width = _est(adornment.value, chrome.value_size, chrome.data_char_width_ratio)
+            chip_width = _est(adornment.value, chrome.value_size, chrome.char_width_ratio)
             candidate = int(usable - chip_width - chrome.gap)
             if chip_width <= usable / 2 and candidate >= 1:
                 try:
@@ -334,7 +312,7 @@ def measure_card(
                 except SpecError:
                     pass
                 else:
-                    chip = adornment.value
+                    chip = (adornment.value, adornment.role)
             break
     if header_rows is None:
         header_rows = resolve_rows(header, usable=usable, chrome=chrome, section="header")

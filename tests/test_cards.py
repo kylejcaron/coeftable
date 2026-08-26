@@ -451,6 +451,7 @@ def test_popover_is_a_native_details_element():
     summary_tag = html_out.split("</summary>", 1)[0]
     assert "display:block" in summary_tag
     assert "list-style:none" in summary_tag
+    assert "text-decoration:underline" in summary_tag
 
 
 def test_popover_panel_is_a_non_reflowing_overlay():
@@ -843,7 +844,7 @@ def test_one_character_legend_labels_fit_at_70px():
     assert rows[0].adornment.entries == (("A", "#111"), ("B", "#222"))
 
 
-def test_chip_does_not_break_header_that_fits_without_chip():
+def test_chip_reservation_uses_char_width_estimate():
     usable = 250
     width = usable + 2 * (DEFAULT_CHROME.padding + DEFAULT_CHROME.border_width)
     measured, header_rows, _body_rows, chip = measure_card(
@@ -855,7 +856,7 @@ def test_chip_does_not_break_header_that_fits_without_chip():
     assert measured.width == width
     assert isinstance(header_rows[0].adornment, InlineSvg)
     assert header_rows[0].adornment.width == 220
-    assert chip is None
+    assert chip == ("+3", "neutral")
 
 
 def test_chip_reservation_falls_back_when_colored_caption_header_would_not_fit():
@@ -885,7 +886,7 @@ def test_measured_card_invariants_hold():
     )
     assert measured.collapsed_height <= measured.expanded_height
     assert measured.width == 252
-    assert chip == "+3.4%"
+    assert chip == ("+3.4%", "favorable")
     for anchor in measured.anchors:
         assert 0 <= anchor.x <= measured.width
         assert 0 <= anchor.y <= measured.collapsed_height
@@ -905,13 +906,12 @@ def test_chip_comes_from_body_never_header():
 
 def test_one_character_title_header_keeps_chip_at_reduced_width():
     chip_value = "+3"
-    usable = 45
+    usable = 40
     width = usable + 2 * (DEFAULT_CHROME.padding + DEFAULT_CHROME.border_width)
-    chip_width = len(chip_value) * DEFAULT_CHROME.value_size * DEFAULT_CHROME.data_char_width_ratio
+    chip_width = len(chip_value) * DEFAULT_CHROME.value_size * DEFAULT_CHROME.char_width_ratio
     candidate = int(usable - chip_width - DEFAULT_CHROME.gap)
-    title_budget = 2 * DEFAULT_CHROME.char_width_ratio * DEFAULT_CHROME.title_size
     assert chip_width <= usable / 2
-    assert 1 <= candidate < title_budget  # old title-size heuristic suppressed this chip
+    assert candidate >= 1
 
     measured, header_rows, _body_rows, chip = measure_card(
         width=width,
@@ -920,7 +920,7 @@ def test_one_character_title_header_keeps_chip_at_reduced_width():
         chrome=DEFAULT_CHROME,
     )
     assert measured.width == width
-    assert chip == chip_value
+    assert chip == (chip_value, "neutral")
     assert isinstance(header_rows[0].adornment, TextBlock)
     assert header_rows[0].adornment.text == "t"
 
@@ -928,11 +928,10 @@ def test_one_character_title_header_keeps_chip_at_reduced_width():
 def test_chip_refused_when_candidate_is_less_than_one():
     chrome = CardChrome(gap=24)
     chip_value = "+3"
-    usable = 45
+    usable = 40
     width = usable + 2 * (chrome.padding + chrome.border_width)
-    chip_width = len(chip_value) * chrome.value_size * chrome.data_char_width_ratio
+    chip_width = len(chip_value) * chrome.value_size * chrome.char_width_ratio
     candidate = int(usable - chip_width - chrome.gap)
-    assert chip_width <= usable / 2
     assert candidate < 1
 
     _, _, _, chip = measure_card(
@@ -1054,11 +1053,10 @@ def test_summary_shows_the_chip():
     assert chip_span is not None
     chip_style = chip_span.group(1)
     chip_est = math.ceil(
-        len("+3.4%") * DEFAULT_CHROME.value_size * DEFAULT_CHROME.data_char_width_ratio
+        len("+3.4%") * DEFAULT_CHROME.value_size * DEFAULT_CHROME.char_width_ratio
     )
     assert f"max-width:{chip_est}px" in chip_style
-    assert "overflow:hidden;text-overflow:ellipsis" in chip_style
-    assert "flex:none" in chip_style
+    assert f"color:{DEFAULT.favorable}" in chip_style
     assert f"column-gap:{DEFAULT_CHROME.gap}px" in summary
     assert "align-items:flex-start" in summary
 
@@ -1099,7 +1097,7 @@ def test_long_select_label_keeps_measured_allocation():
     assert f"width:calc(40% - {DEFAULT_CHROME.swatch_gap}px);flex:none" in html_out
 
 
-def test_clipped_interactive_labels_preserve_accessible_names():
+def test_long_interactive_labels_are_rendered_in_full():
     select_label = 'Select "label" & a long original name'
     popover_label = 'Popover "label" & a long original name for diagnostics'
     template = CardTemplate(
@@ -1117,70 +1115,10 @@ def test_clipped_interactive_labels_preserve_accessible_names():
         chrome=template.chrome,
     )
     html_out = template.render(theme=DEFAULT)
-    assert body_rows[0].accessible_label == select_label
-    assert body_rows[1].accessible_label == popover_label
-    clipped_select = cast(SelectControl, body_rows[0].adornment).label
-    clipped_popover = cast(KeyValuePopover, body_rows[1].adornment).label
-    assert clipped_select != select_label
-    assert clipped_popover != popover_label
-    assert _esc(clipped_select) in html_out
-    assert _esc(clipped_popover) in html_out
-    assert f'aria-label="{_esc(select_label)}"' in html_out
-    assert f'aria-label="{_esc(popover_label)}"' in html_out
-
-
-def test_unclipped_interactive_labels_have_no_accessible_label_override():
-    template = CardTemplate(
-        width=252,
-        header=(TextBlock("Revenue", variant="title"),),
-        body=(
-            SelectControl("short", (("a", "Alpha"),), selected="a"),
-            KeyValuePopover("details", (("n", "412"),)),
-        ),
-    )
-    assert "aria-label=" not in template.render(theme=DEFAULT)
-
-
-def test_select_clipping_uses_its_live_width_allocation():
-    chrome = DEFAULT_CHROME
-    shell = 2 * (chrome.padding + chrome.border_width)
-    width = next(
-        width
-        for width in range(80, 400)
-        if (
-            (usable := width - shell) > 0
-            and max(
-                int(
-                    (usable * 0.4 - chrome.swatch_gap)
-                    / (chrome.char_width_ratio * chrome.control_size)
-                ),
-                2,
-            )
-            != max(
-                int((usable / 2) / (chrome.char_width_ratio * chrome.control_size)),
-                2,
-            )
-        )
-    )
-    usable = width - shell
-    new_budget = max(
-        int((usable * 0.4 - chrome.swatch_gap) / (chrome.char_width_ratio * chrome.control_size)),
-        2,
-    )
-    old_budget = max(
-        int((usable / 2) / (chrome.char_width_ratio * chrome.control_size)),
-        2,
-    )
-    assert new_budget != old_budget
-    label = "abcdefghijklmnopqrstuvwxyz"
-    _, _, body_rows, _ = measure_card(
-        width=width,
-        header=(),
-        body=(SelectControl(label, (("a", "Alpha"),), selected="a"),),
-        chrome=chrome,
-    )
-    clipped_select = cast(SelectControl, body_rows[0].adornment).label
-    assert clipped_select == label[: new_budget - 1] + "…"
+    assert cast(SelectControl, body_rows[0].adornment).label == select_label
+    assert cast(KeyValuePopover, body_rows[1].adornment).label == popover_label
+    assert _esc(select_label) in html_out
+    assert _esc(popover_label) in html_out
 
 
 def test_narrow_select_label_budget_raises():

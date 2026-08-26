@@ -68,13 +68,14 @@ class CardTemplate:
         header_html = "".join(_wrap(row, theme, chrome) for row in header_rows)
         chip_html = ""
         if chip is not None:
+            chip_value, chip_role = chip
             chip_lh = line_height(chrome.value_size, chrome)
-            chip_est = _est(chip, chrome.value_size, chrome.data_char_width_ratio)
+            chip_est = _est(chip_value, chrome.value_size, chrome.char_width_ratio)
             chip_html = (
                 f'<span class="ct-card-chip" style="flex:none;font-size:{chrome.value_size}px;'
                 f"line-height:{chip_lh}px;font-weight:600;white-space:nowrap;"
                 f"max-width:{math.ceil(chip_est)}px;overflow:hidden;"
-                f'text-overflow:ellipsis;color:{_esc(theme.text)}">{_esc(chip)}</span>'
+                f'text-overflow:ellipsis;color:{_esc(theme.color(chip_role))}">{_esc(chip_value)}</span>'
             )
         body_html = "".join(_wrap(row, theme, chrome) for row in body_rows)
         body_block = (
@@ -111,7 +112,6 @@ def _wrap(row: Row, theme: Theme, chrome: CardChrome) -> str:
         row.adornment,
         theme=theme,
         chrome=chrome,
-        accessible_label=row.accessible_label,
     )
     return (
         f'<div style="height:{row.height}px;'
