@@ -457,6 +457,43 @@ shaded intervals via each function's `annotations=` parameter. Because a
 standalone plot and a table column share one `Theme`, a report that mixes
 both stays visually consistent.
 
+## Metric cards (experimental)
+
+`coeftable.cards` composes the standalone plots into measured, foldable
+metric cards — the same formatters, themes, and SVG primitives as the
+tables. The API is experimental and may change; it is deliberately not
+exported from the top-level `coeftable` namespace yet.
+
+```python
+import coeftable as ct
+from coeftable.cards import Card, CardGrid
+from coeftable.cards.regions import Diagnostics, Event, Events, Metric, Trend
+
+events = Events([Event("launch", "#4C72B0", at=2.0)])
+revenue = Card(
+    "Revenue",
+    subtitle="weekly lift vs control",
+    content=[
+        Metric(3.4, ct.Percent(signed=True), ci=(1.2, 5.7), ref=0.0),
+        Trend(
+            x=(0, 1, 2, 3), y=(0.3, 0.8, 1.1, 1.5),
+            lower=(-0.1, 0.3, 0.6, 0.9), upper=(0.7, 1.3, 1.6, 2.1),
+            x_domain=(0, 3), domain=(-0.5, 2.5), ref=0.0,
+            annotations=events.rules(),
+        ),
+        Diagnostics("diagnostics", [("n", 412), ("sigma", 0.8)]),
+        events,
+    ],
+)
+grid = CardGrid([revenue, revenue.with_theme(ct.theme.BLUE)])
+```
+
+A `Card` (or `CardGrid`) left as the last notebook expression renders
+itself; `as_raw_html()` is the string entry point. Cards are fixed-width
+with exact measured heights, fold via a native `<details>` header (the
+headline value stays visible as a chip), and hold their footprint in
+both states.
+
 ## Plot annotations
 
 `ct.Rule` draws a line and `ct.Band` shades an interval in a forest plot or
