@@ -141,6 +141,8 @@ def test_diagnostics_formats_numbers_and_passes_strings():
         lambda: Diagnostics("d", _unchecked([(1, "v")])),
         lambda: Diagnostics("d", _unchecked([1])),
         lambda: Diagnostics("d", _unchecked([("k", "v", "extra")])),
+        lambda: Diagnostics("d", [("k", 1)], fmt=_unchecked("fmt")),
+        lambda: Diagnostics("d", [("k", 1)], key=_unchecked(1)),
     ],
     ids=[
         "empty-label",
@@ -151,6 +153,8 @@ def test_diagnostics_formats_numbers_and_passes_strings():
         "nonstr-key",
         "malformed-item",
         "triple-item",
+        "fmt-not-callable",
+        "nonstr-fmt-key",
     ],
 )
 def test_diagnostics_validation(build):
@@ -190,6 +194,7 @@ def test_events_rules_derive_from_positioned_events_only():
         lambda: Events([Event("x", "#111111", at=float("nan"))]),
         lambda: Events(_unchecked(["not-an-event"])),
         lambda: Events([Event("x", "#111")], captions=_unchecked("yes")),
+        lambda: Events([Event("x", _unchecked(1))]),
     ],
     ids=[
         "no-events",
@@ -199,6 +204,7 @@ def test_events_rules_derive_from_positioned_events_only():
         "nan-at",
         "nonevent-item",
         "bad-captions",
+        "nonstr-color",
     ],
 )
 def test_events_validation(build):
@@ -324,6 +330,17 @@ def test_trend_ribbon_role_reads_last_fully_present_index():
     polyline_points = polyline.group(1).split()
     assert len(polygon_points) > len(polyline_points)
     assert float(polygon_points[0].split(",", 1)[1]) == pytest.approx(17.4)
+    assert float(polygon_points[-1].split(",", 1)[1]) == pytest.approx(23.8)
+
+
+def test_trend_infinite_gap_values_report_finite_or_missing():
+    with pytest.raises(SpecError, match="must be finite or missing"):
+        Trend(
+            x=X,
+            y=(0.3, float("inf"), 1.1, 1.5),
+            x_domain=(0.0, 3.0),
+            domain=(-0.5, 2.5),
+        )
 
 
 def test_trend_endpoint_one_sided_interval_drives_role():
