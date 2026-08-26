@@ -518,12 +518,18 @@ def test_retention_fixture_reproduces_the_panel_through_public_api():
             caption = TextBlock(self.label, variant="caption")
             return (caption, *self.metric.resolve(width=width, theme=theme, chrome=chrome))
 
+    d7_delta = (d7_last - d7_first) * 100.0
+    d7_2se = (
+        2.0 * math.sqrt(_se(d7_first, sample_sizes[0]) ** 2 + _se(d7_last, sample_sizes[-1]) ** 2)
+    ) * 100.0
+    d7_role = role_for(d7_delta - d7_2se, d7_delta + d7_2se, 0.0, "higher_is_better")
     header = Row(
         (
             (TextBlock("Retention · weekly signup cohorts", variant="title"), 630),
             (
                 LabeledKpi(
-                    "D7 Δ since first cohort", Metric((d7_last - d7_first) * 100.0, signed_points)
+                    "D7 Δ since first cohort",
+                    Metric(d7_delta, signed_points, role=d7_role),
                 ),
                 150,
             ),
@@ -531,6 +537,7 @@ def test_retention_fixture_reproduces_the_panel_through_public_api():
         ),
         gap=14,
     )
+    assert d7_role == "favorable"
     assert tuple(width for _, width in header.cells) == (630, 150, 100)
     assert all(tuple(width for _, width in row.cells) == (28, 44, 100, 240) for row in trend_rows)
     journey = Pane(
@@ -668,3 +675,5 @@ def test_retention_fixture_reproduces_the_panel_through_public_api():
         inconclusive_color,
     ]
     assert [text.endswith("· ns") for _, text in kpi_badges] == [False, True, True]
+    header_html = html.split("column-gap:36px", 1)[0]
+    assert favorable_color in header_html  # D7 header KPI paints its verdict
