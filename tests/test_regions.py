@@ -470,6 +470,31 @@ def test_trend_affect_domain_annotation_outside_domain_raises():
     assert "10.0" in str(excinfo.value)
 
 
+def test_trend_affect_domain_checks_are_axis_specific():
+    # 2.75 is inside x_domain (0, 3) but outside domain (-0.5, 2.5): an
+    # x-rule at 2.75 must resolve while a y-rule at 2.75 must be rejected
+    # against the y-domain. Swapping the axis checks fails both branches.
+    def rule(axis):
+        return ResolvedRule(
+            at=2.75,
+            axis=axis,
+            layer="overlay",
+            affect_domain=True,
+            color="#4C72B0",
+            opacity=1.0,
+            width=1.0,
+            dash="dotted",
+        )
+
+    (spark, _) = Trend(annotations=(rule("x"),), lower=LO, upper=HI, **TREND_KW).resolve(
+        **RESOLVE_KW
+    )
+    assert "#4C72B0" in spark.svg
+    trend = Trend(annotations=(rule("y"),), lower=LO, upper=HI, **TREND_KW)
+    with pytest.raises(SpecError, match="domain"):
+        trend.resolve(**RESOLVE_KW)
+
+
 def test_trend_affect_domain_annotation_inside_domain_renders():
     rule = ResolvedRule(
         at=1.5,
