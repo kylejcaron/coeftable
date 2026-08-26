@@ -203,7 +203,12 @@ class Event:
 
 @dataclass(frozen=True, slots=True)
 class Events(Region):
-    """A rule strip and optional captions derived from event declarations."""
+    """A rule strip or per-event captions derived from event declarations.
+
+    The two presentations are alternatives: ``captions=False`` (default)
+    resolves to a single ``RuleStrip``; ``captions=True`` resolves to one
+    ``CaptionRow`` per event instead of the strip.
+    """
 
     events: Sequence[Event]
     captions: bool = False
@@ -242,18 +247,14 @@ class Events(Region):
     def resolve(
         self, *, width: int, theme: Theme, chrome: CardChrome
     ) -> tuple[RuleStrip | CaptionRow, ...]:
-        """Resolve a rule strip and optionally a caption per event."""
+        """Resolve a rule strip, or one caption per event when captions=True."""
         del width, theme, chrome
-        strip = RuleStrip(tuple((event.label, event.color, event.dash) for event in self.events))
-        if not self.captions:
-            return (strip,)
-        return (
-            strip,
-            *(
+        if self.captions:
+            return tuple(
                 CaptionRow(event.label, color=event.color, dash=event.dash)
                 for event in self.events
-            ),
-        )
+            )
+        return (RuleStrip(tuple((event.label, event.color, event.dash) for event in self.events)),)
 
 
 def resolve_content(

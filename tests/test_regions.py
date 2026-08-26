@@ -157,16 +157,16 @@ def test_diagnostics_validation(build):
         build()
 
 
-def test_events_resolve_strip_and_optional_captions():
+def test_events_resolve_captions_replace_strip():
     events = Events(
         [Event("launch", "#4C72B0", at=3.0), Event("incident", "#C44E52", dash="dashed")],
         captions=True,
     )
-    strip, cap1, cap2 = events.resolve(**RESOLVE_KW)
-    assert isinstance(strip, RuleStrip)
-    assert strip.entries == (("launch", "#4C72B0", "dotted"), ("incident", "#C44E52", "dashed"))
+    cap1, cap2 = events.resolve(**RESOLVE_KW)
+    assert not any(isinstance(item, RuleStrip) for item in (cap1, cap2))
     assert isinstance(cap1, CaptionRow) and cap1.text == "launch"
-    assert isinstance(cap2, CaptionRow)
+    assert cap1.color == "#4C72B0" and cap1.dash == "dotted"
+    assert isinstance(cap2, CaptionRow) and cap2.text == "incident"
     assert cap2.dash == "dashed"
 
 
