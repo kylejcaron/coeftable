@@ -1337,7 +1337,7 @@ def test_graph_renderer_uses_cached_anchor_and_vertical_route_geometry():
             "wire",
             (
                 (x0, y0, x0, my1, x1, my2, x1, y1 - 3),
-                (x0 + 0.5 * (x1 - x0) + 14, (y0 + 3 * my1 + 3 * my2 + (y1 - 3)) / 8 - 10),
+                (x1, y1 - 13),
             ),
         ),
     )
@@ -1365,7 +1365,7 @@ def test_graph_renderer_does_not_remeasure_cards(monkeypatch):
     assert calls == 0
 
 
-def test_graph_renderer_places_label_at_cubic_midpoint_and_rethemes_roles():
+def test_graph_renderer_places_label_above_target_and_rethemes_roles():
     theme = dataclasses.replace(
         DEFAULT,
         favorable="#111111",
@@ -1377,23 +1377,46 @@ def test_graph_renderer_places_label_at_cubic_midpoint_and_rethemes_roles():
     assert 'fill="#111111"' in output
     assert 'fill="#123456"' in output
     assert 'fill="#222222"' in output
-    source = dict(graph.measure().boxes)["source"]
     target = dict(graph.measure().boxes)["target"]
-    anchor = dict(graph._layout.anchors)["source"][1]
-    x0 = source[0] + anchor[0]
-    y0 = source[1] + anchor[1]
-    x1 = target[0] + target[2] / 2
-    my1 = source[1] + source[3] + graph.layer_gap / 2
-    my2 = target[1] - graph.layer_gap / 2
-    t = 0.5
-    x = (1 - t) ** 3 * x0 + 3 * (1 - t) ** 2 * t * x0
-    x += 3 * (1 - t) * t**2 * x1 + t**3 * x1
-    y = (1 - t) ** 3 * y0 + 3 * (1 - t) ** 2 * t * my1
-    y += 3 * (1 - t) * t**2 * my2 + t**3 * (target[1] - 3) - 10
-    assert f'x="{x + 14:g}" y="{y:g}" text-anchor="start"' in output
+    target_in = dict(graph._layout.anchors)["target"][0]
+    x1 = target[0] + target_in[0]
+    y1 = target[1] + target_in[1]
+    assert f'x="{x1:g}" y="{y1 - 13:g}" text-anchor="middle"' in output
     rethemed = graph.with_theme(dataclasses.replace(theme, favorable="#444444"))
     assert 'fill="#444444"' in rethemed.as_raw_html()
     assert 'fill="#123456"' in rethemed.as_raw_html()
+
+
+def test_graph_renderer_spreads_labeled_diamond_anchors_at_target():
+    graph = Graph(
+        (
+            ("left", Card("Left")),
+            ("middle", Card("Middle")),
+            ("right", Card("Right")),
+            ("target", Card("Target")),
+        ),
+        Slotted(
+            (
+                Slot("left", 0, 0),
+                Slot("middle", 0, 1),
+                Slot("right", 0, 2),
+                Slot("target", 1, 0),
+            )
+        ),
+        wires=(
+            Wire("left-target", "left", "target", label="left"),
+            Wire("middle-target", "middle", "target"),
+            Wire("right-target", "right", "target", label="right"),
+        ),
+        dom_prefix="label-spread",
+    )
+    target_left, target_top, _target_width, _target_height = dict(graph.measure().boxes)["target"]
+    target_in = dict(graph._layout.anchors)["target"][0]
+    x1 = target_left + target_in[0]
+    y1 = target_top + target_in[1]
+    geometry = dict(graph._layout.wire_geometry)
+    assert geometry["left-target"][1] == (x1 - 36, y1 - 13)
+    assert geometry["right-target"][1] == (x1 + 36, y1 - 13)
 
 
 def test_graph_renderer_serializes_compiled_rules_and_nub_glyph_swap():
@@ -1485,7 +1508,7 @@ def _metric_tree(nodes, edges, *, direction="higher_is_better"):
     return MetricTree(nodes, edges, lambda value: f"{value:.1f}", direction=direction)
 
 
-def test_metric_tree_assigns_longest_path_layers_and_input_order_slots():
+def test_metric_tree_assigns_longest_path_layers_and_barycenter_slots():
     nodes = tuple((node_id, Card(node_id)) for node_id in ("root", "b", "a", "orphan"))
     graph = _metric_tree(nodes, (("root", "a", 1.0), ("root", "b", -1.0)))
     assert graph.layout.slots == (
@@ -1493,6 +1516,17 @@ def test_metric_tree_assigns_longest_path_layers_and_input_order_slots():
         Slot("b", 1, 0),
         Slot("a", 1, 1),
         Slot("orphan", 0, 1),
+    )
+    centered_parent = _metric_tree(
+        tuple((node_id, Card(node_id)) for node_id in ("left", "root", "c0", "c1", "c2")),
+        (("root", "c0", 1.0), ("root", "c1", 1.0), ("root", "c2", 1.0)),
+    )
+    assert centered_parent.layout.slots == (
+        Slot("left", 0, 0),
+        Slot("root", 0, 1),
+        Slot("c0", 1, 0),
+        Slot("c1", 1, 1),
+        Slot("c2", 1, 2),
     )
     multi_root = _metric_tree(
         tuple((node_id, Card(node_id)) for node_id in ("second", "child", "first")),

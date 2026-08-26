@@ -536,8 +536,17 @@ def _graph_measure(
         anchor_offsets.append((card_id, (by_name["in"], by_name["out"])))
     boxes_by_id = dict(boxes)
     anchors_by_id = dict(anchor_offsets)
+    labeled_incoming: dict[str, list[int]] = {}
+    for index, wire in enumerate(wires):
+        if wire.label is not None:
+            labeled_incoming.setdefault(wire.dst, []).append(index)
+    label_index = {
+        wire_index: (index, len(indices))
+        for indices in labeled_incoming.values()
+        for index, wire_index in enumerate(indices)
+    }
     wire_geometry: list[tuple[str, WireGeometry]] = []
-    for wire in wires:
+    for wire_index, wire in enumerate(wires):
         src_left, src_top, _src_width, src_height = boxes_by_id[wire.src]
         dst_left, dst_top, _dst_width, _dst_height = boxes_by_id[wire.dst]
         _, (out_x, out_y) = anchors_by_id[wire.src]
@@ -549,19 +558,12 @@ def _graph_measure(
         my1 = src_top + src_height + layer_gap / 2
         my2 = dst_top - layer_gap / 2
         path = (x0, y0, x0, my1, x1, my2, x1, y1 - 3)
-        t = 0.5
-        inverse = 1 - t
-        label_x = (
-            inverse**3 * x0 + 3 * inverse**2 * t * x0 + 3 * inverse * t**2 * x1 + t**3 * x1 + 14
-        )
-        label_y = (
-            inverse**3 * y0
-            + 3 * inverse**2 * t * my1
-            + 3 * inverse * t**2 * my2
-            + t**3 * (y1 - 3)
-            - 10
-        )
-        wire_geometry.append((wire.id, (path, (label_x, label_y))))
+        if wire.label is None:
+            spread = 0
+        else:
+            k, n = label_index[wire_index]
+            spread = (k - (n - 1) / 2) * 72
+        wire_geometry.append((wire.id, (path, (x1 + spread, y1 - 13))))
     return _GraphLayout(footprint, tuple(anchor_offsets), tuple(wire_geometry))
 
 

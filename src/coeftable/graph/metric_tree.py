@@ -119,6 +119,39 @@ def _label(fmt: Format, contribution: float) -> str:
     return text
 
 
+def _slots(
+    node_ids: tuple[str, ...],
+    edges: tuple[tuple[str, str, float | None], ...],
+    layers: dict[str, int],
+) -> tuple[Slot, ...]:
+    """Assign dense slots with one bottom-up barycenter pass."""
+    first_appearance = {node_id: index for index, node_id in enumerate(node_ids)}
+    layer_nodes: dict[int, list[str]] = {}
+    for node_id in node_ids:
+        layer_nodes.setdefault(layers[node_id], []).append(node_id)
+    children: dict[str, list[str]] = {node_id: [] for node_id in node_ids}
+    for parent, child, _ in edges:
+        children[parent].append(child)
+
+    slot_by_id: dict[str, int] = {}
+    deepest = max(layer_nodes)
+    for slot, node_id in enumerate(layer_nodes[deepest]):
+        slot_by_id[node_id] = slot
+    for layer in range(deepest - 1, -1, -1):
+
+        def order_key(node_id: str) -> tuple[float, int]:
+            child_ids = children[node_id]
+            if not child_ids:
+                barycenter = float(first_appearance[node_id])
+            else:
+                barycenter = sum(slot_by_id[child] for child in child_ids) / len(child_ids)
+            return barycenter, first_appearance[node_id]
+
+        for slot, node_id in enumerate(sorted(layer_nodes[layer], key=order_key)):
+            slot_by_id[node_id] = slot
+    return tuple(Slot(node_id, layers[node_id], slot_by_id[node_id]) for node_id in node_ids)
+
+
 def MetricTree(
     nodes: Sequence[tuple[str, Card]],
     edges: Sequence[tuple[str, str, float | None]],
@@ -142,15 +175,8 @@ def MetricTree(
     node_ids = tuple(node_id for node_id, _ in node_entries)
     edge_entries = _edges(edges, node_ids=set(node_ids))
     check_acyclic(node_ids, tuple((parent, child) for parent, child, _ in edge_entries))
-
     layers = _layers(node_ids, edge_entries)
-    next_slot: dict[int, int] = {}
-    slots: list[Slot] = []
-    for node_id in node_ids:
-        layer = layers[node_id]
-        slot = next_slot.get(layer, 0)
-        slots.append(Slot(node_id, layer, slot))
-        next_slot[layer] = slot + 1
+    slots = _slots(node_ids, edge_entries, layers)
 
     wires = tuple(
         Wire(
