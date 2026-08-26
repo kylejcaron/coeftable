@@ -321,6 +321,28 @@ def test_graph_measure_boxes_cover_each_node_once():
     assert tuple(card_id for card_id, _ in graph.measure().boxes) == ("a", "b")
 
 
+def test_graph_measure_uses_rebound_theme_sensitive_heights():
+    from coeftable.cards import InlineSvg
+    from coeftable.theme import BLUE, DEFAULT
+
+    class ThemeSized:
+        def resolve(self, *, width, theme, chrome):
+            """Resolve to a taller drawing under any non-default theme."""
+            height = 30 if theme is DEFAULT else 60
+            svg = f'<svg xmlns="http://www.w3.org/2000/svg" width="80" height="{height}"></svg>'
+            return (InlineSvg(svg, 80, height),)
+
+    card = Card("t", content=(ThemeSized(),))
+    default_graph = _plain_graph(nodes=(("root", card),))
+    blue_graph = Graph(
+        nodes=(("root", card),),
+        layout=Slotted((Slot("root", 0, 0),)),
+        theme=BLUE,
+    )
+    delta = blue_graph.measure().height - default_graph.measure().height
+    assert delta == 30  # the rebound card re-resolved under BLUE and grew
+
+
 def test_every_graph_module_imports_only_foundation_or_cards_roots():
     package_dir = Path(coeftable.graph.__file__).parent
     src_root = package_dir.parent.parent
