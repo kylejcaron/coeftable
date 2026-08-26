@@ -281,6 +281,11 @@ def test_empty_resolving_regions_produce_no_dividers_or_gaps():
     )
     assert phantom.as_raw_html().count("border-top") == bare.as_raw_html().count("border-top")
 
+    empty_content = Panel((Pane("x", content=(Empty(),), width=200),))
+    truly_empty = Panel((Pane("x", content=(), width=200),))
+    assert empty_content.measure() == truly_empty.measure()
+    assert empty_content.as_raw_html() == truly_empty.as_raw_html()
+
 
 def test_rendering_is_deterministic_and_repr_html_matches():
     panel = _panel(content=(TextBlock("hello"),))
@@ -435,12 +440,12 @@ def test_retention_fixture_reproduces_the_panel_through_public_api():
             for value, n in zip(values, sample_sizes, strict=True)
         ]
         observed_values = [value for value in values if value is not None]
-        span = (max(observed_values) - min(observed_values)) or 0.02
+        span = ((max(observed_values) - min(observed_values)) or 0.02) * 100.0
         lower_observed = [value for value in lower if value is not None]
         upper_observed = [value for value in upper if value is not None]
         domain = (
-            (min(lower_observed) - 0.3 * span) * 100.0,
-            (max(upper_observed) + 0.3 * span) * 100.0,
+            min(lower_observed) - 0.3 * span,
+            max(upper_observed) + 0.3 * span,
         )
         arrow = "▴" if delta >= 0.0 else "▾"
         delta_text = f"{arrow} {signed_points(delta)}"
@@ -539,6 +544,12 @@ def test_retention_fixture_reproduces_the_panel_through_public_api():
     journey_axis_height = _svg_height(journey_axis_svg)
     for svg in trend_svgs:
         assert "<text" not in svg  # compact rows: no axis, no endpoint label
+        points = re.findall(r'<polyline[^>]*points="([^"]+)"', svg)
+        assert points
+        for chunk in points:
+            for pair in chunk.split():
+                y_value = float(pair.split(",")[1])
+                assert 0.0 <= y_value <= 30.0  # projected data stays inside the plot box
 
     title_height = math.ceil(chrome.title_size * chrome.leading)
     subtitle_height = math.ceil(chrome.subtitle_size * chrome.leading)
