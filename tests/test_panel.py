@@ -1,5 +1,6 @@
 """Contract tests for panel composition."""
 
+import re
 from dataclasses import FrozenInstanceError
 from pathlib import Path
 from typing import Any, cast
@@ -19,7 +20,7 @@ from coeftable.cards import (
 )
 from coeftable.cards.adornments import Adornment
 from coeftable.errors import SpecError
-from coeftable.theme import BLUE, Theme
+from coeftable.theme import BLUE, DEFAULT, Theme
 
 
 class RecordingRegion:
@@ -70,19 +71,38 @@ def test_panel_box_model_counts_header_footer_dividers_only_when_nonempty():
     "build",
     [
         lambda: Row(()),
+        lambda: Row(((object(), 10),)),  # ty: ignore[invalid-argument-type]
         lambda: Row(((TextBlock("x"), 0),)),
         lambda: Row(((TextBlock("x"), -1),)),
         lambda: Row(((TextBlock("x"), True),)),
         lambda: Row(((TextBlock("x"), 1),), gap=0),
+        lambda: Row(((TextBlock("x"), 1),), gap=-1),
         lambda: Row(((TextBlock("x"), 1),), gap=True),
         lambda: Row(cast(Any, ((TextBlock("x"), 1, 2),))),
         lambda: Row(cast(Any, (([TextBlock("x"), 1],),))),
         lambda: Row(cast(Any, ((Row(((TextBlock("x"), 1),)), 1),))),
         lambda: Pane("", content=(), width=10),
+        lambda: Pane("x", content=(object(),), width=10),  # ty: ignore[invalid-argument-type]
         lambda: Pane("x", content=(), width=0),
+        lambda: Pane("x", content=(), width=-1),
         lambda: Pane("x", content=(), width=True),
         lambda: Panel(()),
+        lambda: Panel((object(),)),  # ty: ignore[invalid-argument-type]
         lambda: Panel((Pane("x", content=(), width=10), Pane("x", content=(), width=10))),
+        lambda: _panel(header=(object(),)),
+        lambda: _panel(footer=(object(),)),
+        lambda: Panel((Pane("x", content=(), width=10),), gap=0),
+        lambda: Panel((Pane("x", content=(), width=10),), gap=-1),
+        lambda: Panel((Pane("x", content=(), width=10),), gap=True),
+        # ty: ignore is deliberate: invalid inputs must raise SpecError.
+        lambda: Panel(
+            (Pane("x", content=(), width=10),),
+            chrome=object(),  # ty: ignore[invalid-argument-type]
+        ),
+        lambda: Panel(
+            (Pane("x", content=(), width=10),),
+            theme=object(),  # ty: ignore[invalid-argument-type]
+        ),
     ],
 )
 def test_panel_construction_validation(build):
@@ -90,29 +110,48 @@ def test_panel_construction_validation(build):
         build()
 
 
-def test_row_canonicalizes_and_is_frozen_and_slotted():
-    cells = [(TextBlock("x"), 20)]
-    row = Row(cast(Any, cells))
-    cells.append((TextBlock("y"), 20))
-    assert row.cells == ((TextBlock("x"), 20),)
-    with pytest.raises(FrozenInstanceError):
-        cast(Any, row).cells = ()
+def test_public_sequences_are_snapshotted_and_all_contract_types_are_frozen():
+    row_source = [(TextBlock("cell"), 20)]
+    row = Row(cast(Any, row_source))
+    row_item = row_source[0][0]
+    pane_source = [TextBlock("body")]
+    pane = Pane("x", content=cast(Any, pane_source), width=40)
+    pane_item = pane_source[0]
+    panes_source = [pane]
+    header_source = [TextBlock("header")]
+    header_item = header_source[0]
+    footer_source = [TextBlock("footer")]
+    footer_item = footer_source[0]
+    panel = Panel(
+        cast(Any, panes_source),
+        header=cast(Any, header_source),
+        footer=cast(Any, footer_source),
+    )
+    themed = panel.with_theme(BLUE)
+    row_source.append((TextBlock("later"), 20))
+    pane_source.append(TextBlock("later"))
+    panes_source.clear()
+    header_source.clear()
+    footer_source.clear()
+    assert row.cells == ((row_item, 20),)
+    assert pane.content == (pane_item,)
+    assert panel.panes == (pane,)
+    assert panel.header == (header_item,)
+    assert panel.footer == (footer_item,)
+    assert themed.panes == (pane,)
+    assert themed.header == (header_item,)
+    assert themed.footer == (footer_item,)
+    for obj, attr in (
+        (row, "cells"),
+        (pane, "content"),
+        (panel, "panes"),
+        (panel.measure(), "width"),
+    ):
+        with pytest.raises(FrozenInstanceError):
+            setattr(cast(Any, obj), attr, ())
     assert not hasattr(row, "__dict__")
-
-
-def test_panel_canonicalizes_public_sequences_and_is_frozen_and_slotted():
-    panes = [Pane("x", content=cast(Any, [TextBlock("x")]), width=40)]
-    header = [TextBlock("h")]
-    footer = [TextBlock("f")]
-    panel = Panel(cast(Any, panes), header=cast(Any, header), footer=cast(Any, footer))
-    panes.clear()
-    header.clear()
-    footer.clear()
-    assert len(panel.panes) == 1 and panel.header and panel.footer
+    assert not hasattr(pane, "__dict__")
     assert not hasattr(panel, "__dict__")
-    with pytest.raises(FrozenInstanceError):
-        cast(Any, panel).panes = ()
-    assert not hasattr(panel.panes[0], "__dict__")
     assert not hasattr(panel.measure(), "__dict__")
 
 
@@ -145,7 +184,16 @@ def test_multiline_cell_stacks_and_row_height_uses_max_cell_height():
     row = Row(((trend, 40), (TextBlock("short"), 40)))
     panel = _panel(pane_width=90, content=(row,))
     assert panel.measure().pane_heights == (19 + DEFAULT_CHROME.header_gap + 30 + 22 + 8,)
-    assert "column-gap:10px" in panel.as_raw_html()
+    html = panel.as_raw_html()
+    composed_row = re.search(
+        r'<div style="display:flex;align-items:flex-start;column-gap:10px;width:90px;'
+        r'height:(\d+)px;margin:0;padding:0">',
+        html,
+    )
+    assert composed_row is not None
+    assert int(composed_row.group(1)) == 30 + 22 + 8
+    assert "align-items:flex-start" in html
+    assert "align-self:flex-start" in html
 
 
 def test_regions_resolve_once_in_traversal_order_and_with_theme_repeats_it():
@@ -154,36 +202,61 @@ def test_regions_resolve_once_in_traversal_order_and_with_theme_repeats_it():
     pane_region = RecordingRegion("pane", calls)
     cell_region = RecordingRegion("cell", calls)
     footer_region = RecordingRegion("footer", calls)
-    panel = Panel(
-        (Pane("main", content=(pane_region, Row(((cell_region, 25),))), width=50),),
-        header=(header_region,),
-        footer=(footer_region,),
-    )
+    row = Row(((cell_region, 25),))
+    pane = Pane("main", content=(pane_region, row), width=50)
+    panel = Panel((pane,), header=(header_region,), footer=(footer_region,))
     inner = panel.measure().width - 2 * (DEFAULT_CHROME.padding + DEFAULT_CHROME.border_width)
-    assert [(name, width) for name, width, _, _ in calls] == [
-        ("header", inner),
-        ("pane", 50),
-        ("cell", 25),
-        ("footer", inner),
+    expected_default = [
+        ("header", inner, DEFAULT_CHROME, DEFAULT),
+        ("pane", 50, DEFAULT_CHROME, DEFAULT),
+        ("cell", 25, DEFAULT_CHROME, DEFAULT),
+        ("footer", inner, DEFAULT_CHROME, DEFAULT),
     ]
+    assert calls == expected_default
+    assert panel.header[0] is header_region
+    assert panel.panes[0] is pane
+    assert panel.panes[0].content[0] is pane_region
+    assert panel.panes[0].content[1] is row
+    assert panel.panes[0].content[1].cells[0][0] is cell_region
+    assert panel.footer[0] is footer_region
+    panel.as_raw_html()
+    panel.measure()
+    assert calls == expected_default
     themed = panel.with_theme(BLUE)
-    assert [(name, width) for name, width, _, _ in calls[4:]] == [
-        ("header", inner),
-        ("pane", 50),
-        ("cell", 25),
-        ("footer", inner),
+    expected_blue = [
+        ("header", inner, DEFAULT_CHROME, BLUE),
+        ("pane", 50, DEFAULT_CHROME, BLUE),
+        ("cell", 25, DEFAULT_CHROME, BLUE),
+        ("footer", inner, DEFAULT_CHROME, BLUE),
     ]
+    assert calls == expected_default + expected_blue
+    assert themed.header[0] is header_region
+    assert themed.panes[0] is pane
+    assert themed.panes[0].content[0] is pane_region
+    assert themed.panes[0].content[1] is row
+    assert themed.panes[0].content[1].cells[0][0] is cell_region
+    assert themed.footer[0] is footer_region
+    themed.as_raw_html()
+    themed.measure()
+    assert calls == expected_default + expected_blue
     assert themed is not panel
 
 
-def test_raw_adornment_is_not_resolved_and_popover_wrapper_overflows():
+def test_raw_adornment_row_wrappers_match_overflow_contract():
     popover = KeyValuePopover("details", (("key", "value"),))
     panel = _panel(
         pane_width=80,
-        content=(popover, InlineSvg('<svg width="10" height="2"></svg>', 10, 2)),
+        content=(
+            popover,
+            TextBlock("normal"),
+            InlineSvg('<svg width="10" height="2"></svg>', 10, 2),
+        ),
     )
     html = panel.as_raw_html()
-    assert "overflow:visible" in html
+    assert re.search(r'<div style="height:\d+px;overflow:visible;margin:0"><details', html)
+    assert re.search(
+        r'<div style="height:\d+px;overflow:hidden;margin:0"><div style="color:', html
+    )
     assert "line-height:0" in html
 
 

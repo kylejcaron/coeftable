@@ -71,6 +71,8 @@ class Row:
             item, width = cell
             if isinstance(item, Row):
                 raise SpecError(f"Row.cells[{index}] must not contain a nested Row")
+            if not _is_item(item):
+                raise SpecError(f"Row.cells[{index}][0] must be a Region or Adornment")
             _positive_int(width, name=f"Row.cells[{index}][1]")
             canonical.append((cast(Region | Adornment, item), cast(int, width)))
         _positive_int(self.gap, name="Row.gap")
@@ -384,7 +386,8 @@ def _render_stack(stack: tuple[_ResolvedEntry, ...], *, theme: Theme, chrome: Ca
                 )
             rendered = (
                 f'<div style="display:flex;align-items:flex-start;column-gap:{content.gap}px;'
-                f'width:{content.width}px;margin:0;padding:0">{"".join(cells)}</div>'
+                f'width:{content.width}px;height:{content.height}px;margin:0;padding:0">'
+                f"{''.join(cells)}</div>"
             )
         else:
             rendered = "".join(_wrap(row, theme, chrome) for row in content.rows)
