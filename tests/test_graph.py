@@ -1392,6 +1392,22 @@ def test_metric_tree_rejects_non_finite_contributions(contribution):
         _metric_tree((("r", Card("r")), ("a", Card("a"))), (("r", "a", contribution),))
 
 
+def test_metric_tree_wire_ids_survive_arrowed_node_ids():
+    # "a->b" -> "c" and "a" -> "b->c" would collide under concatenated ids.
+    nodes = (("a", Card("a")), ("a->b", Card("ab")), ("b->c", Card("bc")), ("c", Card("c")))
+    tree = _metric_tree(nodes, (("a->b", "c", None), ("a", "b->c", None)))
+    assert tuple(wire.id for wire in tree.wires) == ("w0", "w1")
+
+
+def test_metric_tree_rejects_float_convertible_impostors():
+    class Sneaky:
+        def __float__(self) -> float:
+            return 1.0
+
+    with pytest.raises(SpecError, match="contribution must be finite"):
+        _metric_tree((("r", Card("r")), ("a", Card("a"))), (("r", "a", Sneaky()),))
+
+
 def test_metric_tree_rejects_empty_nodes_bad_formatter_and_direction():
     with pytest.raises(SpecError):
         MetricTree((), (), str)

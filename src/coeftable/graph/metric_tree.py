@@ -49,15 +49,11 @@ def _finite_contribution(value: object, *, index: int) -> float | None:
     """Validate and normalize one edge contribution."""
     if value is None:
         return None
-    if isinstance(value, bool):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise SpecError(f"MetricTree.edges[{index}].contribution must be finite")
-    try:
-        finite = math.isfinite(cast(float, value))
-    except (TypeError, ValueError, OverflowError) as error:
-        raise SpecError(f"MetricTree.edges[{index}].contribution must be finite") from error
-    if not finite:
+    if not math.isfinite(value):
         raise SpecError(f"MetricTree.edges[{index}].contribution must be finite")
-    return cast(float, value)
+    return float(value)
 
 
 def _edges(value: object, *, node_ids: set[str]) -> tuple[tuple[str, str, float | None], ...]:
@@ -149,7 +145,7 @@ def MetricTree(
 
     wires = tuple(
         Wire(
-            id=f"{parent}->{child}",
+            id=f"w{index}",  # ordinal: node ids are unrestricted and may collide if concatenated
             src=parent,
             dst=child,
             label=None if contribution is None else _label(fmt, contribution),
@@ -157,7 +153,7 @@ def MetricTree(
             if contribution is None
             else role_for(contribution, contribution, 0.0, direction),
         )
-        for parent, child, contribution in edge_entries
+        for index, (parent, child, contribution) in enumerate(edge_entries)
     )
     outgoing = {parent for parent, _, _ in edge_entries}
     collapsible = tuple(node_id for node_id in node_ids if node_id in outgoing)
