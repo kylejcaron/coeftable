@@ -178,14 +178,16 @@ class MeasuredCard:
     anchors: tuple[Anchor, ...]
 
 
-def _metric_row(adornment: MetricValue, usable: float, chrome: CardChrome) -> Row:
+def _metric_row(adornment: MetricValue, usable: float, chrome: CardChrome, where: str) -> Row:
     ratio = chrome.data_char_width_ratio
-    width = _est(adornment.value, chrome.value_size, ratio)
+    value_width = _est(adornment.value, chrome.value_size, ratio)
+    width = value_width
     if adornment.detail is not None:
         width += chrome.value_detail_gap + _est(adornment.detail, chrome.ci_size, ratio)
     if width > usable:
+        field = "value" if value_width > usable else "detail"
         raise SpecError(
-            f"MetricValue.value does not fit: estimated {width:.0f}px in "
+            f"{where}: MetricValue.{field} does not fit: estimated {width:.0f}px in "
             f"{usable:.0f}px usable; {_FIXES}"
         )
     return Row(adornment, line_height(max(chrome.value_size, chrome.ci_size), chrome))
@@ -237,7 +239,7 @@ def resolve_rows(
                         Row(replace(adornment, text=lined, max_lines=1), line_height(size, chrome))
                     )
             case MetricValue():
-                rows.append(_metric_row(adornment, usable, chrome))
+                rows.append(_metric_row(adornment, usable, chrome, where))
             case InlineSvg(width=svg_width, height=svg_height):
                 if svg_width > usable:
                     raise SpecError(

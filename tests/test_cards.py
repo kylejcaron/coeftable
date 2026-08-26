@@ -796,7 +796,7 @@ def test_wrapping_textblock_height_is_lines_times_line_height():
     assert all(isinstance(r.adornment, TextBlock) for r in rows[:2])
 
 
-def test_metric_value_overflow_raises_with_fixes():
+def test_metric_value_overflow_names_section_and_field():
     with pytest.raises(SpecError) as excinfo:
         resolve_rows(
             (MetricValue("+123,456,789.00% " * 4),),
@@ -805,7 +805,25 @@ def test_metric_value_overflow_raises_with_fixes():
             section="body",
         )
     message = str(excinfo.value)
+    assert "body[0]" in message
     assert "MetricValue.value" in message
+    assert "wider card" in message
+
+
+def test_metric_detail_overflow_names_section_index_and_detail_field():
+    with pytest.raises(SpecError) as excinfo:
+        resolve_rows(
+            (
+                TextBlock("context", variant="caption"),
+                MetricValue("+3.4%", detail="[1.2, 5.7]"),
+            ),
+            usable=60,
+            chrome=DEFAULT_CHROME,
+            section="body",
+        )
+    message = str(excinfo.value)
+    assert "body[1]" in message
+    assert "MetricValue.detail" in message
     assert "wider card" in message
 
 
