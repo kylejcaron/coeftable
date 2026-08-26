@@ -215,16 +215,23 @@ def test_every_graph_module_imports_only_foundation_or_cards_roots():
             if isinstance(node, ast.Import):
                 for alias in node.names:
                     parts = alias.name.split(".")
-                    if parts[0] == "coeftable" and len(parts) > 1:
-                        imported_roots.add(parts[1])
+                    if parts[0] == "coeftable":
+                        imported_roots.add(parts[1] if len(parts) > 1 else "")
             elif isinstance(node, ast.ImportFrom):
                 if node.level == 0:
                     paths = [node.module.split(".")] if node.module else []
                 else:
                     package = list(module.parent.relative_to(src_root).parts)
                     base = package[: len(package) - (node.level - 1)]
-                    paths = [base + node.module.split(".")] if node.module else []
+                    if node.module:
+                        paths = [base + node.module.split(".")]
+                    else:
+                        paths = [[*base, alias.name] for alias in node.names]
                 for parts in paths:
-                    if parts and parts[0] == "coeftable" and len(parts) > 1:
+                    if parts[0] != "coeftable":
+                        continue
+                    if len(parts) > 1:
                         imported_roots.add(parts[1])
+                    else:
+                        imported_roots.update(alias.name for alias in node.names)
         assert not imported_roots - allowed, f"{module.name}: {imported_roots - allowed}"
