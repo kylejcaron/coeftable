@@ -82,7 +82,7 @@ def _wire_svg(graph: Graph, layout: _GraphLayout, compiled: _CompiledState) -> s
                 - 10
             )
             label = (
-                f'<text x="{_number(label_x)}" y="{_number(label_y)}" text-anchor="middle" '
+                f'<text x="{_number(label_x + 10)}" y="{_number(label_y)}" text-anchor="start" '
                 f'fill="{_esc(_label_color(graph.theme, wire.label_role, wire.label_color))}" '
                 f'style="paint-order:stroke;stroke:{surface};stroke-width:4px;'
                 f'stroke-linejoin:round">{_esc(wire.label)}</text>'

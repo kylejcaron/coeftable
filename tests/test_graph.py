@@ -1269,7 +1269,7 @@ def test_graph_renderer_places_label_at_cubic_midpoint_and_rethemes_roles():
     x += 3 * (1 - t) * t**2 * x1 + t**3 * x1
     y = (1 - t) ** 3 * y0 + 3 * (1 - t) ** 2 * t * my
     y += 3 * (1 - t) * t**2 * my + t**3 * (target[1] - 3) - 10
-    assert f'x="{x:g}" y="{y:g}"' in output
+    assert f'x="{x + 10:g}" y="{y:g}"' in output
     rethemed = graph.with_theme(dataclasses.replace(theme, favorable="#444444"))
     assert 'fill="#444444"' in rethemed.as_raw_html()
     assert 'fill="#123456"' in rethemed.as_raw_html()
