@@ -563,6 +563,8 @@ def test_trend_canonicalization_snapshots_caller_lists():
         dict(x=X, y=Y, x_domain=(0, 3), domain=(0, 1), inset=True),
         dict(x=X, y=Y, x_domain=(0, 3), domain=(0, 1), inset=0),
         dict(x=X, y=Y, x_domain=(0, 3), domain=(0, 1), annotations=("rule",)),
+        dict(x=X, y=Y, x_domain=(0, float("nan")), domain=(0, 1)),
+        dict(x=X, y=Y, x_domain=(0, 3), domain=(float("-inf"), 1)),
     ],
     ids=[
         "empty",
@@ -592,6 +594,8 @@ def test_trend_canonicalization_snapshots_caller_lists():
         "bool-inset",
         "zero-inset",
         "non-annotation",
+        "nan-x-domain",
+        "inf-domain",
     ],
 )
 def test_trend_validation(kwargs):
@@ -744,6 +748,8 @@ def test_interval_role_and_axis_toggle():
         dict(estimate=1.0, lower=0.5, upper=2.0, domain=(0, 3), axis_height=True),
         dict(estimate=1.0, lower=0.5, upper=2.0, domain=(0, 3), inset=True),
         dict(estimate=1.0, lower=0.5, upper=2.0, domain=(0, 3), inset=0),
+        dict(estimate=1.0, lower=0.5, upper=2.0, domain=(0, float("nan"))),
+        dict(estimate=1.0, lower=0.5, upper=2.0, domain=(float("inf"), 3)),
     ],
     ids=[
         "inverted-bounds",
@@ -762,6 +768,8 @@ def test_interval_role_and_axis_toggle():
         "bool-axis-height",
         "bool-inset",
         "zero-inset",
+        "nan-domain",
+        "inf-domain",
     ],
 )
 def test_interval_validation(kwargs):
