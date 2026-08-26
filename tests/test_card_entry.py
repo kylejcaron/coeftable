@@ -119,6 +119,11 @@ def test_select_option_values_reject_carriage_returns():
         SelectControl("Mode", (("a\rb", "A"),), selected="a\rb")
 
 
+def test_select_option_values_reject_nul_bytes():
+    with pytest.raises(SpecError, match="NUL bytes"):
+        SelectControl("Mode", (("a\x00b", "A"),), selected="a\x00b")
+
+
 def test_card_threads_handed_control_dom_id_to_select_serializer():
     card = Card(
         "Revenue",

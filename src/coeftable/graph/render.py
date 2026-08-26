@@ -61,10 +61,11 @@ def _wire_svg(graph: Graph, layout: _GraphLayout, compiled: _CompiledState) -> s
         y0 = src_top + out_y
         x1 = dst_left + in_x
         y1 = dst_top + in_y
-        my = (src_top + src_height + dst_top) / 2
+        my1 = src_top + src_height + graph.layer_gap / 2
+        my2 = dst_top - graph.layer_gap / 2
         path = (
-            f'<path d="M {_number(x0)},{_number(y0)} C {_number(x0)},{_number(my)} '
-            f'{_number(x1)},{_number(my)} {_number(x1)},{_number(y1 - 3)}" '
+            f'<path d="M {_number(x0)},{_number(y0)} C {_number(x0)},{_number(my1)} '
+            f'{_number(x1)},{_number(my2)} {_number(x1)},{_number(y1 - 3)}" '
             f'fill="none" stroke="{axis}" stroke-width="1.5" marker-end="url(#{marker_id})"/>'
         )
         label = ""
@@ -76,8 +77,8 @@ def _wire_svg(graph: Graph, layout: _GraphLayout, compiled: _CompiledState) -> s
             )
             label_y = (
                 inverse**3 * y0
-                + 3 * inverse**2 * t * my
-                + 3 * inverse * t**2 * my
+                + 3 * inverse**2 * t * my1
+                + 3 * inverse * t**2 * my2
                 + t**3 * (y1 - 3)
                 - 10
             )
@@ -107,8 +108,7 @@ def _nub_markup(
             f"top:{_number(height)}px;width:18px;height:18px;box-sizing:border-box;"
             f"display:flex;align-items:center;justify-content:center;border:1px solid "
             f"{_esc(graph.theme.axis)};border-radius:50%;background:{_esc(graph.theme.surface)};"
-            f'color:{_esc(graph.theme.axis)};font-size:13px;line-height:16px;cursor:pointer">'
-            f"<span>+</span><span>−</span></label>"
+            f"<span>−</span><span>+</span></label>"
         )
         rules.extend(
             (

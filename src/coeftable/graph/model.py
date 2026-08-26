@@ -350,6 +350,9 @@ def _graph_wires(
     wire_ids = tuple(wire.id for wire in result)
     if len(set(wire_ids)) != len(wire_ids):
         raise SpecError("Graph.wires ids must be unique")
+    wire_pairs = tuple((wire.src, wire.dst) for wire in result)
+    if len(set(wire_pairs)) != len(wire_pairs):
+        raise SpecError("Graph.wires must not contain duplicate pairs")
     if any(wire.src not in known_cards or wire.dst not in known_cards for wire in result):
         raise SpecError("Graph.wires endpoints must reference known cards")
     if any(layers_by_id[wire.src] >= layers_by_id[wire.dst] for wire in result):
@@ -436,10 +439,7 @@ def _graph_rules(
                 raise SpecError("Graph.rules option controls must reference known selects")
             elif atom.option not in options[atom.control.key]:
                 raise SpecError("Graph.rules option must reference a known select option")
-        if any(
-            atom.predicate == "checked" and atom.control.card_id in rule.hide_cards
-            for atom in rule.when_all
-        ):
+        if any(atom.control.card_id in rule.hide_cards for atom in rule.when_all):
             raise SpecError("a rule may not hide the card owning its condition nub")
     return cast(tuple[StateRule, ...], rules)
 

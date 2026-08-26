@@ -51,9 +51,13 @@ def _finite_contribution(value: object, *, index: int) -> float | None:
         return None
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise SpecError(f"MetricTree.edges[{index}].contribution must be finite")
-    if not math.isfinite(value):
+    try:
+        normalized = float(value)
+    except OverflowError as error:
+        raise SpecError(f"MetricTree.edges[{index}].contribution must be finite") from error
+    if not math.isfinite(normalized):
         raise SpecError(f"MetricTree.edges[{index}].contribution must be finite")
-    return float(value)
+    return normalized
 
 
 def _edges(value: object, *, node_ids: set[str]) -> tuple[tuple[str, str, float | None], ...]:
@@ -122,8 +126,13 @@ def MetricTree(
     direction: Direction = "higher_is_better",
     theme: Theme = DEFAULT,
     chrome: CardChrome = DEFAULT_CHROME,
+    dom_prefix: str = "g0",
 ) -> Graph:
-    """Build a slotted, collapsible graph from a metric-tree topology."""
+    """Build a slotted, collapsible graph from a metric-tree topology.
+
+    ``dom_prefix`` reserves the generated DOM-id namespace; use a distinct
+    prefix when rendering multiple trees in one document.
+    """
     if not callable(fmt):
         raise SpecError("MetricTree fmt must be callable")
     if direction not in _DIRECTIONS:
@@ -164,4 +173,5 @@ def MetricTree(
         collapsible=collapsible,
         theme=theme,
         chrome=chrome,
+        dom_prefix=dom_prefix,
     )

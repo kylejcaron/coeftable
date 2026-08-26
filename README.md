@@ -565,14 +565,18 @@ tree = MetricTree(
         ("retention", Card("Retention")),
     ),
     edges=(
-        ("revenue", "price", 0.012),
-        ("revenue", "volume", 0.021),
-        ("volume", "retention", -0.006),
+        ("revenue", "price", 1.2),
+        ("revenue", "volume", 2.1),
+        ("volume", "retention", -0.6),
     ),
-    fmt=ct.Percent(signed=True),
+    fmt=ct.Number(suffix=' pp', decimals=1, signed=True, thousands=False),
+    dom_prefix='drivers',
 )
 html = tree.as_raw_html()
 ```
+
+Use a distinct `dom_prefix` for each tree when rendering multiple graphs in one
+document, so their generated control, card, and wire ids remain disjoint.
 
 Each card retains its native `<details>` fold control. The nub under a parent
 hides everything downstream with pure CSS, so neither interaction needs

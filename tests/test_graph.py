@@ -471,6 +471,14 @@ def test_blocker_families_cover_diamonds_depth_and_uncuttable_paths():
         (
             {
                 "nodes": (("root", Card("root")), ("child", Card("child"))),
+                "slots": (Slot("root", 0, 0), Slot("child", 1, 0)),
+                "wires": (Wire("w1", "root", "child"), Wire("w2", "root", "child")),
+            },
+            "Graph.wires must not contain duplicate pairs",
+        ),
+        (
+            {
+                "nodes": (("root", Card("root")), ("child", Card("child"))),
                 "slots": (Slot("root", 0, 0), Slot("child", 0, 0)),
                 "wires": (Wire("w", "root", "child"),),
             },
@@ -631,6 +639,27 @@ def test_graph_rejects_self_trapping_checked_rule():
         _plain_graph(
             collapsible=("root",),
             rules=(StateRule((Atom(ControlRef("root"), "checked"),), hide_cards=("root",)),),
+        )
+
+
+def test_graph_rejects_self_trapping_option_checked_rule():
+    controller = Card(
+        "Controller",
+        content=(SelectControl("Mode", (("on", "On"),), selected="on", key="mode"),),
+    )
+    with pytest.raises(
+        SpecError,
+        match=re.escape("a rule may not hide the card owning its condition nub"),
+    ):
+        _plain_graph(
+            nodes=(("controller", controller),),
+            slots=(Slot("controller", 0, 0),),
+            rules=(
+                StateRule(
+                    (Atom(ControlRef("controller", "mode"), "option_checked", "on"),),
+                    hide_cards=("controller",),
+                ),
+            ),
         )
 
 
@@ -816,9 +845,8 @@ def test_graph_rejects_unproven_shared_slot(rules):
 
 
 def test_shared_slot_controller_cannot_be_inside_the_group():
-    # The partition itself is exhaustive over the group {controller, left};
-    # the ONLY defects are the controller sitting in its own group (and the
-    # never-hidden law it necessarily drags in).
+    # The condition-control law rejects hiding the controller before shared-slot
+    # partition validation can inspect the group.
     rules = (
         StateRule(
             (Atom(ControlRef("controller", "mode"), "option_checked", "left"),),
@@ -829,7 +857,7 @@ def test_shared_slot_controller_cannot_be_inside_the_group():
             hide_cards=("left",),
         ),
     )
-    with pytest.raises(SpecError, match="shared-slot controller must be external to its group"):
+    with pytest.raises(SpecError, match="a rule may not hide the card owning its condition nub"):
         _shared_slot_graph(
             rules,
             slots=(Slot("controller", 0, 0), Slot("left", 0, 0), Slot("right", 1, 0)),
@@ -1048,6 +1076,56 @@ def test_graph_compiles_root_and_unequal_depth_blockers():
     )
 
 
+def test_graph_compiles_injected_checked_rule_and_renders_css():
+    graph = Graph(
+        (("controller", Card("Controller")), ("hidden", Card("Hidden"))),
+        Slotted((Slot("controller", 0, 0), Slot("hidden", 0, 1))),
+        collapsible=("controller",),
+        rules=(
+            StateRule(
+                (Atom(ControlRef("controller"), "checked"),),
+                hide_cards=("hidden",),
+            ),
+        ),
+        dom_prefix="inject",
+    )
+    assert graph._compiled.rules == ((("#inject-nub-0:checked",), ("inject-card-1",)),)
+    assert ".inject-canvas:has(#inject-nub-0:checked) #inject-card-1{display:none}" in (
+        graph.as_raw_html()
+    )
+
+
+def test_graph_compiles_explicit_wire_hide_without_hiding_endpoints():
+    graph = Graph(
+        (
+            ("controller", Card("Controller")),
+            ("source", Card("Source")),
+            ("target", Card("Target")),
+        ),
+        Slotted(
+            (
+                Slot("controller", 0, 0),
+                Slot("source", 0, 1),
+                Slot("target", 1, 0),
+            )
+        ),
+        wires=(Wire("route", "source", "target"),),
+        collapsible=("controller",),
+        rules=(
+            StateRule(
+                (Atom(ControlRef("controller"), "checked"),),
+                hide_wires=("route",),
+            ),
+        ),
+        dom_prefix="wirehide",
+    )
+    assert graph._compiled.rules == ((("#wirehide-nub-0:checked",), ("wirehide-edge-0",)),)
+    targets = graph._compiled.rules[0][1]
+    assert "wirehide-edge-0" in targets
+    assert "wirehide-card-1" not in targets
+    assert "wirehide-card-2" not in targets
+
+
 def test_graph_compiler_keeps_uncuttable_cards_visible():
     nodes = (("r", Card("r")), ("a", Card("a")), ("c", Card("c")))
     graph = Graph(
@@ -1168,16 +1246,25 @@ def _render_fixture(*, theme=None, prefix="render") -> Graph:
     theme = DEFAULT if theme is None else theme
     nodes = (
         ("source", Card("Source")),
+        ("left", Card("Left")),
+        ("right", Card("Right")),
         ("target", Card("Target")),
     )
     wires = (
-        Wire("role", "source", "target", label="role", label_role="favorable"),
-        Wire("explicit", "source", "target", label="explicit", label_color="#123456"),
+        Wire("role", "source", "left", label="role", label_role="favorable"),
+        Wire("explicit", "source", "right", label="explicit", label_color="#123456"),
         Wire("muted", "source", "target", label="muted"),
     )
     return Graph(
         nodes,
-        Slotted((Slot("source", 0, 0), Slot("target", 1, 0))),
+        Slotted(
+            (
+                Slot("source", 0, 0),
+                Slot("left", 1, 0),
+                Slot("right", 1, 1),
+                Slot("target", 1, 2),
+            )
+        ),
         wires=wires,
         collapsible=("source",),
         dom_prefix=prefix,
@@ -1217,10 +1304,12 @@ def test_graph_renderer_uses_measured_anchor_and_vertical_route_arithmetic():
     target_in = synthetic_anchors["target"][0]
     x1 = target_left + target_in[0]
     y1 = target_top + target_in[1]
-    my = (source_top + source_height + target_top) / 2
-    expected = f'd="M {x0:g},{y0:g} C {x0:g},{my:g} {x1:g},{my:g} {x1:g},{y1 - 3:g}"'
+    my1 = source_top + source_height + graph.layer_gap / 2
+    my2 = target_top - graph.layer_gap / 2
+    expected = f'd="M {x0:g},{y0:g} C {x0:g},{my1:g} {x1:g},{my2:g} {x1:g},{y1 - 3:g}"'
     output = graph.as_raw_html()
     assert expected in output
+    my = (source_top + source_height + target_top) / 2
     old_top_center = (
         f'd="M {x0:g},{y0:g} C {x0:g},{my:g} '
         f"{target_left + target_width / 2:g},{my:g} "
@@ -1263,12 +1352,13 @@ def test_graph_renderer_places_label_at_cubic_midpoint_and_rethemes_roles():
     x0 = source[0] + anchor[0]
     y0 = source[1] + anchor[1]
     x1 = target[0] + target[2] / 2
-    my = (source[1] + source[3] + target[1]) / 2
+    my1 = source[1] + source[3] + graph.layer_gap / 2
+    my2 = target[1] - graph.layer_gap / 2
     t = 0.5
     x = (1 - t) ** 3 * x0 + 3 * (1 - t) ** 2 * t * x0
     x += 3 * (1 - t) * t**2 * x1 + t**3 * x1
-    y = (1 - t) ** 3 * y0 + 3 * (1 - t) ** 2 * t * my
-    y += 3 * (1 - t) * t**2 * my + t**3 * (target[1] - 3) - 10
+    y = (1 - t) ** 3 * y0 + 3 * (1 - t) ** 2 * t * my1
+    y += 3 * (1 - t) * t**2 * my2 + t**3 * (target[1] - 3) - 10
     assert f'x="{x + 10:g}" y="{y:g}"' in output
     rethemed = graph.with_theme(dataclasses.replace(theme, favorable="#444444"))
     assert 'fill="#444444"' in rethemed.as_raw_html()
@@ -1284,6 +1374,7 @@ def test_graph_renderer_serializes_compiled_rules_and_nub_glyph_swap():
         expected = ",".join(f"{prefix} #{target}" for target in targets)
         assert f"{expected}{{display:none}}" in style
     assert 'type="checkbox" id="rules-nub-1" style="display:none"' in output
+    assert "<span>−</span><span>+</span></label>" in output
     assert "#rules-nub-1:checked + label span:first-child{display:none}" in style
     assert "#rules-nub-1:checked + label span:last-child{display:inline}" in style
 
@@ -1456,7 +1547,7 @@ def test_metric_tree_rejects_invalid_edges(edges):
         _metric_tree(nodes, edges)
 
 
-@pytest.mark.parametrize("contribution", [float("nan"), float("inf"), float("-inf")])
+@pytest.mark.parametrize("contribution", [float("nan"), float("inf"), float("-inf"), 10**1000])
 def test_metric_tree_rejects_non_finite_contributions(contribution):
     with pytest.raises(SpecError):
         _metric_tree((("r", Card("r")), ("a", Card("a"))), (("r", "a", contribution),))
@@ -1467,6 +1558,18 @@ def test_metric_tree_wire_ids_survive_arrowed_node_ids():
     nodes = (("a", Card("a")), ("a->b", Card("ab")), ("b->c", Card("bc")), ("c", Card("c")))
     tree = _metric_tree(nodes, (("a->b", "c", None), ("a", "b->c", None)))
     assert tuple(wire.id for wire in tree.wires) == ("w0", "w1")
+
+
+def test_metric_tree_dom_prefixes_keep_rendered_ids_disjoint():
+    nodes = (("root", Card("Root")), ("child", Card("Child")))
+    edges = (("root", "child", 1.0),)
+    first = MetricTree(nodes, edges, lambda value: f"{value:.1f}", dom_prefix="first")
+    second = MetricTree(nodes, edges, lambda value: f"{value:.1f}", dom_prefix="second")
+    first_ids = set(re.findall(r'(?:id|for)="([^"]+)"', first.as_raw_html()))
+    second_ids = set(re.findall(r'(?:id|for)="([^"]+)"', second.as_raw_html()))
+    assert first_ids
+    assert second_ids
+    assert first_ids.isdisjoint(second_ids)
 
 
 def test_metric_tree_rejects_float_convertible_impostors():
@@ -1681,7 +1784,8 @@ def test_metric_tree_driver_fixture_has_exact_layout_wires_labels_nubs_and_deter
         (in_x, in_y), _ = anchors[wire.dst]
         x0, y0 = src_left + out_x, src_top + out_y
         x1, y1 = dst_left + in_x, dst_top + in_y
-        midpoint = (src_top + src_height + dst_top) / 2
-        assert coordinates == pytest.approx((x0, y0, x0, midpoint, x1, midpoint, x1, y1 - 3))
+        my1 = src_top + src_height + graph.layer_gap / 2
+        my2 = dst_top - graph.layer_gap / 2
+        assert coordinates == pytest.approx((x0, y0, x0, my1, x1, my2, x1, y1 - 3))
 
     assert html == _driver_tree_fixture().as_raw_html()
