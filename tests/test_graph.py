@@ -634,7 +634,7 @@ def test_graph_validation_matrix(kwargs, message):
 def test_graph_rejects_self_trapping_checked_rule():
     with pytest.raises(
         SpecError,
-        match=re.escape("a rule may not hide the card owning its condition nub"),
+        match=re.escape("a rule may not hide the card owning one of its condition controls"),
     ):
         _plain_graph(
             collapsible=("root",),
@@ -649,7 +649,7 @@ def test_graph_rejects_self_trapping_option_checked_rule():
     )
     with pytest.raises(
         SpecError,
-        match=re.escape("a rule may not hide the card owning its condition nub"),
+        match=re.escape("a rule may not hide the card owning one of its condition controls"),
     ):
         _plain_graph(
             nodes=(("controller", controller),),
@@ -857,7 +857,9 @@ def test_shared_slot_controller_cannot_be_inside_the_group():
             hide_cards=("left",),
         ),
     )
-    with pytest.raises(SpecError, match="a rule may not hide the card owning its condition nub"):
+    with pytest.raises(
+        SpecError, match="a rule may not hide the card owning one of its condition controls"
+    ):
         _shared_slot_graph(
             rules,
             slots=(Slot("controller", 0, 0), Slot("left", 0, 0), Slot("right", 1, 0)),
@@ -1359,7 +1361,7 @@ def test_graph_renderer_places_label_at_cubic_midpoint_and_rethemes_roles():
     x += 3 * (1 - t) * t**2 * x1 + t**3 * x1
     y = (1 - t) ** 3 * y0 + 3 * (1 - t) ** 2 * t * my1
     y += 3 * (1 - t) * t**2 * my2 + t**3 * (target[1] - 3) - 10
-    assert f'x="{x + 10:g}" y="{y:g}"' in output
+    assert f'x="{x + 10:g}" y="{y:g}" text-anchor="start"' in output
     rethemed = graph.with_theme(dataclasses.replace(theme, favorable="#444444"))
     assert 'fill="#444444"' in rethemed.as_raw_html()
     assert 'fill="#123456"' in rethemed.as_raw_html()

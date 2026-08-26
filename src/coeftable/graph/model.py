@@ -440,7 +440,7 @@ def _graph_rules(
             elif atom.option not in options[atom.control.key]:
                 raise SpecError("Graph.rules option must reference a known select option")
         if any(atom.control.card_id in rule.hide_cards for atom in rule.when_all):
-            raise SpecError("a rule may not hide the card owning its condition nub")
+            raise SpecError("a rule may not hide the card owning one of its condition controls")
     return cast(tuple[StateRule, ...], rules)
 
 
