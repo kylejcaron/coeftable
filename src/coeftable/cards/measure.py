@@ -299,7 +299,7 @@ def measure_card(
     header_rows: tuple[Row, ...] | None = None
     for adornment in body:
         if isinstance(adornment, MetricValue):
-            chip_width = _est(adornment.value, chrome.value_size, chrome.char_width_ratio)
+            chip_width = _est(adornment.value, chrome.value_size, chrome.data_char_width_ratio)
             candidate = int(usable - chip_width - chrome.gap)
             if chip_width <= usable / 2 and candidate >= 1:
                 try:

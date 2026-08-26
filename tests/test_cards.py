@@ -845,7 +845,7 @@ def test_one_character_legend_labels_fit_at_70px():
 
 
 def test_chip_reservation_uses_char_width_estimate():
-    usable = 250
+    usable = 251
     width = usable + 2 * (DEFAULT_CHROME.padding + DEFAULT_CHROME.border_width)
     measured, header_rows, _body_rows, chip = measure_card(
         width=width,
@@ -906,9 +906,9 @@ def test_chip_comes_from_body_never_header():
 
 def test_one_character_title_header_keeps_chip_at_reduced_width():
     chip_value = "+3"
-    usable = 40
+    usable = 45
     width = usable + 2 * (DEFAULT_CHROME.padding + DEFAULT_CHROME.border_width)
-    chip_width = len(chip_value) * DEFAULT_CHROME.value_size * DEFAULT_CHROME.char_width_ratio
+    chip_width = len(chip_value) * DEFAULT_CHROME.value_size * DEFAULT_CHROME.data_char_width_ratio
     candidate = int(usable - chip_width - DEFAULT_CHROME.gap)
     assert chip_width <= usable / 2
     assert candidate >= 1
@@ -930,7 +930,7 @@ def test_chip_refused_when_candidate_is_less_than_one():
     chip_value = "+3"
     usable = 40
     width = usable + 2 * (chrome.padding + chrome.border_width)
-    chip_width = len(chip_value) * chrome.value_size * chrome.char_width_ratio
+    chip_width = len(chip_value) * chrome.value_size * chrome.data_char_width_ratio
     candidate = int(usable - chip_width - chrome.gap)
     assert candidate < 1
 
@@ -1053,7 +1053,7 @@ def test_summary_shows_the_chip():
     assert chip_span is not None
     chip_style = chip_span.group(1)
     chip_est = math.ceil(
-        len("+3.4%") * DEFAULT_CHROME.value_size * DEFAULT_CHROME.char_width_ratio
+        len("+3.4%") * DEFAULT_CHROME.value_size * DEFAULT_CHROME.data_char_width_ratio
     )
     assert f"max-width:{chip_est}px" in chip_style
     assert f"color:{DEFAULT.favorable}" in chip_style

@@ -70,7 +70,7 @@ class CardTemplate:
         if chip is not None:
             chip_value, chip_role = chip
             chip_lh = line_height(chrome.value_size, chrome)
-            chip_est = _est(chip_value, chrome.value_size, chrome.char_width_ratio)
+            chip_est = _est(chip_value, chrome.value_size, chrome.data_char_width_ratio)
             chip_html = (
                 f'<span class="ct-card-chip" style="flex:none;font-size:{chrome.value_size}px;'
                 f"line-height:{chip_lh}px;font-weight:600;white-space:nowrap;"
