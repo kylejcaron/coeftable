@@ -11,8 +11,9 @@ import pytest
 import coeftable
 import coeftable.graph
 from coeftable.cards import Card, CardChrome, SelectControl, TextBlock
+from coeftable.cards.regions import Metric
 from coeftable.errors import SpecError
-from coeftable.format import Format
+from coeftable.format import Format, Number
 from coeftable.graph import (
     Atom,
     ControlRef,
@@ -1499,3 +1500,188 @@ def test_metric_tree_module_contains_no_html_string_literals():
         for node in ast.walk(tree)
         if isinstance(node, ast.Constant) and isinstance(node.value, str)
     )
+
+
+def _driver_tree_fixture() -> Graph:
+    """Build a realistic two-layer revenue driver tree through MetricTree."""
+    theme = dataclasses.replace(DEFAULT, favorable="#117733", unfavorable="#AA2233")
+    return MetricTree(
+        (
+            (
+                "revenue",
+                Card(
+                    "Revenue",
+                    content=(Metric(4_800_000, Number(prefix="$", compact=True), ref=4_500_000),),
+                    subtitle="total sales",
+                    width=282,
+                ),
+            ),
+            (
+                "users",
+                Card(
+                    "Active Users",
+                    content=(Metric(89_000, Number(compact=True), ref=86_000),),
+                    subtitle="new + returning",
+                    width=238,
+                ),
+            ),
+            (
+                "orders",
+                Card(
+                    "Orders / User",
+                    content=(Metric(0.398, Number(decimals=3), ref=0.410),),
+                    subtitle="weekly orders per user",
+                    width=252,
+                ),
+            ),
+            (
+                "aov",
+                Card(
+                    "AOV",
+                    content=(
+                        Metric(42.12, Number(prefix="$", decimals=2), ref=41.00),
+                        TextBlock("items and price", variant="caption"),
+                    ),
+                    subtitle="average order value",
+                    width=266,
+                ),
+            ),
+            (
+                "new",
+                Card(
+                    "New Users",
+                    content=(Metric(26_000, Number(compact=True), ref=25_000),),
+                    subtitle="weekly acquisition",
+                    width=244,
+                ),
+            ),
+            (
+                "returning",
+                Card(
+                    "Returning Users",
+                    content=(
+                        Metric(63_000, Number(compact=True), ref=64_000),
+                        TextBlock("12-week returning cohort", variant="caption"),
+                    ),
+                    subtitle="weekly retention",
+                    width=296,
+                ),
+            ),
+            (
+                "price",
+                Card(
+                    "Price / Item",
+                    content=(Metric(19.50, Number(prefix="$", decimals=2), ref=18.75),),
+                    subtitle="average item price",
+                    width=230,
+                ),
+            ),
+        ),
+        (
+            ("revenue", "users", 4.5),
+            ("revenue", "orders", -1.5),
+            ("revenue", "aov", 2.0),
+            ("users", "new", 2.2),
+            ("users", "returning", -0.4),
+            ("aov", "price", 1.1),
+        ),
+        lambda value: f"{value:.1f}",
+        theme=theme,
+        direction="higher_is_better",
+    )
+
+
+def test_metric_tree_driver_fixture_has_exact_layout_wires_labels_nubs_and_determinism():
+    graph = _driver_tree_fixture()
+    measured = graph.measure()
+    assert graph.layout.slots == (
+        Slot("revenue", 0, 0),
+        Slot("users", 1, 0),
+        Slot("orders", 1, 1),
+        Slot("aov", 1, 2),
+        Slot("new", 2, 0),
+        Slot("returning", 2, 1),
+        Slot("price", 2, 2),
+    )
+    assert tuple(card.measure().expanded_height for _, card in graph.nodes) == (
+        107,
+        107,
+        107,
+        130,
+        107,
+        130,
+        107,
+    )
+    slot_by_id = {slot.card_id: slot for slot in graph.layout.slots}
+    column_widths = tuple(
+        max(
+            card.measure().width
+            for card_id, card in graph.nodes
+            if slot_by_id[card_id].slot == column
+        )
+        for column in range(3)
+    )
+    layer_heights = tuple(
+        max(
+            card.measure().expanded_height
+            for card_id, card in graph.nodes
+            if slot_by_id[card_id].layer == layer
+        )
+        for layer in range(3)
+    )
+    assert column_widths == (282, 296, 266)
+    assert layer_heights == (107, 130, 130)
+    assert measured.width == 948
+    assert measured.height == 511
+    assert measured.boxes == (
+        ("revenue", (16, 16, 282, 107)),
+        ("users", (38, 179, 238, 107)),
+        ("orders", (356, 179, 252, 107)),
+        ("aov", (666, 179, 266, 130)),
+        ("new", (35, 365, 244, 107)),
+        ("returning", (334, 365, 296, 130)),
+        ("price", (684, 365, 230, 107)),
+    )
+
+    html = graph.as_raw_html()
+    assert all(f'id="g0-card-{index}"' in html for index in range(7))
+    assert graph.collapsible == ("revenue", "users", "aov")
+    for index in (0, 1, 3):
+        assert f'id="g0-nub-{index}"' in html
+    for index in (2, 4, 5, 6):
+        assert f'id="g0-nub-{index}"' not in html
+
+    labels = tuple(re.findall(r'<text [^>]*fill="([^"]+)"[^>]*>([^<]+)</text>', html))
+    assert labels == (
+        ("#117733", "+4.5"),
+        ("#AA2233", "-1.5"),
+        ("#117733", "+2.0"),
+        ("#117733", "+2.2"),
+        ("#AA2233", "-0.4"),
+        ("#117733", "+1.1"),
+    )
+    path_matches = re.findall(r'<g id="g0-edge-(\d+)"><path d="([^"]+)"', html)
+    assert len(path_matches) == len(graph.wires) == 6
+    assert html.count('<g id="g0-edge-') == len(graph.wires)
+    boxes = dict(measured.boxes)
+    anchors = dict(graph._layout.anchors)
+    for expected_index, (wire, (index, path_d)) in enumerate(
+        zip(graph.wires, path_matches, strict=True)
+    ):
+        assert index == str(expected_index)
+        match = re.fullmatch(
+            r"M ([^,]+),([^ ]+) C ([^,]+),([^ ]+) ([^,]+),([^ ]+) ([^,]+),([^ ]+)",
+            path_d,
+        )
+        assert match is not None
+        coordinates = tuple(float(value) for value in match.groups())
+        src_left, src_top, _src_width, src_height = boxes[wire.src]
+        dst_left, dst_top, _dst_width, _dst_height = boxes[wire.dst]
+        (_, (out_x, out_y)) = anchors[wire.src]
+        (in_x, in_y), _ = anchors[wire.dst]
+        x0, y0 = src_left + out_x, src_top + out_y
+        x1, y1 = dst_left + in_x, dst_top + in_y
+        midpoint = (src_top + src_height + dst_top) / 2
+        assert coordinates == pytest.approx((x0, y0, x0, midpoint, x1, midpoint, x1, y1 - 3))
+
+    assert html == _driver_tree_fixture().as_raw_html()
