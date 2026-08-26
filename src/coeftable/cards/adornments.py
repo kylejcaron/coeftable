@@ -180,6 +180,11 @@ class SelectControl:
         if self.key == "":
             raise SpecError("SelectControl.key must not be empty")
         values = [value for value, _ in self.options]
+        if any("\r" in value for value in values):
+            raise SpecError(
+                "SelectControl.options values must not contain carriage returns "
+                "(they cannot survive an HTML attribute round-trip)"
+            )
         if len(set(values)) != len(values):
             raise SpecError("SelectControl.options values must be unique")
         if self.selected not in values:

@@ -114,6 +114,11 @@ def test_duplicate_keyed_selects_are_rejected_per_card():
         )
 
 
+def test_select_option_values_reject_carriage_returns():
+    with pytest.raises(SpecError, match="carriage returns"):
+        SelectControl("Mode", (("a\rb", "A"),), selected="a\rb")
+
+
 def test_card_threads_handed_control_dom_id_to_select_serializer():
     card = Card(
         "Revenue",

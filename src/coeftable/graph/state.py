@@ -25,11 +25,9 @@ class _CompiledState:
 def _css_string(value: str) -> str:
     """Quote and CSS-string-escape a select option value.
 
-    CR and CRLF are normalized to LF first, matching the HTML input
-    preprocessing the browser applies to the rendered ``value`` attribute
-    — otherwise a CR escape could never match the DOM.
+    Carriage returns cannot occur: SelectControl rejects them at
+    construction (they cannot survive an HTML attribute round-trip).
     """
-    value = value.replace("\r\n", "\n").replace("\r", "\n")
     escaped: list[str] = []
     for character in value:
         codepoint = ord(character)
@@ -39,8 +37,6 @@ def _css_string(value: str) -> str:
             escaped.append('\\"')
         elif character == "\n":
             escaped.append("\\A ")
-        elif character == "\r":
-            escaped.append("\\D ")
         elif character == "\f":
             escaped.append("\\C ")
         elif codepoint == 0:
