@@ -28,6 +28,7 @@ from coeftable.cards.adornments import (
     Variant,
 )
 from coeftable.cards.chrome import DEFAULT_CHROME, CardChrome, line_height
+from coeftable.cards.measure import RenderRow
 from coeftable.theme import DEFAULT, Theme
 
 # Overlay-only geometry: the popover panel is absolutely positioned and
@@ -206,3 +207,20 @@ def render_adornment(
             return f'<div style="{style}">{chips}</div>'
         case _:
             assert_never(adornment)
+
+
+def _wrap(row: RenderRow, theme: Theme, chrome: CardChrome) -> str:
+    """Render one exact-height row, preserving measurement-owned spacing."""
+    gap = f";margin-top:{row.gap_above}px" if row.gap_above else ""
+    svg_containment = ";line-height:0" if isinstance(row.adornment, InlineSvg) else ""
+    rendered = render_adornment(
+        row.adornment,
+        theme=theme,
+        chrome=chrome,
+    )
+    return (
+        f'<div style="height:{row.height}px;'
+        f"overflow:{'visible' if isinstance(row.adornment, KeyValuePopover) else 'hidden'};"
+        f'margin:0{gap}{svg_containment}">'
+        f"{rendered}</div>"
+    )

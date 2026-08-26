@@ -20,6 +20,7 @@ from coeftable.cards.card import Card, CardGrid
 from coeftable.cards.chrome import DEFAULT_CHROME, CardChrome
 from coeftable.cards.fragments import render_adornment
 from coeftable.cards.measure import Anchor, MeasuredCard
+from coeftable.cards.panel import MeasuredPanel, Pane, Panel, Row
 from coeftable.cards.regions import (
     Diagnostics,
     Event,
@@ -50,9 +51,13 @@ __all__ = [
     "KeyValuePopover",
     "Legend",
     "MeasuredCard",
+    "MeasuredPanel",
     "Metric",
     "MetricValue",
+    "Pane",
+    "Panel",
     "Region",
+    "Row",
     "RuleStrip",
     "SelectControl",
     "TextBlock",
