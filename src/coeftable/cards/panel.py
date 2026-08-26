@@ -356,7 +356,8 @@ class Panel:
             f"{''.join(pane_html)}</div>"
         )
         return (
-            f'<div style="box-sizing:border-box;width:{layout.width}px;margin:0;'
+            f'<div style="box-sizing:border-box;width:{layout.width}px;'
+            f"height:{layout.measured.height}px;margin:0;"
             f"padding:{chrome.padding}px;"
             f"border:{chrome.border_width}px solid {_esc(self.theme.rule)};"
             f'border-radius:{chrome.radius}px;background:{_esc(self.theme.surface)};overflow:visible">'
