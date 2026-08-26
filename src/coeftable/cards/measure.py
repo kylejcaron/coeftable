@@ -112,30 +112,38 @@ def text_line_plan(text: str, *, budget: int, max_lines: int) -> tuple[str, ...]
     words = text.split()
     if not words:
         return ("",)
-    lines: list[str] = []
+    lines: list[tuple[str, bool]] = []
     current = ""
+    current_continuation = False
     for word in words:
+        word_continuation = False
         while len(word) > budget:
             if current:
-                lines.append(current)
+                lines.append((current, current_continuation))
                 current = ""
-            lines.append(word[:budget])
+            lines.append((word[:budget], True))
             word = word[budget:]
+            word_continuation = True
         if not word:
             continue
         candidate = f"{current} {word}" if current else word
         if len(candidate) <= budget:
             current = candidate
+            current_continuation = word_continuation
         else:
-            lines.append(current)
+            lines.append((current, current_continuation))
             current = word
+            current_continuation = word_continuation
     if current:
-        lines.append(current)
+        lines.append((current, current_continuation))
     if len(lines) > max_lines:
         kept = lines[:max_lines]
-        kept[-1] = " ".join([kept[-1], *lines[max_lines:]])
-        return tuple(kept)
-    return tuple(lines)
+        remainder = "".join(
+            ("" if continuation else " ") + line for line, continuation in lines[max_lines:]
+        )
+        kept[-1] = (kept[-1][0] + remainder, kept[-1][1])
+        return tuple(line for line, _continuation in kept)
+    return tuple(line for line, _continuation in lines)
 
 
 @dataclass(frozen=True, slots=True)

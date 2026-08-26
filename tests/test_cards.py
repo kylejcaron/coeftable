@@ -755,6 +755,10 @@ def test_line_plan_cap_joins_remainder_with_single_spaces():
     assert plan == ("ab cd ef",)
 
 
+def test_line_plan_cap_keeps_hard_split_tokens_intact():
+    assert text_line_plan("abcdefghij", budget=4, max_lines=2) == ("abcd", "efghij")
+
+
 def test_wrapping_textblock_height_is_lines_times_line_height():
     block = TextBlock("alpha beta gamma delta", variant="body", max_lines=3)
     caption = CaptionRow("caption")
@@ -842,6 +846,16 @@ def test_one_character_legend_labels_fit_at_70px():
 
 
 def test_chip_reservation_uses_char_width_estimate():
+    usable = 250
+    width = usable + 2 * (DEFAULT_CHROME.padding + DEFAULT_CHROME.border_width)
+    _measured, _header_rows, _body_rows, chip = measure_card(
+        width=width,
+        header=(InlineSvg(SVG_OK, width=220, height=30),),
+        body=(MetricValue("+3"),),
+        chrome=DEFAULT_CHROME,
+    )
+    assert chip is None
+
     usable = 251
     width = usable + 2 * (DEFAULT_CHROME.padding + DEFAULT_CHROME.border_width)
     measured, header_rows, _body_rows, chip = measure_card(
