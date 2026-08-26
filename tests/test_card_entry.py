@@ -123,19 +123,55 @@ def test_card_threads_handed_control_dom_id_to_select_serializer():
     assert '<select id="g0-ctl-0-0" ' in html_out
 
 
-def test_card_select_without_dom_mapping_keeps_rendered_snapshot():
+def test_card_select_without_dom_mapping_renders_exact_idless_markup():
     card = Card(
+        "Revenue",
+        content=[
+            SelectControl("Breakout", (("a", "A"),), selected="a", key="breakout"),
+            SelectControl("Metric", (("b", "B"),), selected="b"),
+        ],
+    )
+    html_out = card.as_raw_html()
+    golden_open = (
+        '<select style="font-size:11px;box-sizing:border-box;'
+        'height:15px;line-height:15px;width:60%;flex:none">'
+    )
+    assert golden_open + '<option value="a" selected>A</option></select>' in html_out
+    assert golden_open + '<option value="b" selected>B</option></select>' in html_out
+    select_tags = re.findall(r"<select[^>]*>", html_out)
+    assert len(select_tags) == 2
+    assert all("id=" not in tag for tag in select_tags)
+
+
+def test_unrelated_or_keyless_mapping_leaves_selects_without_ids():
+    keyed = Card(
         "Revenue",
         content=[SelectControl("Breakout", (("a", "A"),), selected="a", key="breakout")],
     )
-    snapshot = card.as_raw_html()
-    assert snapshot == card.as_raw_html(control_dom_ids=None)
-    assert snapshot == card.as_raw_html(control_dom_ids={})
-    select_tag = snapshot[
-        snapshot.index("<select") : snapshot.index(">", snapshot.index("<select"))
-    ]
-    assert "id=" not in select_tag
-    assert snapshot.count("<select") == snapshot.count("</select>") == 1
+    unkeyed = Card(
+        "Revenue",
+        content=[SelectControl("Breakout", (("a", "A"),), selected="a")],
+    )
+    for card in (keyed, unkeyed):
+        html_out = card.as_raw_html(control_dom_ids={"unrelated": "g0-ctl-9-9"})
+        select_tags = re.findall(r"<select[^>]*>", html_out)
+        assert len(select_tags) == 1
+        assert "id=" not in select_tags[0]
+
+
+def test_region_produced_select_key_collides_with_direct_select():
+    class DupRegion:
+        def resolve(self, *, width, theme, chrome):
+            return (SelectControl("From region", (("a", "A"),), selected="a", key="dup"),)
+
+    with pytest.raises(SpecError, match=r"duplicate SelectControl\.key"):
+        Card(
+            "Revenue",
+            content=[
+                DupRegion(),
+                SelectControl("Direct", (("b", "B"),), selected="b", key="dup"),
+            ],
+        )
 
 
 def test_chrome_overrides_propagate_to_regions_measurement_and_html():
