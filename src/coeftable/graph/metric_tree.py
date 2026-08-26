@@ -124,7 +124,14 @@ def _slots(
     edges: tuple[tuple[str, str, float | None], ...],
     layers: dict[str, int],
 ) -> tuple[Slot, ...]:
-    """Assign dense slots with one bottom-up barycenter pass."""
+    """Assign dense slots by walking layer barycenters bottom-up.
+
+    Childless cards use their rank within the current layer, translated by
+    the integer slot of that layer's leftmost child-bearing region and
+    anchored at its first child-bearing card.  This keeps independent cards
+    deterministic without letting their global declaration index distort the
+    layer's ordering.
+    """
     first_appearance = {node_id: index for index, node_id in enumerate(node_ids)}
     layer_nodes: dict[int, list[str]] = {}
     for node_id in node_ids:
@@ -139,24 +146,36 @@ def _slots(
         slot_by_id[node_id] = slot
     max_used = len(layer_nodes[deepest]) - 1
     for layer in range(deepest - 1, -1, -1):
+        current = layer_nodes[layer]
+        within_layer_rank = {node_id: index for index, node_id in enumerate(current)}
+        childful = [node_id for node_id in current if children[node_id]]
+        childful_barycenters = {
+            node_id: sum(slot_by_id[child] for child in children[node_id]) / len(children[node_id])
+            for node_id in childful
+        }
+        leftmost_region = math.floor(min(childful_barycenters.values(), default=0.0))
+        childful_rank = min((within_layer_rank[node_id] for node_id in childful), default=0)
 
-        def order_key(node_id: str) -> tuple[float, int]:
-            child_ids = children[node_id]
-            if not child_ids:
-                barycenter = float(first_appearance[node_id])
-            else:
-                barycenter = sum(slot_by_id[child] for child in child_ids) / len(child_ids)
-            return barycenter, first_appearance[node_id]
-
-        ordered = sorted(layer_nodes[layer], key=order_key)
-        desired = [order_key(node_id)[0] for node_id in ordered]
-        packed_center = (len(ordered) - 1) / 2
-        shift = round(sum(desired) / len(desired) - packed_center)
-        # Cap within already-used columns so the global slot union stays dense.
-        shift = max(0, min(shift, max_used - (len(ordered) - 1)))
-        for slot, node_id in enumerate(ordered):
-            slot_by_id[node_id] = slot + shift
-        max_used = max(max_used, shift + len(ordered) - 1)
+        barycenters = {
+            node_id: childful_barycenters.get(
+                node_id, leftmost_region + within_layer_rank[node_id] - childful_rank
+            )
+            for node_id in current
+        }
+        ordered = [
+            node_id
+            for _, _, node_id in sorted(
+                (barycenters[node_id], first_appearance[node_id], node_id) for node_id in current
+            )
+        ]
+        # A wider layer expands the dense slot corridor before clamping.
+        max_used = max(max_used, len(ordered) - 1)
+        for index, node_id in enumerate(ordered):
+            barycenter = barycenters[node_id]
+            lower = (slot_by_id[ordered[index - 1]] + 1) if index else 0
+            upper = max_used - (len(ordered) - 1 - index)
+            slot_by_id[node_id] = max(lower, min(round(barycenter), upper))
+        max_used = max(max_used, slot_by_id[ordered[-1]])
     return tuple(Slot(node_id, layers[node_id], slot_by_id[node_id]) for node_id in node_ids)
 
 

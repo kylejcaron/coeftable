@@ -439,18 +439,45 @@ def _graph_rules(
                 raise SpecError("Graph.rules option controls must reference known selects")
             elif atom.option not in options[atom.control.key]:
                 raise SpecError("Graph.rules option must reference a known select option")
-        if any(atom.control.card_id in rule.hide_cards for atom in rule.when_all):
-            raise SpecError("a rule may not hide the card owning one of its condition controls")
     return cast(tuple[StateRule, ...], rules)
 
 
 def _graph_validate_rule_controllers(rules: tuple[StateRule, ...]) -> None:
-    """Reject injected rules that can hide any injected-rule controller card."""
-    controllers = {atom.control.card_id for rule in rules for atom in rule.when_all}
-    if any(set(rule.hide_cards) & controllers for rule in rules):
-        raise SpecError(
-            "injected rules may not hide cards owning controls referenced by injected rules"
+    """Reject cycles in the hide dependencies between rule controllers."""
+    controller_order = tuple(
+        dict.fromkeys(atom.control.card_id for rule in rules for atom in rule.when_all)
+    )
+    controllers = set(controller_order)
+    outgoing: dict[str, list[str]] = {controller: [] for controller in controller_order}
+    for rule in rules:
+        condition_controllers = tuple(
+            dict.fromkeys(atom.control.card_id for atom in rule.when_all)
         )
+        for source in condition_controllers:
+            for target in rule.hide_cards:
+                if target in controllers and target not in outgoing[source]:
+                    outgoing[source].append(target)
+
+    for source, targets in outgoing.items():
+        if source in targets:
+            raise SpecError("state rule controller dependencies must not contain self-loops")
+
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(controller: str) -> None:
+        if controller in visiting:
+            raise SpecError("state rule controller dependencies must be acyclic")
+        if controller in visited:
+            return
+        visiting.add(controller)
+        for target in outgoing[controller]:
+            visit(target)
+        visiting.remove(controller)
+        visited.add(controller)
+
+    for controller in outgoing:
+        visit(controller)
 
 
 type Box = tuple[int, int, int, int]
@@ -537,13 +564,19 @@ def _graph_measure(
     boxes_by_id = dict(boxes)
     anchors_by_id = dict(anchor_offsets)
     labeled_incoming: dict[str, list[int]] = {}
+    source_x0: dict[int, float] = {}
     for index, wire in enumerate(wires):
+        src_left, _, _, _ = boxes_by_id[wire.src]
+        _, (out_x, _) = anchors_by_id[wire.src]
+        source_x0[index] = src_left + out_x
         if wire.label is not None:
             labeled_incoming.setdefault(wire.dst, []).append(index)
     label_index = {
         wire_index: (index, len(indices))
         for indices in labeled_incoming.values()
-        for index, wire_index in enumerate(indices)
+        for index, wire_index in enumerate(
+            sorted(indices, key=lambda item: (source_x0[item], item))
+        )
     }
     wire_geometry: list[tuple[str, WireGeometry]] = []
     for wire_index, wire in enumerate(wires):

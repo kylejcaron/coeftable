@@ -634,7 +634,7 @@ def test_graph_validation_matrix(kwargs, message):
 def test_graph_rejects_self_trapping_checked_rule():
     with pytest.raises(
         SpecError,
-        match=re.escape("a rule may not hide the card owning one of its condition controls"),
+        match=re.escape("state rule controller dependencies must not contain self-loops"),
     ):
         _plain_graph(
             collapsible=("root",),
@@ -649,7 +649,7 @@ def test_graph_rejects_self_trapping_option_checked_rule():
     )
     with pytest.raises(
         SpecError,
-        match=re.escape("a rule may not hide the card owning one of its condition controls"),
+        match=re.escape("state rule controller dependencies must not contain self-loops"),
     ):
         _plain_graph(
             nodes=(("controller", controller),),
@@ -674,9 +674,7 @@ def test_graph_rejects_mutually_hidden_option_controllers():
     )
     with pytest.raises(
         SpecError,
-        match=re.escape(
-            "injected rules may not hide cards owning controls referenced by injected rules"
-        ),
+        match=re.escape("state rule controller dependencies must be acyclic"),
     ):
         _plain_graph(
             nodes=(("left", left), ("right", right)),
@@ -692,6 +690,36 @@ def test_graph_rejects_mutually_hidden_option_controllers():
                 ),
             ),
         )
+
+
+def test_graph_accepts_one_way_hidden_option_controllers():
+    upstream = Card(
+        "Upstream",
+        content=(SelectControl("Mode", (("on", "On"),), selected="on", key="mode"),),
+    )
+    downstream = Card(
+        "Downstream",
+        content=(SelectControl("Mode", (("on", "On"),), selected="on", key="mode"),),
+    )
+    graph = _plain_graph(
+        nodes=(("upstream", upstream), ("downstream", downstream), ("leaf", Card("Leaf"))),
+        slots=(
+            Slot("upstream", 0, 0),
+            Slot("downstream", 1, 0),
+            Slot("leaf", 2, 0),
+        ),
+        rules=(
+            StateRule(
+                (Atom(ControlRef("upstream", "mode"), "option_checked", "on"),),
+                hide_cards=("downstream",),
+            ),
+            StateRule(
+                (Atom(ControlRef("downstream", "mode"), "option_checked", "on"),),
+                hide_cards=("leaf",),
+            ),
+        ),
+    )
+    assert graph.rules[0].hide_cards == ("downstream",)
 
 
 @pytest.mark.parametrize(
@@ -876,8 +904,8 @@ def test_graph_rejects_unproven_shared_slot(rules):
 
 
 def test_shared_slot_controller_cannot_be_inside_the_group():
-    # The condition-control law rejects hiding the controller before shared-slot
-    # partition validation can inspect the group.
+    # Shared-slot partition validation rejects hiding the controller inside
+    # its own group.
     rules = (
         StateRule(
             (Atom(ControlRef("controller", "mode"), "option_checked", "left"),),
@@ -888,9 +916,7 @@ def test_shared_slot_controller_cannot_be_inside_the_group():
             hide_cards=("left",),
         ),
     )
-    with pytest.raises(
-        SpecError, match="a rule may not hide the card owning one of its condition controls"
-    ):
+    with pytest.raises(SpecError, match="shared-slot controller must be external to its group"):
         _shared_slot_graph(
             rules,
             slots=(Slot("controller", 0, 0), Slot("left", 0, 0), Slot("right", 1, 0)),
@@ -1410,11 +1436,20 @@ def test_graph_measure_routes_to_synthetic_in_anchor(monkeypatch):
         Slotted((Slot("source", 0, 0), Slot("target", 1, 0))),
         wires=(Wire("wire", "source", "target", label="edge"),),
     )
-    target_left, target_top, _target_width, _target_height = dict(graph.measure().boxes)["target"]
+    boxes = dict(graph.measure().boxes)
+    anchors = dict(graph._layout.anchors)
+    source_left, source_top, _source_width, source_height = boxes["source"]
+    source_out = anchors["source"][1]
+    target_left, target_top, _target_width, _target_height = boxes["target"]
+    x0, y0 = source_left + source_out[0], source_top + source_out[1]
     x1, y1 = target_left + 10, target_top + 5
+    my1 = source_top + source_height + graph.layer_gap / 2
+    my2 = target_top - graph.layer_gap / 2
     path, label_anchor = dict(graph._layout.wire_geometry)["wire"]
     assert path[-2:] == (x1, y1 - 3)
     assert label_anchor == (x1, y1 - 13)
+    expected_svg_path = f'd="M {x0:g},{y0:g} C {x0:g},{my1:g} {x1:g},{my2:g} {x1:g},{y1 - 3:g}"'
+    assert expected_svg_path in graph.as_raw_html()
 
 
 def test_graph_renderer_does_not_remeasure_cards(monkeypatch):
@@ -1472,9 +1507,9 @@ def test_graph_renderer_spreads_labeled_diamond_anchors_at_target():
             )
         ),
         wires=(
-            Wire("left-target", "left", "target", label="left"),
-            Wire("middle-target", "middle", "target"),
             Wire("right-target", "right", "target", label="right"),
+            Wire("middle-target", "middle", "target"),
+            Wire("left-target", "left", "target", label="left"),
         ),
         dom_prefix="label-spread",
     )
@@ -1548,6 +1583,37 @@ def test_graph_renderer_stress_floor_has_cards_without_graph_svg_or_style():
     assert "<svg" not in output
     assert ".floor-canvas:has" not in output
     assert output.count('id="floor-card-') == 2
+
+
+def test_metric_tree_slots_clamp_parents_and_keep_orphans_rightward():
+    centered = _metric_tree(
+        tuple((node_id, Card(node_id)) for node_id in ("parent", "c0", "c1", "c2")),
+        (("parent", "c0", 1.0), ("parent", "c1", 1.0), ("parent", "c2", 1.0)),
+    )
+    assert dict((slot.card_id, slot.slot) for slot in centered.layout.slots)["parent"] == 1
+
+    nodes = tuple(
+        (node_id, Card(node_id)) for node_id in ("parent", *(f"c{i}" for i in range(10)), "orphan")
+    )
+    graph = _metric_tree(
+        nodes,
+        tuple(("parent", f"c{i}", 1.0) for i in range(10)),
+    )
+    slots = {slot.card_id: slot.slot for slot in graph.layout.slots}
+    assert 4 <= slots["parent"] <= 5
+    assert slots["orphan"] > slots["parent"]
+
+
+def test_metric_tree_childless_rank_is_within_layer_not_global():
+    graph = _metric_tree(
+        tuple((node_id, Card(node_id)) for node_id in ("child", "orphan", "parent")),
+        (("parent", "child", 1.0),),
+    )
+    assert graph.layout.slots == (
+        Slot("child", 1, 0),
+        Slot("orphan", 0, 0),
+        Slot("parent", 0, 1),
+    )
 
 
 def test_graph_renderer_threads_keyed_control_dom_id():
