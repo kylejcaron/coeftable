@@ -742,6 +742,7 @@ def test_line_plan_hard_splits_an_overlong_token():
         ("abcdefghij", 4, 2, ("abcd", "efghij")),
         ("one two three", 7, 1, ("one two three",)),
         ("xy abcdefgh z", 4, 1, ("xy abcdefgh z",)),
+        ("abcdef x", 4, 1, ("abcdef x",)),
     ],
 )
 def test_line_plan_tracks_line_start_continuation_flags(text, budget, max_lines, expected):
