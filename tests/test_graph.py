@@ -1765,7 +1765,7 @@ def test_metric_tree_driver_fixture_has_exact_layout_wires_labels_nubs_and_deter
     graph = _driver_tree_fixture()
     measured = graph.measure()
     assert graph.layout.slots == (
-        Slot("revenue", 0, 0),
+        Slot("revenue", 0, 1),
         Slot("users", 1, 0),
         Slot("orders", 1, 1),
         Slot("aov", 1, 2),
@@ -1799,18 +1799,18 @@ def test_metric_tree_driver_fixture_has_exact_layout_wires_labels_nubs_and_deter
         )
         for layer in range(3)
     )
-    assert column_widths == (282, 296, 266)
+    assert column_widths == (244, 296, 266)
     assert layer_heights == (107, 130, 130)
-    assert measured.width == 948
+    assert measured.width == 910
     assert measured.height == 511
     assert measured.boxes == (
-        ("revenue", (16, 16, 282, 107)),
-        ("users", (38, 179, 238, 107)),
-        ("orders", (356, 179, 252, 107)),
-        ("aov", (666, 179, 266, 130)),
-        ("new", (35, 365, 244, 107)),
-        ("returning", (334, 365, 296, 130)),
-        ("price", (684, 365, 230, 107)),
+        ("revenue", (303, 16, 282, 107)),
+        ("users", (19, 179, 238, 107)),
+        ("orders", (318, 179, 252, 107)),
+        ("aov", (628, 179, 266, 130)),
+        ("new", (16, 365, 244, 107)),
+        ("returning", (296, 365, 296, 130)),
+        ("price", (646, 365, 230, 107)),
     )
 
     html = graph.as_raw_html()

@@ -137,6 +137,7 @@ def _slots(
     deepest = max(layer_nodes)
     for slot, node_id in enumerate(layer_nodes[deepest]):
         slot_by_id[node_id] = slot
+    max_used = len(layer_nodes[deepest]) - 1
     for layer in range(deepest - 1, -1, -1):
 
         def order_key(node_id: str) -> tuple[float, int]:
@@ -147,8 +148,15 @@ def _slots(
                 barycenter = sum(slot_by_id[child] for child in child_ids) / len(child_ids)
             return barycenter, first_appearance[node_id]
 
-        for slot, node_id in enumerate(sorted(layer_nodes[layer], key=order_key)):
-            slot_by_id[node_id] = slot
+        ordered = sorted(layer_nodes[layer], key=order_key)
+        desired = [order_key(node_id)[0] for node_id in ordered]
+        packed_center = (len(ordered) - 1) / 2
+        shift = round(sum(desired) / len(desired) - packed_center)
+        # Cap within already-used columns so the global slot union stays dense.
+        shift = max(0, min(shift, max_used - (len(ordered) - 1)))
+        for slot, node_id in enumerate(ordered):
+            slot_by_id[node_id] = slot + shift
+        max_used = max(max_used, shift + len(ordered) - 1)
     return tuple(Slot(node_id, layers[node_id], slot_by_id[node_id]) for node_id in node_ids)
 
 
