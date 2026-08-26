@@ -315,6 +315,31 @@ def test_trend_ribbon_role_reads_last_fully_present_index():
     assert DEFAULT.favorable in spark.svg
     assert DEFAULT.inconclusive not in spark.svg
 
+    polygon = re.search(r'<polygon points="([^"]+)"', spark.svg)
+    polyline = re.search(r'<polyline points="([^"]+)"', spark.svg)
+    assert polygon is not None and polyline is not None
+    polygon_points = polygon.group(1).split()
+    polyline_points = polyline.group(1).split()
+    assert len(polygon_points) > len(polyline_points)
+    assert float(polygon_points[0].split(",", 1)[1]) == pytest.approx(17.4)
+
+
+def test_trend_explicit_role_override_and_axis_toggle():
+    (spark,) = Trend(role="unfavorable", show_axis=False, lower=LO, upper=HI, **TREND_KW).resolve(
+        **RESOLVE_KW
+    )
+    assert isinstance(spark, InlineSvg)
+    assert DEFAULT.unfavorable in spark.svg
+    assert DEFAULT.favorable not in spark.svg
+
+
+def test_trend_lower_is_better_flips_role():
+    (spark, _) = Trend(direction="lower_is_better", lower=LO, upper=HI, **TREND_KW).resolve(
+        **RESOLVE_KW
+    )
+    assert DEFAULT.unfavorable in spark.svg
+    assert DEFAULT.favorable not in spark.svg
+
 
 def test_trend_spine_alignment_endpoint_on_and_off():
     for show_endpoint in (True, False):
@@ -618,3 +643,37 @@ def test_interval_role_and_axis_toggle():
 def test_interval_validation(kwargs):
     with pytest.raises(SpecError):
         Interval(**kwargs)
+
+
+def test_interval_explicit_role_override():
+    (bar,) = Interval(
+        1.0, 0.5, 2.0, domain=(0.0, 3.0), role="unfavorable", show_axis=False
+    ).resolve(**RESOLVE_KW)
+    assert DEFAULT.unfavorable in bar.svg
+    assert DEFAULT.favorable not in bar.svg
+
+
+@pytest.mark.parametrize(
+    ("region", "width", "message"),
+    [
+        (
+            Trend(lower=LO, upper=HI, endpoint_width=220, **TREND_KW),
+            220,
+            "width \\(220\\).*endpoint_width \\(220\\).*inset \\(6\\).*= -6",
+        ),
+        (
+            Trend(lower=LO, upper=HI, height=5, inset=3, **TREND_KW),
+            220,
+            "height \\(5\\).*inset \\(6\\).*= -1",
+        ),
+        (
+            Interval(1.0, 0.5, 2.0, domain=(0.0, 3.0), margin=108),
+            220,
+            "width \\(220\\).*margin \\(108\\).*inset \\(3\\).*= -2",
+        ),
+    ],
+    ids=["trend-endpoint-reserve", "trend-vertical-inset", "interval-margin-reserve"],
+)
+def test_projection_guards_name_effective_spans(region, width, message):
+    with pytest.raises(SpecError, match=message):
+        region.resolve(width=width, theme=DEFAULT, chrome=DEFAULT_CHROME)

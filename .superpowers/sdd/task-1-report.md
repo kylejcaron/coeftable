@@ -19,8 +19,12 @@
 - `uv run pytest tests/test_regions.py tests/test_cards.py -v`: 216 passed.
 - `uv run pytest`: 754 passed.
 - `uv run ruff check src/coeftable/cards/regions.py src/coeftable/cards/__init__.py tests/test_regions.py tests/test_cards.py`: passed.
+
 - `uv run ty check src/coeftable/cards/regions.py`: passed.
 
 ## Self-review
 
 `resolve_content` preserves adornment identity, accepts structural runtime `Region`s, and reports invalid item index/type. All region dataclasses are frozen and slotted; sequence inputs are snapshotted before validation; no plot-region scope was introduced.
+## Correction
+
+- `Metric.ci` final annotation is `tuple[float, float] | None`; runtime validation accepts any 2-sequence and snapshots it to a tuple.

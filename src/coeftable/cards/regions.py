@@ -186,7 +186,13 @@ class Diagnostics(Region):
 
 @dataclass(frozen=True, slots=True)
 class Event:
-    """One declared event: strip chip, optional caption, optional plot rule."""
+    """One event presented as a strip chip or caption, never both.
+
+    The containing :class:`Events` region selects the mutually exclusive
+    presentation with ``captions``.  An optional ``at`` position also
+    produces a plot rule, independently of whether the event is a chip or
+    caption.
+    """
 
     label: str
     color: str
@@ -412,6 +418,23 @@ class Trend(Region):
     def resolve(self, *, width: int, theme: Theme, chrome: CardChrome) -> tuple[InlineSvg, ...]:
         """Render the sparkline and, when requested, its shared x-axis."""
         del chrome
+        horizontal_span = (
+            width - (self.endpoint_width if self.show_endpoint else 0) - 2 * self.inset
+        )
+        if horizontal_span < 1:
+            raise SpecError(
+                "Trend horizontal projection span must be at least 1 pixel: "
+                f"width ({width}) - endpoint_width "
+                f"({self.endpoint_width if self.show_endpoint else 0}) - "
+                f"2*inset ({2 * self.inset}) "
+                f"= {horizontal_span}"
+            )
+        vertical_span = self.height - 2 * self.inset
+        if vertical_span < 1:
+            raise SpecError(
+                "Trend vertical projection span must be at least 1 pixel: "
+                f"height ({self.height}) - 2*inset ({2 * self.inset}) = {vertical_span}"
+            )
         for axis, domain in (("x", self.x_domain), ("y", self.domain)):
             for position in domain_values(self.annotations, axis=axis):  # type: ignore[arg-type]
                 if not domain[0] <= position <= domain[1]:
@@ -427,16 +450,20 @@ class Trend(Region):
         elif ribbon_lower is None:
             role = "neutral"
         else:
-            lower_value: float | None = None
-            upper_value: float | None = None
             if ribbon_upper is None:
                 raise SpecError("Trend.lower and Trend.upper must be provided together")
-            for x, y, lower, upper in zip(self.x, self.y, ribbon_lower, ribbon_upper, strict=True):
-                if any(is_missing(value) for value in (x, y, lower, upper)):
+            role = "neutral"
+            for index in range(len(self.x) - 1, -1, -1):
+                if is_missing(self.x[index]) or is_missing(self.y[index]):
                     continue
-                lower_value = cast(float, lower)
-                upper_value = cast(float, upper)
-            role = role_for(lower_value, upper_value, self.ref, self.direction)
+                lower_value = (
+                    None if is_missing(ribbon_lower[index]) else cast(float, ribbon_lower[index])
+                )
+                upper_value = (
+                    None if is_missing(ribbon_upper[index]) else cast(float, ribbon_upper[index])
+                )
+                role = role_for(lower_value, upper_value, self.ref, self.direction)
+                break
 
         if ribbon_lower is None:
             lower: Sequence[float | None] = (None,) * len(self.y)
@@ -531,6 +558,13 @@ class Interval(Region):
     def resolve(self, *, width: int, theme: Theme, chrome: CardChrome) -> tuple[InlineSvg, ...]:
         """Render the forest bar and, when requested, its shared x-axis."""
         del chrome
+        horizontal_span = width - 2 * (self.margin + self.inset)
+        if horizontal_span < 1:
+            raise SpecError(
+                "Interval horizontal projection span must be at least 1 pixel: "
+                f"width ({width}) - 2*(margin ({self.margin}) + inset ({self.inset})) "
+                f"= {horizontal_span}"
+            )
         role = self.role or role_for(self.lower, self.upper, self.ref, self.direction)
         bar_svg = forest_bar(
             self.estimate,
