@@ -90,6 +90,9 @@ def test_adornments_are_hashable():
         lambda: CaptionRow("x", color=7),  # ty: ignore[invalid-argument-type]
         lambda: CaptionRow(7),  # ty: ignore[invalid-argument-type]
         lambda: CaptionRow("x", dash=7),  # ty: ignore[invalid-argument-type]
+        lambda: TextBlock("x", max_lines=0),
+        lambda: TextBlock("x", max_lines=True),  # bool-as-int
+        lambda: TextBlock("x", max_lines=cast(int, 1.5)),  # float-as-int
     ],
     ids=[
         "bad-variant",
@@ -107,6 +110,9 @@ def test_adornments_are_hashable():
         "nonstr-color",
         "nonstr-caption-text",
         "nonstr-dash",
+        "zero-max-lines",
+        "bool-max-lines",
+        "float-max-lines",
     ],
 )
 def test_scalar_field_validation_raises_spec_error(build):
@@ -1248,6 +1254,31 @@ def test_narrow_popover_label_rejects_content_minimum():
             body=(KeyValuePopover("long", (("k", "v"),)),),
         )
     assert "KeyValuePopover" in str(excinfo.value)
+
+
+def test_textblock_content_minimum_rejects_at_the_boundary():
+    # A nonempty TextBlock reserves min(len, 2) chars at its variant size:
+    # required = 2 * char_width_ratio * title_size = 2 * 0.6 * 14 = 16.8px.
+    required = 2 * DEFAULT_CHROME.char_width_ratio * DEFAULT_CHROME.title_size
+    shell = 2 * (DEFAULT_CHROME.padding + DEFAULT_CHROME.border_width)
+    # Largest integer usable width still below the minimum: ceil(16.8) - 1 = 16px.
+    failing_usable = math.ceil(required) - 1
+    assert failing_usable >= 1  # structural guard passes; the content minimum decides
+    with pytest.raises(SpecError) as excinfo:
+        CardTemplate(
+            width=shell + failing_usable,
+            header=(TextBlock("xy", variant="title"),),
+        )
+    assert "TextBlock" in str(excinfo.value)
+
+
+def test_textblock_content_minimum_accepts_one_step_wider():
+    # Smallest integer usable width honoring the 16.8px minimum: ceil(16.8) = 17px.
+    required = 2 * DEFAULT_CHROME.char_width_ratio * DEFAULT_CHROME.title_size
+    shell = 2 * (DEFAULT_CHROME.padding + DEFAULT_CHROME.border_width)
+    width = shell + math.ceil(required)
+    template = CardTemplate(width=width, header=(TextBlock("xy", variant="title"),))
+    assert template.measure().width == width
 
 
 def test_inline_svg_wrapper_contains_baseline():
