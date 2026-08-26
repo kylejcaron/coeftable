@@ -319,11 +319,13 @@ def _validate_series(values: Sequence[object], *, name: str, allow_missing: bool
         if allow_missing and value is None:
             continue
         if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise SpecError(f"{item_name} must be a finite number or missing")
+            kind = "a finite number or missing" if allow_missing else "a finite number"
+            raise SpecError(f"{item_name} must be {kind}")
         if allow_missing and is_missing(cast(float | None, value)):
             continue
         if not math.isfinite(value):
-            raise SpecError(f"{item_name} must be finite")
+            kind = "finite or missing" if allow_missing else "finite"
+            raise SpecError(f"{item_name} must be {kind}")
 
 
 def _svg_height(svg: str, *, name: str) -> int:

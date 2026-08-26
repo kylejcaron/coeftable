@@ -600,6 +600,16 @@ def test_trend_validation(kwargs):
         Trend(**kwargs)
 
 
+def test_trend_missing_x_rejected_without_claiming_missing_is_allowed():
+    with pytest.raises(SpecError, match=r"x\[1\] must be a finite number$"):
+        Trend(
+            x=_unchecked((0.0, None, 2.0)),
+            y=(0.1, 0.2, 0.3),
+            x_domain=(0.0, 2.0),
+            domain=(0.0, 1.0),
+        )
+
+
 def test_trend_horizontal_projection_span_guard_boundaries():
     # horizontal_span = width - endpoint_width - 2*inset; defaults make
     # width=50 the rejected zero-span boundary and width=51 one-pixel.
