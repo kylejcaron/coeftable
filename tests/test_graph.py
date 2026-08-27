@@ -1772,6 +1772,85 @@ def test_graph_measure_clamps_spread_label_anchors_to_canvas_bounds():
             assert not (horizontal_overlap and vertical_overlap)
 
 
+def test_graph_label_packing_uses_each_labels_own_width():
+    # A WIDE first label leaks past its narrow neighbour: under the old
+    # previous-neighbour reset the third label would return to row zero and
+    # overlap the wide one; interval packing must lift it instead.
+    nodes = (
+        ("wide", Card("Wide", width=90)),
+        ("narrow", Card("Narrow", width=90)),
+        ("late", Card("Late", width=90)),
+        ("target", Card("Target", width=90)),
+    )
+    slots = (
+        Slot("wide", 0, 0),
+        Slot("narrow", 0, 1),
+        Slot("late", 0, 2),
+        Slot("target", 1, 0),
+    )
+    wires = (
+        Wire("w-wide", "wide", "target", label="a very wide label indeed"),
+        Wire("w-narrow", "narrow", "target", label="x"),
+        Wire("w-late", "late", "target", label="late"),
+    )
+    graph = Graph(nodes, Slotted(slots), wires=wires, layer_gap=73)
+    geometry = dict(graph._layout.wire_geometry)
+    chrome = graph.chrome
+    anchors = {}
+    for wire in wires:
+        x, y = geometry[wire.id][1]
+        assert wire.label is not None
+        half = len(wire.label) * chrome.caption_size * chrome.data_char_width_ratio / 2
+        anchors[wire.id] = (x - half, x + half, y)
+    for a_id, b_id in (("w-wide", "w-narrow"), ("w-wide", "w-late"), ("w-narrow", "w-late")):
+        a_left, a_right, a_y = anchors[a_id]
+        b_left, b_right, b_y = anchors[b_id]
+        horizontal = a_left < b_right and b_left < a_right
+        vertical = abs(a_y - b_y) < chrome.caption_size
+        assert not (horizontal and vertical), (a_id, b_id)
+
+
+def test_graph_ladder_gap_boundaries_reject_and_accept_exactly():
+    def build(layer_gap, collapsible=()):
+        nodes = (
+            ("left", Card("Left", width=90)),
+            ("right", Card("Right", width=90)),
+            ("target", Card("Target", width=90)),
+        )
+        slots = (Slot("left", 0, 0), Slot("right", 0, 1), Slot("target", 1, 0))
+        wires = (
+            Wire("wl", "left", "target", label="overlapping"),
+            Wire("wr", "right", "target", label="overlapping"),
+        )
+        return Graph(
+            nodes, Slotted(slots), wires=wires, collapsible=collapsible, layer_gap=layer_gap
+        )
+
+    # One stacked row without nubs: base 28 + 15 = 43.
+    with pytest.raises(SpecError, match="to fit the stacked wire labels"):
+        build(42)
+    assert build(43).measure().width > 0
+    # Sharing the band with a fold nub: 42 + 15 = 57 (the MetricTree default
+    # of 56 was exactly one pixel short - the builder now derives its gap).
+    with pytest.raises(SpecError, match="to fit stacked labels beside fold nubs"):
+        build(56, collapsible=("left",))
+    assert build(57, collapsible=("left",)).measure().width > 0
+
+
+def test_metric_tree_derives_a_gap_that_fits_labeled_merges():
+    nodes = (
+        ("a", Card("A", width=90)),
+        ("b", Card("B", width=90)),
+        ("child", Card("Child", width=90)),
+    )
+    edges = (("a", "child", 4.123456), ("b", "child", -3.987654))
+    tree = MetricTree(nodes, edges, fmt=lambda value: f"{value:+.6f}")
+    assert tree.layer_gap == 57  # 18 + 13 + 11 + 15 * (2 - 1)
+    assert tree.measure().width > 0
+    explicit = MetricTree(nodes, edges, fmt=lambda value: f"{value:+.6f}", layer_gap=80)
+    assert explicit.layer_gap == 80
+
+
 def test_graph_measure_skip_layer_route_samples_stay_outside_intervening_card():
     graph = Graph(
         nodes=(

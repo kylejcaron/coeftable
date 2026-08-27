@@ -187,11 +187,15 @@ def MetricTree(
     theme: Theme = DEFAULT,
     chrome: CardChrome = DEFAULT_CHROME,
     dom_prefix: str = "g0",
+    layer_gap: int | None = None,
 ) -> Graph:
     """Build a slotted, collapsible graph from a metric-tree topology.
 
     ``dom_prefix`` reserves the generated DOM-id namespace; use a distinct
-    prefix when rendering multiple trees in one document.
+    prefix when rendering multiple trees in one document. ``layer_gap``
+    defaults to a derived value that always fits the deepest possible
+    label ladder (every parent is collapsible, so labeled bands share
+    space with fold nubs).
     """
     if not callable(fmt):
         raise SpecError("MetricTree fmt must be callable")
@@ -219,6 +223,18 @@ def MetricTree(
     )
     outgoing = {parent for parent, _, _ in edge_entries}
     collapsible = tuple(node_id for node_id in node_ids if node_id in outgoing)
+    if layer_gap is None:
+        # Upper-bound the ladder: a destination can stack at most
+        # (labeled in-degree - 1) extra rows; every band shares with nubs.
+        labeled_indegree: dict[str, int] = {}
+        for _, child, contribution in edge_entries:
+            if contribution is not None:
+                labeled_indegree[child] = labeled_indegree.get(child, 0) + 1
+        max_stack = max(labeled_indegree.values(), default=1) - 1
+        label_offset = chrome.caption_size + 2
+        label_step = chrome.caption_size + 4
+        derived = 18 + label_offset + chrome.caption_size + label_step * max_stack
+        layer_gap = max(56, derived)
     return Graph(
         nodes=node_entries,
         layout=Slotted(tuple(slots)),
@@ -227,4 +243,5 @@ def MetricTree(
         theme=theme,
         chrome=chrome,
         dom_prefix=dom_prefix,
+        layer_gap=layer_gap,
     )
