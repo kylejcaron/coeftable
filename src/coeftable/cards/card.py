@@ -1,0 +1,114 @@
+"""The public card entry points: `Card` and `CardGrid`.
+
+Thin sugar over templates and regions: a `Card` resolves its content
+exactly once at construction into a cached template, so every validation
+error surfaces immediately and rendering is pure reads. A `CardGrid` is a
+flex-wrap row of fixed-basis items sized to each card's measured
+footprint — narrow containers cannot shrink cards and folding one card
+never moves its siblings.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+from dataclasses import dataclass, field, replace
+
+from coeftable.cards.adornments import Adornment, TextBlock
+from coeftable.cards.chrome import DEFAULT_CHROME, CardChrome
+from coeftable.cards.measure import MeasuredCard
+from coeftable.cards.regions import Region, _canonical, resolve_content
+from coeftable.cards.template import CardTemplate
+from coeftable.errors import SpecError
+from coeftable.theme import DEFAULT, Theme
+
+
+@dataclass(frozen=True, slots=True)
+class Card:
+    """A measured, foldable metric card built from regions and adornments."""
+
+    title: str
+    content: Sequence[Region | Adornment] = ()
+    subtitle: str | None = None
+    width: int = 256
+    chrome: CardChrome = DEFAULT_CHROME
+    theme: Theme = DEFAULT
+    _template: CardTemplate = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        """Validate inputs and build the cached template once."""
+        if not isinstance(self.title, str) or not self.title:
+            raise SpecError("Card.title must be a non-empty str")
+        if self.subtitle is not None and not isinstance(self.subtitle, str):
+            raise SpecError("Card.subtitle must be a str")
+        if isinstance(self.width, bool) or not isinstance(self.width, int):
+            raise SpecError("Card.width must be an int")
+        if self.width <= 0:
+            raise SpecError("Card.width must be positive")
+        if not isinstance(self.chrome, CardChrome):
+            raise SpecError("Card.chrome must be a CardChrome")
+        if not isinstance(self.theme, Theme):
+            raise SpecError("Card.theme must be a Theme")
+        object.__setattr__(self, "content", _canonical(self.content, name="Card.content"))
+        usable = self.width - 2 * (self.chrome.padding + self.chrome.border_width)
+        header: tuple[Adornment, ...] = (TextBlock(self.title, variant="title"),)
+        if self.subtitle is not None:
+            header = (*header, TextBlock(self.subtitle, variant="subtitle"))
+        body = resolve_content(self.content, width=usable, theme=self.theme, chrome=self.chrome)
+        object.__setattr__(
+            self,
+            "_template",
+            CardTemplate(width=self.width, header=header, body=body, chrome=self.chrome),
+        )
+
+    def measure(self) -> MeasuredCard:
+        """Return this card's exact reserved footprints."""
+        return self._template.measure()
+
+    def as_raw_html(self) -> str:
+        """Render the card as a self-contained HTML string."""
+        return self._template.render(theme=self.theme)
+
+    def _repr_html_(self) -> str:
+        return self.as_raw_html()
+
+    def with_theme(self, theme: Theme) -> Card:
+        """Return a copy bound to `theme` (content re-resolves under it)."""
+        return replace(self, theme=theme)
+
+
+@dataclass(frozen=True, slots=True)
+class CardGrid:
+    """An edge-less flex-wrap arrangement of independently measured cards."""
+
+    cards: Sequence[Card]
+    gap: int = 16
+
+    def __post_init__(self) -> None:
+        """Canonicalize and validate the grid inputs."""
+        object.__setattr__(self, "cards", _canonical(self.cards, name="CardGrid.cards"))
+        if not self.cards:
+            raise SpecError("CardGrid.cards must not be empty")
+        for index, card in enumerate(self.cards):
+            if not isinstance(card, Card):
+                raise SpecError(f"CardGrid.cards[{index}] must be a Card")
+        if isinstance(self.gap, bool) or not isinstance(self.gap, int) or self.gap <= 0:
+            raise SpecError("CardGrid.gap must be a positive int")
+
+    def as_raw_html(self) -> str:
+        """Render every card inside a fixed-basis flex-wrap container."""
+        items = []
+        for card in self.cards:
+            measured = card.measure()
+            items.append(
+                f'<div style="flex:0 0 {measured.width}px;'
+                f"min-width:{measured.width}px;"
+                f"height:{measured.expanded_height}px;"
+                f'overflow:visible">{card.as_raw_html()}</div>'
+            )
+        return (
+            f'<div style="display:flex;flex-wrap:wrap;gap:{self.gap}px;'
+            f'align-items:flex-start">{"".join(items)}</div>'
+        )
+
+    def _repr_html_(self) -> str:
+        return self.as_raw_html()
