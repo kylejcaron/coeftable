@@ -662,19 +662,18 @@ selection intact, because a native `<select>` keeps its value while hidden.
 **Limitations.** All alternatives of one switcher must have the same number of
 children, since they share the same positions.
 
-And a card must not depend on two switchers at once. If a card's only paths into
-the tree run through the alternatives of two different switchers, whether it
-stays visible depends on both selections together, and each switcher's rules are
-emitted independently, so there is nowhere to express that combined condition.
-Such a tree is rejected at construction with a `SpecError` naming the card and
-both switchers.
+And every card must have a parent under every combination of choices. Nesting
+satisfies this on its own: an outer choice that removes a whole branch is decided
+by the outer rule alone, and the cards below it go with it. What is refused is a
+card that would be left *stranded* — one whose routes into the tree run through
+two different switchers such that some pair of selections closes all of them.
 
-This applies to nested switchers too, not only sibling ones. Nesting is fine on
-its own — an outer choice removing a whole branch is decided by the outer rule
-alone. It is only the *crossing* case that is refused: a card reachable both
-through a nested branch and through a different alternative of the switcher above
-it. Choosing the outer branch that keeps the nested switcher, and then an inner
-option that does not reach that card, would leave it with no visible parent.
+The concrete case is a card reachable both through a nested branch and through a
+different alternative of the switcher above it. Keep the outer branch that
+preserves the nested switcher, then choose an inner option that does not reach
+that card, and both of its routes are gone at once. Since each switcher's rules
+are emitted independently, neither one alone can see that. Such a tree is
+rejected at construction with a `SpecError` naming the card and both switchers.
 
 `DriverTree` returns a `GraphReport`: the underlying `Graph` plus a
 measured, exact-width timeline strip stacked above it. `report.measure()`,
