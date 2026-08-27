@@ -310,14 +310,14 @@ def test_graph_rejects_collapsible_nubs_in_too_small_layer_gap():
         )
 
 
-def test_graph_requires_extra_label_clearance_above_collapsible_sources():
+def test_graph_requires_extra_label_clearance_when_labels_share_a_nub_band():
     nodes = (("source", Card("source")), ("target", Card("target")))
     slots = (Slot("source", 0, 0), Slot("target", 1, 0))
     wire = Wire("wire", "source", "target", label="edge")
     with pytest.raises(
         SpecError,
         match=re.escape(
-            "Graph.layer_gap must be at least 42 when labeled wires have collapsible sources"
+            "Graph.layer_gap must be at least 42 when labels share a band with fold nubs"
         ),
     ):
         Graph(nodes, Slotted(slots), wires=(wire,), collapsible=("source",), layer_gap=41)
@@ -329,6 +329,19 @@ def test_graph_requires_extra_label_clearance_above_collapsible_sources():
         layer_gap=42,
     )
     assert accepted.measure().height > 0
+    # A skip-wire label above a destination whose PRECEDING layer holds a
+    # collapsible sibling shares that band too.
+    skip_nodes = (("r", Card("r")), ("mid", Card("mid")), ("deep", Card("deep")))
+    skip_slots = (Slot("r", 0, 0), Slot("mid", 1, 0), Slot("deep", 2, 0))
+    skip_wires = (
+        Wire("rm", "r", "mid"),
+        Wire("md", "mid", "deep"),
+        Wire("rd", "r", "deep", label="skip"),
+    )
+    with pytest.raises(SpecError, match="labels share a band with fold nubs"):
+        Graph(
+            skip_nodes, Slotted(skip_slots), wires=skip_wires, collapsible=("mid",), layer_gap=41
+        )
 
 
 def test_graph_measure_sums_different_column_widths_and_layer_heights():

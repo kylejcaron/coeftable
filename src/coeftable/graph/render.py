@@ -63,7 +63,8 @@ def _wire_svg(graph: Graph, layout: _GraphLayout, compiled: _CompiledState) -> s
             label = (
                 f'<text x="{_number(label_x)}" y="{_number(label_y)}" text-anchor="middle" '
                 f'fill="{_esc(_label_color(graph.theme, wire.label_role, wire.label_color))}" '
-                f'style="paint-order:stroke;stroke:{surface};stroke-width:4px;'
+                f'style="font-size:{graph.chrome.caption_size}px;'
+                f"paint-order:stroke;stroke:{surface};stroke-width:4px;"
                 f'stroke-linejoin:round">{_esc(wire.label)}</text>'
             )
         fragments.append(f'<g id="{wire_dom_id}">{path}{label}</g>')

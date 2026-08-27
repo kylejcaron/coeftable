@@ -720,12 +720,15 @@ class Graph:
             raise SpecError("Graph.layer_gap must be at least 18 when wires are present")
         if any(wire.label is not None for wire in wires) and self.layer_gap < 28:
             raise SpecError("Graph.layer_gap must be at least 28 when wire labels are present")
-        if (
-            any(wire.label is not None and wire.src in collapsible for wire in wires)
-            and self.layer_gap < 42
-        ):
+        collapsible_layers = {
+            layers_by_id[card_id] for card_id in collapsible if card_id in layers_by_id
+        }
+        labeled_destination_bands = {
+            layers_by_id[wire.dst] - 1 for wire in wires if wire.label is not None
+        }
+        if collapsible_layers & labeled_destination_bands and self.layer_gap < 42:
             raise SpecError(
-                "Graph.layer_gap must be at least 42 when labeled wires have collapsible sources"
+                "Graph.layer_gap must be at least 42 when labels share a band with fold nubs"
             )
         cards, rebound_nodes = _graph_rebound_nodes(nodes, theme=self.theme, chrome=self.chrome)
         card_options = {node_id: card.control_options() for node_id, card in rebound_nodes}
