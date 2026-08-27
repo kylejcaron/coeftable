@@ -660,13 +660,21 @@ nested switcher and its alternatives; switching back restores it with the inner
 selection intact, because a native `<select>` keeps its value while hidden.
 
 **Limitations.** All alternatives of one switcher must have the same number of
-children, since they share the same positions. And a card whose only paths run
-through the alternatives of two *sibling* switchers is rejected: staying visible
-would depend on both selections at once, and each switcher's rules are emitted
-independently, so there is no place to express that combined condition. Nesting
-is unaffected by this — an ancestor and its descendant are ordered, so the
-ancestor's rule alone decides. The error names the card and the switchers
-gating it.
+children, since they share the same positions.
+
+And a card must not depend on two switchers at once. If a card's only paths into
+the tree run through the alternatives of two different switchers, whether it
+stays visible depends on both selections together, and each switcher's rules are
+emitted independently, so there is nowhere to express that combined condition.
+Such a tree is rejected at construction with a `SpecError` naming the card and
+both switchers.
+
+This applies to nested switchers too, not only sibling ones. Nesting is fine on
+its own — an outer choice removing a whole branch is decided by the outer rule
+alone. It is only the *crossing* case that is refused: a card reachable both
+through a nested branch and through a different alternative of the switcher above
+it. Choosing the outer branch that keeps the nested switcher, and then an inner
+option that does not reach that card, would leave it with no visible parent.
 
 `DriverTree` returns a `GraphReport`: the underlying `Graph` plus a
 measured, exact-width timeline strip stacked above it. `report.measure()`,
