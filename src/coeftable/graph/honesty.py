@@ -56,6 +56,25 @@ def log_ratio(numerator: float, denominator: float) -> float:
     too large for a machine float, a value outside log()'s domain, a NaN -
     raises SpecError instead of a raw arithmetic exception or a silent NaN.
     """
+    # Both operands must be positive in their own right. Checking only the
+    # quotient lets two negatives through, since their ratio is positive --
+    # and a negative level has no logarithm, so the multiplicative noise model
+    # this feeds is undefined there regardless of what the division returns.
+    #
+    # Tested without converting to float: an arbitrary-precision integer pair
+    # whose ratio is perfectly representable (10**400 over 10**399) must still
+    # work, and float() would overflow on the operands before the division got
+    # a chance. NaN fails every comparison, so it is caught by identity.
+    try:
+        if (
+            numerator != numerator
+            or denominator != denominator
+            or numerator <= 0
+            or denominator <= 0
+        ):
+            raise SpecError("log ratio requires two finite, positive numbers")
+    except TypeError as exc:
+        raise SpecError("log ratio requires two finite, positive numbers") from exc
     try:
         ratio = numerator / denominator
     except (TypeError, ZeroDivisionError, OverflowError) as exc:

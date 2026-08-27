@@ -429,3 +429,23 @@ def test_public_functions_survive_large_integers_and_flat_subnormal_series():
         assert math.isfinite(hi)
 
     assert probed == 2 * _INT_PROBE_TRIALS + len(_SUBNORMAL_FLAT_MAGNITUDES)
+
+
+def test_log_ratio_refuses_two_negative_operands():
+    # Their quotient is positive, so a check on the ratio alone lets them
+    # through -- but a negative level has no logarithm, and the multiplicative
+    # noise model this feeds is undefined there.
+    with pytest.raises(SpecError, match="finite, positive"):
+        log_ratio(-2.0, -1.0)
+    with pytest.raises(SpecError, match="finite, positive"):
+        log_ratio(-2.0, -2.0)
+
+
+def test_log_ratio_refuses_a_single_non_positive_operand():
+    for numerator, denominator in ((-2.0, 1.0), (2.0, -1.0), (0.0, 1.0), (1.0, 0.0)):
+        with pytest.raises(SpecError, match="finite, positive"):
+            log_ratio(numerator, denominator)
+
+
+def test_log_ratio_still_accepts_two_positives():
+    assert log_ratio(2.0, 1.0) == pytest.approx(math.log(2.0))

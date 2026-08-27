@@ -261,13 +261,27 @@ def _prepare_x(x: Sequence[float]) -> tuple[tuple[float, ...], tuple[float, floa
                 f"x[{index}]={current!r} is not greater than x[{index - 1}]={previous!r}"
             )
         this_gap = current - previous
+        if not math.isfinite(this_gap):
+            raise SpecError(
+                "DriverTree.x gaps must be finite: "
+                f"x[{index}] - x[{index - 1}] overflows to {this_gap!r}"
+            )
         if not math.isclose(this_gap, gap, rel_tol=1e-9, abs_tol=4 * math.ulp(magnitude)):
             raise SpecError(
                 "DriverTree.x must be evenly spaced: "
                 f"x[{index}] - x[{index - 1}]={this_gap!r} differs from the first gap "
                 f"x[1] - x[0]={gap!r}"
             )
-    return x_values, (x_values[0], x_values[-1]), x_values[-1] - x_values[0]
+    # Individually finite coordinates can still straddle a span that overflows,
+    # e.g. (-1e308, 0, 1e308). The span feeds the period count and the plot
+    # projection, so an infinite one has to be refused here rather than
+    # surfacing later as a raw arithmetic error or non-finite geometry.
+    span = x_values[-1] - x_values[0]
+    if not math.isfinite(span):
+        raise SpecError(
+            f"DriverTree.x spans too many orders of magnitude: x[-1] - x[0] overflows to {span!r}"
+        )
+    return x_values, (x_values[0], x_values[-1]), span
 
 
 def _build_breakout_map(
@@ -434,21 +448,27 @@ def _endpoint_identity_gap(
     )
 
 
-# Final rule (C3 + A3): a multiplicative breakout's identity gap is the
-# *larger* of the mean relative discrepancy across the whole series
-# (`identity_gap`) and the discrepancy at the endpoints alone
-# (`_endpoint_identity_gap`). Either one exceeding `RESIDUAL_WARN` means the
-# labels -- which describe the endpoint change specifically -- do not
-# reconcile with the parent, so both scaling (`_compute_contributions`) and
-# the badge (`_apply_breakout_honesty`) key off this same combined value:
-# implied-identity scaling, and a clean unbadged card, require *both* the
-# whole-series mean and the endpoints alone to agree with the parent.
-def _multiplicative_identity_gap(
-    parent_series: Sequence[float], children_series: Sequence[Sequence[float]]
+# Final rule (C3 + A3): a breakout's identity gap is the *larger* of the mean
+# relative discrepancy across the whole series (`identity_gap`) and the
+# discrepancy at the endpoints alone (`_endpoint_identity_gap`). Either one
+# exceeding `RESIDUAL_WARN` means the labels -- which describe the endpoint
+# change specifically -- do not reconcile with the parent, so both scaling
+# (`_compute_contributions`) and the badge (`_apply_breakout_honesty`) key off
+# this same combined value: implied-identity scaling, and a clean unbadged
+# card, require *both* the whole-series mean and the endpoints alone to agree
+# with the parent.
+#
+# This applies to both operators. An additive slice's contributions are
+# endpoint deltas just as a factorization's are endpoint log-shares, so a
+# shortfall confined to the last observation dilutes below the mean threshold
+# in exactly the same way -- injecting no residual and refusing nothing, while
+# the numbers on the page fail to add up to the parent's own move.
+def _combined_identity_gap(
+    parent_series: Sequence[float], children_series: Sequence[Sequence[float]], op: str
 ) -> float:
     return max(
-        identity_gap(parent_series, children_series, "x"),
-        _endpoint_identity_gap(parent_series, children_series, "x"),
+        identity_gap(parent_series, children_series, op),
+        _endpoint_identity_gap(parent_series, children_series, op),
     )
 
 
@@ -465,11 +485,7 @@ def _apply_breakout_honesty(
     """Check one breakout's identity gap and trade-offs (cluster A3 + A4)."""
     parent_series = node_series[parent]
     children_series = [node_series[child] for child in breakout.children]
-    gap = (
-        _multiplicative_identity_gap(parent_series, children_series)
-        if breakout.op == "x"
-        else identity_gap(parent_series, children_series, breakout.op)
-    )
+    gap = _combined_identity_gap(parent_series, children_series, breakout.op)
     if gap > RESIDUAL_FAIL:
         coverage = (1.0 - gap) * 100.0
         raise SpecError(
@@ -643,13 +659,13 @@ def _compute_contributions(
                 total_sum = math.fsum(totals.values())
                 # Consistency rule: implied-identity scaling and the gap badge
                 # (`_apply_breakout_honesty`) are keyed off the *same*
-                # `_multiplicative_identity_gap` value (see its own final-rule
+                # `_combined_identity_gap` value (see its own final-rule
                 # comment), not two different discrepancy measures.
                 # Implied-identity scaling is picked only when that combined
                 # gap is small enough that no badge renders, so any mismatch
                 # large enough to trigger the `parent_delta / total_sum`
                 # fallback always surfaces the gap indicator too.
-                gap = _multiplicative_identity_gap(parent_series, children_series)
+                gap = _combined_identity_gap(parent_series, children_series, "x")
                 identity_holds = gap <= RESIDUAL_WARN
                 scale = _multiplicative_scale(parent_delta, total_sum, identity_holds)
                 for child in breakout.children:
