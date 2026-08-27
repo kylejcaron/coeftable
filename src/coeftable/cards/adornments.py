@@ -1,6 +1,6 @@
 """Typed card-content vocabulary: the closed set card regions resolve into.
 
-The renderer (`coeftable.cards.fragments`) knows exactly these nine types
+The renderer (`coeftable.cards.fragments`) knows exactly these types
 and never branches on report type. Construction is the runtime contract
 boundary for intrinsic field validity: every invalid value raises `SpecError`
 here. Layout-dependent fit, including overflow and minimum widths, raises

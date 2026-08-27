@@ -22,7 +22,6 @@ from coeftable.cards.adornments import (
     SelectControl,
     TextBlock,
 )
-from coeftable.cards.card import Card
 from coeftable.cards.chrome import DEFAULT_CHROME, CardChrome, line_height
 from coeftable.cards.fragments import _esc, render_adornment
 from coeftable.cards.measure import measure_card, resolve_rows, text_line_plan
@@ -49,6 +48,7 @@ def _valid_instances():
             key="rev-breakout",
         ),
         Badge("accounting", role="neutral"),
+        Callout("watch the confidence interval", role="unfavorable"),
         CaptionRow("v2.1 release", color="#4C72B0", dash="dotted"),
         Legend((("A", "#1F77B4"), ("B", "#FF7F0E"))),
         RuleStrip((("launch", "#4C72B0", "dotted"), ("incident", "#C44E52", "dashed"))),
@@ -327,6 +327,7 @@ def test_inline_svg_gains_nothing_beyond_its_payload():
         lambda: SelectControl("L", ((HOSTILE, "A"),), selected=HOSTILE),
         lambda: SelectControl("L", (("a", HOSTILE),), selected="a"),
         lambda: Badge(HOSTILE),
+        lambda: Callout(HOSTILE),
         lambda: CaptionRow(HOSTILE),
         lambda: Legend(((HOSTILE, "#111"),)),
         lambda: RuleStrip(((HOSTILE, "#111", "solid"),)),
@@ -342,6 +343,7 @@ def test_inline_svg_gains_nothing_beyond_its_payload():
         "select-value",
         "select-option-label",
         "badge",
+        "callout",
         "caption",
         "legend-label",
         "rulestrip-label",
@@ -1345,23 +1347,38 @@ def test_rendered_html_attributes_are_well_formed():
         assert len(re.findall(r'style="[^"]*"', html_out)) == html_out.count("style=")
 
 
-def test_callout_wraps_to_multiple_measured_rows():
-    card = Card(
-        "Revenue",
-        content=(
-            Callout(
-                "trade-off: Users vs AOV (r=-0.73); Users vs Price (r=-0.61)",
-                role="unfavorable",
-                max_lines=3,
-            ),
-        ),
-        width=200,
+def test_callout_wraps_and_caps_at_a_non_default_max_lines():
+    text = (
+        "trade-off: Users vs AOV (r=-0.73); Users vs Price (r=-0.61) across every region we tested"
     )
-    measured = card.measure()
-    html_out = card.as_raw_html()
-    # Wrapping produced more than one row, and every row is measured.
-    assert html_out.count("border-left") >= 2
-    assert measured.expanded_height > 0
+    max_lines = 2  # below the default of 3, so the cap must engage
+    width = 200
+    usable = width - 2 * (DEFAULT_CHROME.border_width + DEFAULT_CHROME.padding)
+    inset = DEFAULT_CHROME.callout_accent + DEFAULT_CHROME.callout_inset
+    budget = max(
+        int((usable - inset) / (DEFAULT_CHROME.char_width_ratio * DEFAULT_CHROME.body_size)), 2
+    )
+    expected_lines = text_line_plan(text, budget=budget, max_lines=max_lines)
+    assert len(expected_lines) == max_lines  # confirm the cap actually engages
+
+    measured, _header_rows, rows, _chip = measure_card(
+        width=width,
+        header=(TextBlock("Revenue", variant="title"),),
+        body=(Callout(text, role="unfavorable", max_lines=max_lines),),
+        chrome=DEFAULT_CHROME,
+    )
+    row_h = line_height(DEFAULT_CHROME.body_size, DEFAULT_CHROME)
+    title_h = line_height(DEFAULT_CHROME.title_size, DEFAULT_CHROME)
+    assert len(rows) == max_lines
+    assert [r.height for r in rows] == [row_h] * max_lines
+    assert [cast(Callout, r.adornment).text for r in rows] == list(expected_lines)
+    expected_expanded = (
+        2 * (DEFAULT_CHROME.border_width + DEFAULT_CHROME.padding)
+        + DEFAULT_CHROME.header_gap
+        + title_h
+        + max_lines * row_h
+    )
+    assert measured.expanded_height == expected_expanded
 
 
 def test_callout_carries_its_role_colour():
@@ -1378,6 +1395,21 @@ def test_callout_rejects_invalid_fields():
 
 def test_callout_too_narrow_for_its_accent_is_rejected():
     # The accent bar and inset consume width; a card too narrow must fail
-    # loudly at construction rather than silently clipping to nothing.
-    with pytest.raises(SpecError):
-        Card("t", content=(Callout("a much longer warning"),), width=40)
+    # loudly at construction rather than silently clipping to nothing. The
+    # title stays trivially short so it is Callout's own guard under test,
+    # not the title's.
+    text = "a much longer warning"
+    required = (
+        DEFAULT_CHROME.callout_accent
+        + DEFAULT_CHROME.callout_inset
+        + min(len(text), 2) * DEFAULT_CHROME.char_width_ratio * DEFAULT_CHROME.body_size
+    )
+    shell = 2 * (DEFAULT_CHROME.padding + DEFAULT_CHROME.border_width)
+    failing_usable = math.ceil(required) - 1
+    with pytest.raises(SpecError) as excinfo:
+        CardTemplate(
+            width=shell + failing_usable,
+            header=(TextBlock("x"),),
+            body=(Callout(text),),
+        )
+    assert "Callout" in str(excinfo.value)
