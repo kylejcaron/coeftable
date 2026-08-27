@@ -789,3 +789,42 @@ def test_two_switchers_whose_every_option_reaches_a_descendant_are_allowed():
     wires = tuple(Wire(f"w{i}", src, dst) for i, (src, dst) in enumerate(edges))
     graph = Graph(nodes, Slotted(slots), wires=wires, rules=rules, dom_prefix="brk8")
     assert graph.measure().width > 0
+
+
+def test_a_descendant_shared_across_a_nested_boundary_is_rejected():
+    # `users` is nested inside `revenue`'s `drivers` alternative and is
+    # itself a switcher (`funnel` x `country`). `shared` hangs off both
+    # `sessions` (inside `users`' `funnel` alternative) and `intl` (inside
+    # `revenue`'s *other*, sibling `region` alternative) -- a branch the
+    # nested switcher never touches. Selecting `drivers` alone leaves
+    # `shared` live via `sessions`, so `revenue`'s own rule spares it;
+    # selecting `country` alone leaves it live via `intl`, so `users`' own
+    # rule spares it too. Neither switcher's own liveness proof sees the
+    # other's simultaneous choice, but `drivers` + `country` together hide
+    # both `sessions` and `intl` and leave `shared` with no visible
+    # parent. Nesting does not excuse this: `revenue`'s excluding branch
+    # here (`region`) is not the branch carrying the nested switcher, so
+    # its rule does not already cover the nested switcher's own worst
+    # case, and the topology must be refused up front.
+    rev_breakouts = (
+        Breakout(key="drivers", label="Drivers", op="x", children=("users", "aov")),
+        Breakout(key="region", label="Region", op="+", children=("na", "intl")),
+    )
+    users_breakouts = (
+        Breakout(key="funnel", label="Funnel", op="x", children=("sessions", "conv")),
+        Breakout(key="country", label="Country", op="+", children=("us_u", "eu_u")),
+    )
+    edges = (
+        ("revenue", "users"),
+        ("revenue", "aov"),
+        ("revenue", "na"),
+        ("revenue", "intl"),
+        ("users", "sessions"),
+        ("users", "conv"),
+        ("users", "us_u"),
+        ("users", "eu_u"),
+        ("sessions", "shared"),
+        ("intl", "shared"),
+    )
+    with pytest.raises(SpecError, match=r"'shared'.*more than one breakout switcher"):
+        reject_switcher_conjunctions({"revenue": rev_breakouts, "users": users_breakouts}, edges)

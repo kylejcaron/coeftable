@@ -327,27 +327,86 @@ def _gating_switchers(
     return gates
 
 
-def _drop_ancestor_gates(
-    gates: Mapping[str, frozenset[str]], adjacency: dict[str, tuple[str, ...]]
-) -> dict[str, frozenset[str]]:
-    """Drop a gate whose switcher is an ancestor of another gate's switcher.
+def _prune_gate_edges(
+    adjacency: dict[str, tuple[str, ...]], gates: Mapping[str, frozenset[str]]
+) -> dict[str, tuple[str, ...]]:
+    """Remove each gate's own parent to reaching-child edges from `adjacency`.
 
-    An ancestor and a nested descendant switcher are ordered, not
-    independent: whenever the ancestor's option excludes the branch
-    carrying the descendant switcher, the ancestor's own rule already
-    hides that switcher's parent -- and everything beneath it -- on its
-    own, without needing the descendant's cooperation. Counting the
-    ancestor as a second, independent gate would treat this ordered pair
-    as the same conjunction risk a genuine pair of unrelated switchers
-    poses. Only gates with no such ordering between them describe that
-    real risk.
+    Simulates the one selection that hides every one of those children --
+    without touching a reaching child's own further descendants, which
+    stay reachable through any other surviving path.
     """
-    reachable_from = {parent: _reachable(parent, adjacency) for parent in gates}
     return {
-        parent: reaching
-        for parent, reaching in gates.items()
-        if not any(other != parent and other in reachable_from[parent] for other in gates)
+        src: tuple(dst for dst in dsts if dst not in gates.get(src, frozenset()))
+        for src, dsts in adjacency.items()
     }
+
+
+def _converge_gates(
+    node: str,
+    option_children: Mapping[str, tuple[tuple[str, ...], ...]],
+    adjacency: dict[str, tuple[str, ...]],
+) -> dict[str, frozenset[str]]:
+    """Find every switcher gating `node`, including one masked by another.
+
+    A switcher's own child can reach `node` by passing through a position
+    that belongs to a *different*, nested switcher -- a position that
+    switcher's own worst option would hide. Judged against the raw graph,
+    that route reads as unconditional and hides the outer switcher's real
+    gating role entirely: the outer switcher's *other* alternative can
+    still orphan `node` in combination with the nested switcher's own
+    worst option, even though neither one's own liveness proof, run in
+    isolation against the unpruned graph, ever sees it. Re-deriving gates
+    against a graph already pruned by every gate found so far, and
+    repeating until nothing new turns up, uncovers exactly the switchers
+    whose only route to `node` ran through such a position. A gate, once
+    found, is never discarded even if further pruning would no longer
+    rediscover it -- so the search only ever grows and always terminates.
+    """
+    known: dict[str, frozenset[str]] = {}
+    while True:
+        pruned = _prune_gate_edges(adjacency, known)
+        closures = _child_closures(option_children, pruned)
+        found = _gating_switchers(node, closures, option_children)
+        new_parents = {parent: found[parent] for parent in found if parent not in known}
+        if not new_parents:
+            return known
+        known = {**known, **new_parents}
+
+
+def _drop_subsumed_gates(
+    gates: Mapping[str, frozenset[str]],
+    adjacency: dict[str, tuple[str, ...]],
+    roots: frozenset[str],
+) -> dict[str, frozenset[str]]:
+    """Drop a gate whose entire switcher another gate already excludes alone.
+
+    An ancestor and a nested descendant switcher are ordered, not always
+    independent -- but only when the ancestor's *own* identified gate,
+    pruned by itself, already puts the descendant switcher's own parent
+    out of reach: only then does the ancestor's rule alone hide everything
+    beneath it, without needing the nested switcher's cooperation. A
+    nested switcher gating `node` through a branch the ancestor's own gate
+    never touches -- a sibling alternative, not the branch carrying the
+    nested switcher -- is not subsumed by it and describes a real,
+    separate risk. Checking actual reachability after the *other* gate's
+    own pruning, rather than asking whether one switcher's parent is
+    merely upstream of another's in the raw graph, is what tells the two
+    shapes apart.
+    """
+    dropped: set[str] = set()
+    for parent in gates:
+        for other, other_reaching in gates.items():
+            if other == parent:
+                continue
+            pruned = _prune_gate_edges(adjacency, {other: other_reaching})
+            visible = set(roots)
+            for root in roots:
+                visible |= _reachable(root, pruned)
+            if parent not in visible:
+                dropped.add(parent)
+                break
+    return {parent: reaching for parent, reaching in gates.items() if parent not in dropped}
 
 
 def _reject_orphanable_descendants(
@@ -364,31 +423,30 @@ def _reject_orphanable_descendants(
     switcher's alternative happens to be selected, every contributing
     switcher's rule independently declines to hide the descendant, yet the
     combination that excludes all of them at once leaves it with nothing
-    pointing at it. Each contributing switcher is identified at the
-    option level, by every one of its direct children that reaches the
-    descendant -- but only once some real option (one `Breakout`'s own
-    declared children) has no reaching child at all, since an option with
-    a reaching child always keeps the descendant alive regardless of the
-    selection. Pruning all of the identified children together (not just
-    one) is what correctly simulates the exclusion, however many children
-    the excluding option contributes. Finding the descendant still
-    unreachable from every root after pruning proves the orphaning
-    combination is real and selectable.
+    pointing at it. `_converge_gates` finds every contributing switcher,
+    including one whose own gating role only appears once another
+    switcher's worst option is already assumed -- the case a nested
+    switcher sharing a descendant with a sibling alternative of its own
+    ancestor produces, and no single-pass, unpruned reachability check can
+    see. `_drop_subsumed_gates` then discards only the gates a *different*
+    gate's own pruning already renders moot, never a gate whose switcher
+    sits upstream in the raw graph merely by coincidence. Pruning every
+    surviving gate together and finding the descendant still unreachable
+    from every root proves the orphaning combination is real and
+    selectable.
     """
     option_children = _real_option_children(breakout_map)
     if len(option_children) < 2:
         return
-    closures = _child_closures(option_children, adjacency)
     roots = _graph_roots(edges)
     candidates = {node for edge in edges for node in edge} - roots
     for node in sorted(candidates):
-        gates = _drop_ancestor_gates(_gating_switchers(node, closures, option_children), adjacency)
+        gates = _drop_subsumed_gates(
+            _converge_gates(node, option_children, adjacency), adjacency, roots
+        )
         if len(gates) < 2:
             continue
-        pruned = {
-            src: tuple(dst for dst in dsts if dst not in gates.get(src, frozenset()))
-            for src, dsts in adjacency.items()
-        }
+        pruned = _prune_gate_edges(adjacency, gates)
         visible = set(roots)
         for root in roots:
             visible |= _reachable(root, pruned)
