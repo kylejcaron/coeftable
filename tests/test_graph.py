@@ -1344,6 +1344,141 @@ def test_shared_slot_select_touching_group_without_partitioning_raises():
         )
 
 
+def _nested_switcher_fixture(*, region_hide: tuple[str, ...]) -> Graph:
+    rev = SelectControl("B", (("drivers", "d"), ("region", "r")), selected="drivers", key="rev")
+    usr = SelectControl("B", (("funnel", "f"), ("country", "c")), selected="funnel", key="usr")
+    nodes = (
+        ("revenue", Card("R", content=[rev], width=150)),
+        ("users", Card("U", content=[usr], width=150)),
+        ("aov", Card("A", width=150)),
+        ("na", Card("N", width=150)),
+        ("intl", Card("I", width=150)),
+        ("sessions", Card("S", width=150)),
+        ("conv", Card("C", width=150)),
+        ("us_u", Card("US", width=150)),
+        ("eu_u", Card("EU", width=150)),
+    )
+    slots = (
+        Slot("revenue", 0, 0),
+        Slot("users", 1, 0),
+        Slot("aov", 1, 1),  # drivers
+        Slot("na", 1, 0),
+        Slot("intl", 1, 1),  # region, same positions
+        Slot("sessions", 2, 0),
+        Slot("conv", 2, 1),  # funnel
+        Slot("us_u", 2, 0),
+        Slot("eu_u", 2, 1),  # country, same positions
+    )
+    wires = tuple(
+        Wire(f"w{i}", s, d)
+        for i, (s, d) in enumerate(
+            [
+                ("revenue", "users"),
+                ("revenue", "aov"),
+                ("revenue", "na"),
+                ("revenue", "intl"),
+                ("users", "sessions"),
+                ("users", "conv"),
+                ("users", "us_u"),
+                ("users", "eu_u"),
+            ]
+        )
+    )
+
+    def rule(card: str, key: str, option: str, hide: tuple[str, ...]) -> StateRule:
+        return StateRule((Atom(ControlRef(card, key), "option_checked", option),), hide_cards=hide)
+
+    rules = (
+        rule("revenue", "rev", "drivers", ("na", "intl")),
+        rule("revenue", "rev", "region", region_hide),
+        rule("users", "usr", "funnel", ("us_u", "eu_u")),
+        rule("users", "usr", "country", ("sessions", "conv")),
+    )
+    return Graph(nodes, Slotted(slots), wires=wires, rules=rules)
+
+
+def test_shared_slot_group_may_be_switched_away_by_an_ancestor():
+    # Choosing "region" on revenue retires the whole "users" subtree,
+    # including its own nested funnel/country switcher; "users" still
+    # exclusively governs its own shared positions when visible.
+    graph = _nested_switcher_fixture(
+        region_hide=("users", "aov", "sessions", "conv", "us_u", "eu_u")
+    )
+    assert graph.measure().width > 0
+    html = graph.as_raw_html()
+    assert html.count("<select") == 2
+
+
+def test_shared_slot_partial_ancestor_hide_of_the_controller_is_rejected():
+    # The region rule hides the "users" controller but not what it governs,
+    # stranding sessions/conv/us_u/eu_u on screen with no visible parent.
+    with pytest.raises(
+        SpecError,
+        match=r"shared-slot controller 'users' hidden without hiding every member",
+    ):
+        _nested_switcher_fixture(region_hide=("users", "aov"))
+
+
+def test_shared_slot_emptied_group_with_a_visible_controller_is_rejected():
+    # An ancestor rule empties a shared group entirely but does not hide
+    # that group's own controller, stranding a live dropdown governing
+    # nothing.
+    inner = SelectControl("Mode", (("x", "x"), ("y", "y")), selected="x", key="mode")
+    nodes = (
+        (
+            "outer",
+            Card(
+                "Outer",
+                content=[
+                    SelectControl("O", (("show", "s"), ("hide", "h")), selected="show", key="mode")
+                ],
+            ),
+        ),
+        ("inner", Card("Inner", content=[inner])),
+        ("left_i", Card("left_i")),
+        ("right_i", Card("right_i")),
+        ("spare", Card("spare")),
+    )
+    slots = (
+        Slot("outer", 0, 0),
+        Slot("inner", 1, 0),
+        Slot("spare", 1, 1),
+        Slot("left_i", 2, 0),
+        Slot("right_i", 2, 0),
+    )
+    rules = (
+        StateRule(
+            (Atom(ControlRef("outer", "mode"), "option_checked", "show"),),
+            hide_cards=("spare",),
+        ),
+        StateRule(
+            (Atom(ControlRef("outer", "mode"), "option_checked", "hide"),),
+            hide_cards=("left_i", "right_i"),
+        ),
+        StateRule(
+            (Atom(ControlRef("inner", "mode"), "option_checked", "x"),),
+            hide_cards=("right_i",),
+        ),
+        StateRule(
+            (Atom(ControlRef("inner", "mode"), "option_checked", "y"),),
+            hide_cards=("left_i",),
+        ),
+    )
+    with pytest.raises(
+        SpecError,
+        match=r"shared-slot ancestor rule empties a group without hiding its controller",
+    ):
+        Graph(nodes, Slotted(slots), rules=rules)
+
+
+def test_shared_slot_two_visible_occupants_still_rejected():
+    # The region rule leaves "aov" unhidden, so under "region" both aov and
+    # intl would be visible in the same position; the upper bound -- never
+    # two occupants -- must still be refused even amid the new relaxations.
+    with pytest.raises(SpecError, match="shared slots require one governing external"):
+        _nested_switcher_fixture(region_hide=("users", "sessions", "conv", "us_u", "eu_u"))
+
+
 def _state_diamond(*, collapsible=("a", "b"), prefix="g", theme=DEFAULT) -> Graph:
     nodes = tuple((card_id, Card(card_id)) for card_id in ("r", "a", "b", "c"))
     layout = Slotted(
