@@ -1,3 +1,26 @@
+<a id="v0.6.0"></a>
+# [v0.6.0](https://github.com/kylejcaron/coeftable/releases/tag/v0.6.0) - 2026-08-27
+
+<!-- Release notes generated using configuration in .github/release.yml at v0.6.0 -->
+
+## What's Changed
+### New Features
+* Add coeftable.plots public facade for SVG plot primitives by [@kylejcaron](https://github.com/kylejcaron) in [#35](https://github.com/kylejcaron/coeftable/pull/35)
+* Add typed card adornment vocabulary and HTML rendering by [@kylejcaron](https://github.com/kylejcaron) in [#36](https://github.com/kylejcaron/coeftable/pull/36)
+* Add exact card measurement engine (chrome geometry) by [@kylejcaron](https://github.com/kylejcaron) in [#37](https://github.com/kylejcaron/coeftable/pull/37)
+* Add trend, interval, metric, diagnostics and event card regions by [@kylejcaron](https://github.com/kylejcaron) in [#38](https://github.com/kylejcaron/coeftable/pull/38)
+* Add public Card and CardGrid entry points by [@kylejcaron](https://github.com/kylejcaron) in [#39](https://github.com/kylejcaron/coeftable/pull/39)
+* Add the panel composition layer by [@kylejcaron](https://github.com/kylejcaron) in [#40](https://github.com/kylejcaron/coeftable/pull/40)
+* Add the metric tree / driver-tree graph builder by [@kylejcaron](https://github.com/kylejcaron) in [#41](https://github.com/kylejcaron/coeftable/pull/41)
+### Maintenance
+* Update changelog for v0.5.0 by [@github-actions](https://github.com/github-actions)[bot] in [#34](https://github.com/kylejcaron/coeftable/pull/34)
+
+
+**Full Changelog**: https://github.com/kylejcaron/coeftable/compare/v0.5.0...v0.6.0
+
+[Changes][v0.6.0]
+
+
 <a id="v0.5.0"></a>
 # [v0.5.0](https://github.com/kylejcaron/coeftable/releases/tag/v0.5.0) - 2026-08-19
 
@@ -124,6 +147,7 @@
 [Changes][v0.1.0]
 
 
+[v0.6.0]: https://github.com/kylejcaron/coeftable/compare/v0.5.0...v0.6.0
 [v0.5.0]: https://github.com/kylejcaron/coeftable/compare/v0.4.0...v0.5.0
 [v0.4.0]: https://github.com/kylejcaron/coeftable/compare/v0.3.1...v0.4.0
 [v0.3.1]: https://github.com/kylejcaron/coeftable/compare/v0.3.0...v0.3.1
