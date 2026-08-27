@@ -641,6 +641,7 @@ def _graph_measure(
                 xg = padding + column_offsets[src_slot.slot] - gap / 2
             y_a = my1 + layer_gap / 2
             y_b = my2 - layer_gap / 2
+            yb2 = (y_b + my2) / 2
             # Clamp into the canvas margin: padding/2 stays left of the first
             # column even under tiny custom padding.
             xg = max(padding / 2, min(footprint.width - padding / 2, xg))
@@ -648,12 +649,14 @@ def _graph_measure(
                 f"M {x0:g},{y0:g} L {x0:g},{src_layer_bottom:g} "
                 f"C {x0:g},{my1:g} {xg:g},{my1:g} {xg:g},{y_a:g} "
                 f"L {xg:g},{y_b:g} "
-                f"C {xg:g},{my2:g} {x1:g},{my2:g} {x1:g},{y1 - 3:g}"
+                f"C {xg:g},{yb2:g} {x1:g},{yb2:g} {x1:g},{my2:g} "
+                f"L {x1:g},{y1 - 3:g}"
             )
         else:
             path = (
                 f"M {x0:g},{y0:g} L {x0:g},{src_layer_bottom:g} "
-                f"C {x0:g},{my1:g} {x1:g},{my2:g} {x1:g},{y1 - 3:g}"
+                f"C {x0:g},{my1:g} {x1:g},{my1:g} {x1:g},{my2:g} "
+                f"L {x1:g},{y1 - 3:g}"
             )
         if wire.label is None:
             spread = 0

@@ -1448,7 +1448,8 @@ def test_graph_renderer_uses_cached_anchor_and_vertical_route_geometry():
     my2 = target_top - graph.layer_gap / 2
     expected_path = (
         f"M {x0:g},{y0:g} L {x0:g},{src_layer_bottom:g} "
-        f"C {x0:g},{my1:g} {x1:g},{my2:g} {x1:g},{y1 - 3:g}"
+        f"C {x0:g},{my1:g} {x1:g},{my1:g} {x1:g},{my2:g} "
+        f"L {x1:g},{y1 - 3:g}"
     )
     expected_geometry = (("wire", (expected_path, (x1, y1 - 13))),)
     assert layout.wire_geometry == expected_geometry
@@ -1501,10 +1502,13 @@ def test_graph_measure_swings_skip_layer_wire_through_column_corridor():
     path, _label_anchor = dict(graph._layout.wire_geometry)["r-c"]
     y_a = my1 + graph.layer_gap / 2
     y_b = my2 - graph.layer_gap / 2
+    yb2 = (y_b + my2) / 2
     expected_path = (
         f"M {x0:g},{y0:g} L {x0:g},{src_layer_bottom:g} "
         f"C {x0:g},{my1:g} {xg:g},{my1:g} {xg:g},{y_a:g} "
-        f"L {xg:g},{y_b:g} C {xg:g},{my2:g} {x1:g},{my2:g} {x1:g},{y1 - 3:g}"
+        f"L {xg:g},{y_b:g} "
+        f"C {xg:g},{yb2:g} {x1:g},{yb2:g} {x1:g},{my2:g} "
+        f"L {x1:g},{y1 - 3:g}"
     )
     assert path == expected_path
     assert xg != x0
@@ -1549,7 +1553,7 @@ def test_graph_measure_adjacent_route_exits_source_layer_before_bending():
         float(value)
         for value in re.findall(r"-?\d+(?:\.\d+)?", dict(graph._layout.wire_geometry)["wire"][0])
     )
-    assert len(values) == 10
+    assert len(values) == 12
     (
         path_x0,
         path_y0,
@@ -1559,16 +1563,18 @@ def test_graph_measure_adjacent_route_exits_source_layer_before_bending():
         control_y1,
         control_x1,
         control_y2,
+        cubic_end_x,
+        cubic_end_y,
         end_x,
         end_y,
     ) = values
-    assert (path_x0, path_y0, lead_x, lead_y) == (
-        x0,
-        y0,
-        x0,
-        sibling_top + sibling_height,
-    )
-    assert (control_x0, control_y1, end_x, end_y) == (x0, control_y1, x1, y1 - 3)
+    src_layer_bottom = sibling_top + sibling_height
+    my1 = src_layer_bottom + graph.layer_gap / 2
+    my2 = target_top - graph.layer_gap / 2
+    assert (path_x0, path_y0, lead_x, lead_y) == (x0, y0, x0, src_layer_bottom)
+    assert (control_x0, control_y1, control_x1, control_y2) == (x0, my1, x1, my1)
+    assert (cubic_end_x, cubic_end_y) == (x1, my2)
+    assert (end_x, end_y) == (x1, y1 - 3)
 
     def cubic(start, control_a, control_b, end, t):
         u = 1 - t
@@ -1596,10 +1602,17 @@ def test_graph_measure_adjacent_route_exits_source_layer_before_bending():
             (lead_x, lead_y),
             (control_x0, control_y1),
             (control_x1, control_y2),
-            (end_x, end_y),
+            (cubic_end_x, cubic_end_y),
             t,
         )
         for t in (0.1, 0.25, 0.5, 0.75, 0.9)
+    )
+    samples.extend(
+        (
+            cubic_end_x + t * (end_x - cubic_end_x),
+            cubic_end_y + t * (end_y - cubic_end_y),
+        )
+        for t in (0.1, 0.5, 0.9)
     )
     assert not any(inside_sibling(point) for point in samples)
 
@@ -1685,7 +1698,7 @@ def test_graph_measure_skip_layer_route_samples_stay_outside_intervening_card():
         float(value)
         for value in re.findall(r"-?\d+(?:\.\d+)?", dict(graph._layout.wire_geometry)["wire"][0])
     )
-    assert len(values) == 18
+    assert len(values) == 20
     (
         path_x0,
         path_y0,
@@ -1703,6 +1716,8 @@ def test_graph_measure_skip_layer_route_samples_stay_outside_intervening_card():
         control_y3,
         control_x3,
         control_y4,
+        second_end_x,
+        second_end_y,
         end_x,
         end_y,
     ) = values
@@ -1731,10 +1746,17 @@ def test_graph_measure_skip_layer_route_samples_stay_outside_intervening_card():
             (line_x, line_y),
             (control_x2, control_y3),
             (control_x3, control_y4),
-            (end_x, end_y),
+            (second_end_x, second_end_y),
             t,
         )
         for t in (0.25, 0.5, 0.75)
+    )
+    samples.extend(
+        (
+            second_end_x + t * (end_x - second_end_x),
+            second_end_y + t * (end_y - second_end_y),
+        )
+        for t in (0.0, 0.25, 0.5, 0.75, 1.0)
     )
     assert not any(inside_blocker(point) for point in samples)
 
@@ -1769,7 +1791,8 @@ def test_graph_measure_routes_to_synthetic_in_anchor(monkeypatch):
     path, label_anchor = dict(graph._layout.wire_geometry)["wire"]
     expected_path = (
         f"M {x0:g},{y0:g} L {x0:g},{src_layer_bottom:g} "
-        f"C {x0:g},{my1:g} {x1:g},{my2:g} {x1:g},{y1 - 3:g}"
+        f"C {x0:g},{my1:g} {x1:g},{my1:g} {x1:g},{my2:g} "
+        f"L {x1:g},{y1 - 3:g}"
     )
     assert path == expected_path
     assert label_anchor == (x1, y1 - 13)
@@ -2327,7 +2350,7 @@ def test_metric_tree_driver_fixture_has_exact_layout_wires_labels_nubs_and_deter
         assert index == str(expected_index)
         match = re.fullmatch(
             r"M ([^,]+),([^ ]+) L ([^,]+),([^ ]+) C ([^,]+),([^ ]+) "
-            r"([^,]+),([^ ]+) ([^,]+),([^ ]+)",
+            r"([^,]+),([^ ]+) ([^,]+),([^ ]+) L ([^,]+),([^ ]+)",
             path_d,
         )
         assert match is not None
@@ -2343,7 +2366,7 @@ def test_metric_tree_driver_fixture_has_exact_layout_wires_labels_nubs_and_deter
         my1 = src_layer_bottom + graph.layer_gap / 2
         my2 = dst_top - graph.layer_gap / 2
         assert coordinates == pytest.approx(
-            (x0, y0, x0, src_layer_bottom, x0, my1, x1, my2, x1, y1 - 3)
+            (x0, y0, x0, src_layer_bottom, x0, my1, x1, my1, x1, my2, x1, y1 - 3)
         )
     # Construction-level determinism: a FRESH fixture build yields identical HTML.
     assert html == _driver_tree_fixture().as_raw_html()
