@@ -39,6 +39,7 @@ def _fixture(
     chrome: CardChrome = DEFAULT_CHROME,
     events: tuple[TimelineEvent, ...] | None = None,
     caption: str | None = None,
+    strip_title: str | None = None,
 ) -> GraphReport:
     """A two-way revenue switcher (drivers x vs. region +), both exact."""
     x = (0.0, 1.0, 2.0, 3.0)
@@ -62,7 +63,15 @@ def _fixture(
             TimelineEvent(at=1.0, label="Launch", color="#4C72B0", affects=("revenue", "users")),
         )
     return DriverTree(
-        series, titles, breakouts, _FMT, x, events=events, chrome=chrome, caption=caption
+        series,
+        titles,
+        breakouts,
+        _FMT,
+        x,
+        events=events,
+        chrome=chrome,
+        caption=caption,
+        strip_title=strip_title,
     )
 
 
@@ -1503,3 +1512,43 @@ def test_a_residual_domain_stays_nondegenerate_for_a_flat_subnormal_series():
     assert _residual_domain([0.0] * 4) == (-0.1, 0.1)
     normal_lo, normal_hi = _residual_domain([3.0] * 4)
     assert (normal_lo, normal_hi) == (2.7, 3.3)
+
+
+def test_a_report_with_no_events_has_no_strip():
+    # The strip indexes events against the cards. With no events and no title
+    # it would be a bare axis restating the x range every card already draws,
+    # so it is omitted rather than reserving header space for nothing.
+    report = _fixture(events=())
+    assert report.measure().graph_top == 0
+    assert report.header == ()
+
+
+def test_the_strip_carries_no_wording_of_its_own():
+    # The strip's contents are the caller's events -- deploys, holidays,
+    # experiments -- so this module ships no heading that could misdescribe
+    # them. Guard the shape of the claim, not one retired sentence: no prose
+    # appears above the spine unless a caller asked for it.
+    html = _fixture().as_raw_html()
+    assert "Timeline" not in html
+    assert "releases" not in html
+    assert "campaigns" not in html
+    assert "incidents" not in html
+
+
+def test_a_supplied_strip_title_renders_verbatim():
+    title = "Deploys and incidents, Q3"
+    html = _fixture(strip_title=title).as_raw_html()
+    assert title in html
+
+
+def test_a_strip_title_earns_a_strip_even_with_no_events():
+    # A caller who names the strip has asked for it; honour that over the
+    # empty-events shortcut.
+    report = _fixture(events=(), strip_title="Release windows")
+    assert report.measure().graph_top > 0
+    assert "Release windows" in report.as_raw_html()
+
+
+def test_strip_title_must_be_a_str_or_none():
+    with pytest.raises(SpecError, match="strip_title must be a str or None"):
+        _fixture(strip_title=123)  # ty: ignore[invalid-argument-type]

@@ -663,6 +663,10 @@ claims, that wording is yours to choose — for example
 change, not causal impact."` `events` fan out to every card named in their
 `affects` tuple, both as sparkline markers and as captions, and the
 report's header is a timeline strip indexing them across the whole canvas.
+That strip appears only when there is something to index: with no events it
+is omitted rather than drawing a bare axis, and it carries no heading of its
+own — pass `strip_title=` if you want one, since only you know whether your
+events are deploys, holidays, or experiments.
 
 **Switchers can nest.** Every level of the tree may carry its own switcher at
 the same time — revenue by drivers or region, and within drivers, active users

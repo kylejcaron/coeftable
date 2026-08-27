@@ -285,7 +285,7 @@ def timeline_strip(
     width: int,
     theme: Theme,
     height: int = 96,
-    title: str = "Timeline \u2014 releases, campaigns, incidents",
+    title: str | None = None,
 ) -> InlineSvg:
     """Render a full-width strip indexing every event over `x_domain`.
 
@@ -294,7 +294,12 @@ def timeline_strip(
     label height down to an `r=3.5` dot on the spine. Labels alternate
     between two heights by event index to reduce collisions, and carry a
     `theme.surface` stroke halo so they stay legible over the spine and
-    ticks. `title` renders as a caption at the top.
+    ticks.
+
+    `title` renders as a caption at the top and defaults to `None`, which
+    renders no caption at all. The strip carries whatever the caller's events
+    happen to be -- deploys, holidays, experiments -- so any wording this
+    module chose would misdescribe someone's data.
 
     Projects `at` to pixels with `coeftable.svg`'s own inset convention, so a
     marker on a card sparkline and a pin here agree. Raises `SpecError`
@@ -307,16 +312,21 @@ def timeline_strip(
     project = _projector((low, high), width, _INSET)
     spine_y = height - _SPINE_MARGIN
 
-    # The title starts at the left inset, so its budget is everything up to the
-    # opposite inset. A long custom title would otherwise paint past the
-    # declared width, which breaks the exact-measurement guarantee.
-    title_text = _clip_label(title, max(width - 2 * _INSET, 0.0), _TITLE_FONT_SIZE)
-    parts = [
-        f'<text x="{_INSET:.2f}" y="{_TITLE_Y:.2f}" fill="{_esc(theme.text)}" '
-        f'font-size="{_TITLE_FONT_SIZE}" font-weight="600">{_esc(title_text)}</text>',
+    parts = []
+    if title is not None:
+        # The title starts at the left inset, so its budget is everything up
+        # to the opposite inset. A long custom title would otherwise paint
+        # past the declared width, which breaks the exact-measurement
+        # guarantee.
+        title_text = _clip_label(title, max(width - 2 * _INSET, 0.0), _TITLE_FONT_SIZE)
+        parts.append(
+            f'<text x="{_INSET:.2f}" y="{_TITLE_Y:.2f}" fill="{_esc(theme.text)}" '
+            f'font-size="{_TITLE_FONT_SIZE}" font-weight="600">{_esc(title_text)}</text>'
+        )
+    parts.append(
         f'<line x1="{_INSET:.2f}" y1="{spine_y:.2f}" x2="{width - _INSET:.2f}" '
-        f'y2="{spine_y:.2f}" stroke="{_esc(theme.axis)}" stroke-width="1"/>',
-    ]
+        f'y2="{spine_y:.2f}" stroke="{_esc(theme.axis)}" stroke-width="1"/>'
+    )
 
     for tick in _tick_positions(low, high, width):
         x = project(float(tick))

@@ -181,6 +181,7 @@ def _validate_scalars(
     direction: object,
     chrome: object,
     caption: object,
+    strip_title: object,
 ) -> None:
     if not isinstance(series, Mapping):
         raise SpecError("DriverTree.series must be a mapping")
@@ -198,6 +199,8 @@ def _validate_scalars(
         raise SpecError("DriverTree.chrome must be a CardChrome")
     if caption is not None and not isinstance(caption, str):
         raise SpecError("DriverTree.caption must be a str or None")
+    if strip_title is not None and not isinstance(strip_title, str):
+        raise SpecError("DriverTree.strip_title must be a str or None")
 
 
 def _format_period_count(span: float) -> str:
@@ -984,6 +987,7 @@ def DriverTree(
     dom_prefix: str = "g0",
     level_fmt: Format = _LEVEL_FORMAT,
     caption: str | None = None,
+    strip_title: str | None = None,
 ) -> GraphReport:
     """Build a complete driver-tree report from level series and breakouts.
 
@@ -1021,6 +1025,14 @@ def DriverTree(
     replacement, never `str.format`, so any other brace in the string is
     left untouched rather than risking a format error).
 
+    ``strip_title`` is optional text placed above the shared event strip, and
+    likewise defaults to ``None`` -- the strip carries whatever events the
+    caller declared, so any heading this module chose would misdescribe
+    someone's data. With no events and no title the strip is omitted
+    entirely rather than reserving header space for a bare axis restating
+    the ``x`` range the cards already carry; supplying a title renders the
+    strip even with no events.
+
     Every decomposition is checked against ``coeftable.graph.honesty``'s
     identity-gap thresholds: additive shortfalls above ``RESIDUAL_WARN`` get
     an injected ``"Unattributed"`` residual card, multiplicative shortfalls
@@ -1030,7 +1042,9 @@ def DriverTree(
     raw contribution sign, so a confident-looking number backed by noisy
     data still renders muted with a ``" · ns"`` marker.
     """
-    _validate_scalars(series, titles, breakouts, fmt, level_fmt, direction, chrome, caption)
+    _validate_scalars(
+        series, titles, breakouts, fmt, level_fmt, direction, chrome, caption, strip_title
+    )
     x_values, x_domain, weeks = _prepare_x(x)
 
     breakout_map = _build_breakout_map(breakouts)
@@ -1111,7 +1125,20 @@ def DriverTree(
         layer_gap=_derive_layer_gap(wires, chrome),
     )
 
+    # With no events and no title the strip is a bare axis restating the x
+    # range the cards already carry, so it is omitted rather than reserving
+    # header space for nothing. A title alone still earns a strip: the caller
+    # asked for it.
+    if not events and strip_title is None:
+        return GraphReport(graph)
+
     # The strip is sized to the graph's own measured width, after the graph
     # exists -- it cannot be known any earlier.
-    strip = timeline_strip(events, x_domain=x_domain, width=graph.measure().width, theme=theme)
+    strip = timeline_strip(
+        events,
+        x_domain=x_domain,
+        width=graph.measure().width,
+        theme=theme,
+        title=strip_title,
+    )
     return GraphReport(graph, header=(strip,))
