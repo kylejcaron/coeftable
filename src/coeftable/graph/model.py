@@ -539,6 +539,7 @@ class _GraphLayout:
     measured: MeasuredGraph
     anchors: GraphAnchors
     wire_geometry: GraphWireGeometry
+    label_stack_depth: int = 0
 
 
 def _graph_layout_offsets(sizes: tuple[int, ...], gap: int) -> tuple[int, ...]:
@@ -684,27 +685,34 @@ def _graph_measure(
             )
         wire_rows.append((wire_index, wire.id, path, (label_anchor_x, y1 - label_offset)))
     label_anchors: dict[int, AnchorOffset] = {}
+    max_stack_depth = 0
     for _destination, indices in labeled_incoming.items():
-        stack_index = 0
-        previous_right: float | None = None
+        # Interval packing: each label takes the lowest row whose occupied
+        # intervals it does not overlap (a wide early label must not leak
+        # past a narrow neighbour onto a later one).
+        rows: list[list[tuple[float, float]]] = []
         for wire_index in sorted(indices, key=lambda item: (source_x0[item], item)):
             label_anchor_x, half_text, label_anchor_y = label_candidates[wire_index]
             left = label_anchor_x - half_text
             right = label_anchor_x + half_text
-            if previous_right is not None and left < previous_right:
-                stack_index += 1
-            else:
-                stack_index = 0
+            row = 0
+            while row < len(rows) and any(
+                left < taken_right and taken_left < right for taken_left, taken_right in rows[row]
+            ):
+                row += 1
+            if row == len(rows):
+                rows.append([])
+            rows[row].append((left, right))
+            max_stack_depth = max(max_stack_depth, row)
             label_anchors[wire_index] = (
                 label_anchor_x,
-                label_anchor_y - label_step * stack_index,
+                label_anchor_y - label_step * row,
             )
-            previous_right = right
     wire_geometry = [
         (wire_id, (path, label_anchors.get(wire_index, fallback)))
         for wire_index, wire_id, path, fallback in wire_rows
     ]
-    return _GraphLayout(footprint, tuple(anchor_offsets), tuple(wire_geometry))
+    return _GraphLayout(footprint, tuple(anchor_offsets), tuple(wire_geometry), max_stack_depth)
 
 
 @dataclass(frozen=True, slots=True)
@@ -805,20 +813,35 @@ class Graph:
             ),
         )
 
-        object.__setattr__(
-            self,
-            "_layout",
-            _graph_measure(
-                tuple(rebound_nodes),
-                slots,
-                wires,
-                collapsible=collapsible,
-                gap=self.gap,
-                layer_gap=self.layer_gap,
-                chrome=self.chrome,
-                padding=self.chrome.padding,
-            ),
+        layout = _graph_measure(
+            tuple(rebound_nodes),
+            slots,
+            wires,
+            collapsible=collapsible,
+            gap=self.gap,
+            layer_gap=self.layer_gap,
+            chrome=self.chrome,
+            padding=self.chrome.padding,
         )
+        # The ladder raises stacked labels by label_step per row; the band
+        # must fit every occupied row (SpecError still at construction).
+        label_step = self.chrome.caption_size + 4
+        ladder_extra = layout.label_stack_depth * label_step
+        if ladder_extra and self.layer_gap < labeled_layer_gap + ladder_extra:
+            raise SpecError(
+                f"Graph.layer_gap must be at least {labeled_layer_gap + ladder_extra} "
+                "to fit the stacked wire labels"
+            )
+        if (
+            ladder_extra
+            and collapsible_layers & labeled_destination_bands
+            and self.layer_gap < shared_band_gap + ladder_extra
+        ):
+            raise SpecError(
+                f"Graph.layer_gap must be at least {shared_band_gap + ladder_extra} "
+                "to fit stacked labels beside fold nubs"
+            )
+        object.__setattr__(self, "_layout", layout)
 
     def measure(self) -> MeasuredGraph:
         """Return this graph's cached exact slotted layout."""

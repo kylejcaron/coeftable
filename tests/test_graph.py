@@ -1759,7 +1759,8 @@ def test_graph_measure_clamps_spread_label_anchors_to_canvas_bounds():
     wires = tuple(
         Wire(f"wire-{index}", f"source-{index}", "target", label="label") for index in range(5)
     )
-    graph = Graph(nodes, Slotted(slots), wires=wires)
+    # Two ladder rows stack here; the band must fit them (28 + 2*15 = 58).
+    graph = Graph(nodes, Slotted(slots), wires=wires, layer_gap=58)
     half_text = len("label") * graph.chrome.caption_size * graph.chrome.data_char_width_ratio / 2
     label_anchors = tuple(dict(graph._layout.wire_geometry)[wire.id][1] for wire in wires)
     assert all(0 <= x <= graph.measure().width for x, _ in label_anchors)
