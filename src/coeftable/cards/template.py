@@ -11,15 +11,10 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from coeftable.cards.adornments import (
-    Adornment,
-    InlineSvg,
-    KeyValuePopover,
-    SelectControl,
-)
+from coeftable.cards.adornments import Adornment, KeyValuePopover, SelectControl
 from coeftable.cards.chrome import DEFAULT_CHROME, CardChrome, line_height
-from coeftable.cards.fragments import _esc, render_adornment
-from coeftable.cards.measure import MeasuredCard, Row, _est, measure_card
+from coeftable.cards.fragments import _esc, _wrap
+from coeftable.cards.measure import MeasuredCard, _est, measure_card
 from coeftable.errors import SpecError
 from coeftable.theme import DEFAULT, Theme
 
@@ -103,20 +98,3 @@ class CardTemplate:
             f"<style>details[open]>summary>.ct-card-chip{{display:none}}</style>"
             f"{body_block}</details>"
         )
-
-
-def _wrap(row: Row, theme: Theme, chrome: CardChrome) -> str:
-    """Render one exact-height row, preserving measurement-owned spacing."""
-    gap = f";margin-top:{row.gap_above}px" if row.gap_above else ""
-    svg_containment = ";line-height:0" if isinstance(row.adornment, InlineSvg) else ""
-    rendered = render_adornment(
-        row.adornment,
-        theme=theme,
-        chrome=chrome,
-    )
-    return (
-        f'<div style="height:{row.height}px;'
-        f"overflow:{'visible' if isinstance(row.adornment, KeyValuePopover) else 'hidden'};"
-        f'margin:0{gap}{svg_containment}">'
-        f"{rendered}</div>"
-    )

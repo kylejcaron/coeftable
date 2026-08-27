@@ -593,6 +593,10 @@ EXPECTED_CARD_EXPORTS = {
     "resolve_content",
     "Trend",
     "MeasuredCard",
+    "MeasuredPanel",
+    "Pane",
+    "Panel",
+    "Row",
 }
 
 ALLOWED_CARDS_IMPORT_ROOTS = {
@@ -606,7 +610,7 @@ ALLOWED_CARDS_IMPORT_ROOTS = {
 
 
 def test_cards_export_surface_is_exactly_the_promised_set():
-    assert len(coeftable.cards.__all__) == 26
+    assert len(coeftable.cards.__all__) == 30
 
     assert set(coeftable.cards.__all__) == EXPECTED_CARD_EXPORTS
     for name in EXPECTED_CARD_EXPORTS:

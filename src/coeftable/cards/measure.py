@@ -150,7 +150,7 @@ def text_line_plan(text: str, *, budget: int, max_lines: int) -> tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
-class Row:
+class RenderRow:
     """One resolved render row: the adornment to render and its exact height."""
 
     adornment: Adornment
@@ -178,7 +178,9 @@ class MeasuredCard:
     anchors: tuple[Anchor, ...]
 
 
-def _metric_row(adornment: MetricValue, usable: float, chrome: CardChrome, where: str) -> Row:
+def _metric_row(
+    adornment: MetricValue, usable: float, chrome: CardChrome, where: str
+) -> RenderRow:
     ratio = chrome.data_char_width_ratio
     value_width = _est(adornment.value, chrome.value_size, ratio)
     width = value_width
@@ -190,7 +192,7 @@ def _metric_row(adornment: MetricValue, usable: float, chrome: CardChrome, where
             f"{where}: MetricValue.{field} does not fit: estimated {width:.0f}px in "
             f"{usable:.0f}px usable; {_FIXES}"
         )
-    return Row(adornment, line_height(max(chrome.value_size, chrome.ci_size), chrome))
+    return RenderRow(adornment, line_height(max(chrome.value_size, chrome.ci_size), chrome))
 
 
 def _clip_entries2(
@@ -218,9 +220,9 @@ def resolve_rows(
     usable: int,
     chrome: CardChrome,
     section: str,
-) -> tuple[Row, ...]:
+) -> tuple[RenderRow, ...]:
     """Resolve a section's adornments into exact render rows."""
-    rows: list[Row] = []
+    rows: list[RenderRow] = []
     for index, adornment in enumerate(adornments):
         row_start = len(rows)
         where = f"{section}[{index}]"
@@ -236,7 +238,9 @@ def resolve_rows(
                 budget = _budget(usable, size, chrome.char_width_ratio)
                 for lined in text_line_plan(text, budget=budget, max_lines=max_lines):
                     rows.append(
-                        Row(replace(adornment, text=lined, max_lines=1), line_height(size, chrome))
+                        RenderRow(
+                            replace(adornment, text=lined, max_lines=1), line_height(size, chrome)
+                        )
                     )
             case MetricValue():
                 rows.append(_metric_row(adornment, usable, chrome, where))
@@ -246,12 +250,12 @@ def resolve_rows(
                         f"{where}: InlineSvg width {svg_width}px exceeds usable "
                         f"{usable}px; {_FIXES}"
                     )
-                rows.append(Row(adornment, svg_height))
+                rows.append(RenderRow(adornment, svg_height))
             case KeyValuePopover():
-                rows.append(Row(adornment, line_height(chrome.control_size, chrome)))
+                rows.append(RenderRow(adornment, line_height(chrome.control_size, chrome)))
             case SelectControl():
                 rows.append(
-                    Row(
+                    RenderRow(
                         adornment,
                         line_height(chrome.control_size, chrome) + chrome.select_padding,
                     )
@@ -263,17 +267,17 @@ def resolve_rows(
                     chrome.char_width_ratio,
                 )
                 rows.append(
-                    Row(
+                    RenderRow(
                         replace(adornment, text=_clip(text, budget)),
                         line_height(chrome.chip_size, chrome) + 2 * chrome.chip_padding_y,
                     )
                 )
             case CaptionRow():
-                rows.append(Row(adornment, line_height(chrome.caption_size, chrome)))
+                rows.append(RenderRow(adornment, line_height(chrome.caption_size, chrome)))
             case Legend(entries=entries):
                 fixed = chrome.legend_swatch + chrome.swatch_gap + chrome.chip_gap
                 rows.append(
-                    Row(
+                    RenderRow(
                         replace(adornment, entries=_clip_entries2(entries, fixed, usable, chrome)),
                         line_height(chrome.caption_size, chrome),
                     )
@@ -281,7 +285,7 @@ def resolve_rows(
             case RuleStrip(entries=entries):
                 fixed = chrome.swatch_width + chrome.swatch_gap + chrome.chip_gap
                 rows.append(
-                    Row(
+                    RenderRow(
                         replace(adornment, entries=_clip_entries3(entries, fixed, usable, chrome)),
                         line_height(chrome.caption_size, chrome),
                     )
@@ -299,7 +303,7 @@ def measure_card(
     header: tuple[Adornment, ...],
     body: tuple[Adornment, ...],
     chrome: CardChrome,
-) -> tuple[MeasuredCard, tuple[Row, ...], tuple[Row, ...], tuple[str, Role] | None]:
+) -> tuple[MeasuredCard, tuple[RenderRow, ...], tuple[RenderRow, ...], tuple[str, Role] | None]:
     """Measure one card; returns footprints plus the exact rows to render."""
     usable = width - 2 * (chrome.padding + chrome.border_width)
     if usable < 1:
@@ -309,7 +313,7 @@ def measure_card(
             f"{shell_overhead}px; width must leave at least 1px usable; {_FIXES}"
         )
     chip: tuple[str, Role] | None = None
-    header_rows: tuple[Row, ...] | None = None
+    header_rows: tuple[RenderRow, ...] | None = None
     for adornment in body:
         if isinstance(adornment, MetricValue):
             chip_width = _est(adornment.value, chrome.value_size, chrome.data_char_width_ratio)

@@ -496,6 +496,55 @@ and is omitted otherwise). A standalone card collapses to
 its header; inside a `CardGrid` each card's expanded footprint stays
 reserved, so folding never reflows neighbors.
 
+## Metric panels (experimental)
+
+`coeftable.cards` panels put named side-by-side panes in one bordered shell
+with a shared header and footer: the compositional step above cards. The API
+is experimental and may change; it is deliberately not exported from the
+top-level `coeftable` namespace yet.
+
+```python
+import coeftable as ct
+from coeftable.cards import Metric, Pane, Panel, Row, TextBlock
+
+summary = Pane(
+    "Summary",
+    content=(
+        TextBlock("Weekly revenue", variant="subtitle"),
+        Metric(3.4, ct.Percent(signed=True), ci=(1.2, 5.7), ref=0.0),
+    ),
+    width=220,
+)
+segments = Pane(
+    "Segments",
+    content=(
+        Row(
+            (
+                (TextBlock("Enterprise"), 85),
+                (Metric(8.1, ct.Percent(signed=True)), 105),
+            )
+        ),
+    ),
+    width=200,
+)
+header = Row(
+    (
+        (TextBlock("Revenue", variant="title"), 320),
+        (Metric(3.4, ct.Percent(signed=True)), 120),
+    ),
+    gap=16,
+)
+panel = Panel((summary, segments), header=(header,))
+html = panel.as_raw_html()
+```
+
+Panes declare usable content widths; cell widths are author inputs; the panel
+derives its own footprint with exact measurement, not responsive guessing.
+
+A `Panel` left as the last notebook expression renders itself via
+`_repr_html_`; `with_theme()` returns the same composition under another
+theme.
+
 ## Plot annotations
 
 `ct.Rule` draws a line and `ct.Band` shades an interval in a forest plot or
