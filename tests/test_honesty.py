@@ -120,6 +120,42 @@ def test_weekly_log_changes_stay_finite_across_wildly_different_magnitudes():
     )
 
 
+def _geometric(magnitude: float, ratio: float, n: int) -> tuple[float, ...]:
+    values = [magnitude]
+    for _ in range(n - 1):
+        values.append(values[-1] * ratio)
+    return tuple(values)
+
+
+def test_weekly_log_changes_are_exactly_constant_for_a_clean_geometric_series():
+    series = _geometric(100.0, 1.08, 8)
+    changes = weekly_log_changes(series)
+    assert len(set(changes)) == 1
+
+
+def test_tradeoff_pairs_treats_a_pair_of_geometric_siblings_as_steady():
+    # Subtracting independently rounded logs can leave ~1e-16 noise across an
+    # exactly constant-ratio series' changes; an exact zero-variance check
+    # would mistake that noise for real movement and correlate it into a
+    # spurious trade-off. Probe several ratios and starting magnitudes since
+    # the defect is data-dependent - it doesn't show up for every input.
+    ratios = (1.02, 1.08, 1.2, 0.9, 0.75, 3.3, 1.1, 0.5)
+    magnitudes = (1e-4, 1.0, 50.0, 100.0, 1e6)
+    for ratio in ratios:
+        for magnitude in magnitudes:
+            first = _geometric(magnitude, ratio, 10)
+            second = _geometric(magnitude * 3.0, ratio, 10)
+            assert tradeoff_pairs((("first", first), ("second", second))) == ()
+
+
+def test_endpoint_interval_refuses_a_percentage_that_would_be_infinite():
+    # The total log change (~1382) is finite, but exp() of it overflows
+    # before it can become a percentage; before log ratios were made
+    # overflow-safe this silently returned an infinite bound instead.
+    with pytest.raises(SpecError, match="orders of magnitude"):
+        endpoint_interval((1e-300, 1.0, 1e300))
+
+
 def test_tradeoff_pairs_excludes_a_pair_exactly_at_the_threshold():
     # Correlation is scale-invariant: these two series' weekly log changes are
     # proportional to (1, 0, -1) and (-1, 1, 0), whose correlation is exactly

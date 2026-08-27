@@ -29,17 +29,56 @@ def _levels(series: Sequence[float], *, name: str) -> tuple[float, ...]:
     return values
 
 
+def _log_ratio(numerator: float, denominator: float) -> float:
+    """Log of numerator/denominator, preferring the direct quotient.
+
+    Subtracting two independently rounded logarithms introduces float noise
+    on the order of 1e-16 even when the true ratio is exactly constant
+    across a series - enough to make a perfectly steady series look like it
+    has real variance. The direct quotient avoids that in the common case;
+    fall back to subtracting logs only when the quotient itself would
+    overflow to infinity or underflow to zero, which is what the extreme-
+    magnitude case (e.g. 1e-300 over 1e300) needs to stay finite.
+    """
+    ratio = numerator / denominator
+    if ratio > 0.0 and math.isfinite(ratio):
+        return math.log(ratio)
+    return math.log(numerator) - math.log(denominator)
+
+
 def weekly_log_changes(series: Sequence[float]) -> tuple[float, ...]:
     """Successive log ratios, the scale on which multiplicative noise is additive."""
     values = _levels(series, name="series")
-    return tuple(
-        math.log(values[index + 1]) - math.log(values[index]) for index in range(len(values) - 1)
-    )
+    return tuple(_log_ratio(values[index + 1], values[index]) for index in range(len(values) - 1))
 
 
 def level_noise(series: Sequence[float]) -> float:
     """Per-level noise: a change's deviation spans two levels, hence the sqrt(2)."""
     return statistics.stdev(weekly_log_changes(series)) / math.sqrt(2.0)
+
+
+def _guarded_exp(exponent: float, *, purpose: str) -> float:
+    """exp(), refusing to silently overflow into infinity.
+
+    Validation only rejects non-finite levels, so `exponent` reaching here is
+    always finite - but exp() of a large-magnitude log change or noise band
+    can overflow float range before it becomes a percentage or a ribbon
+    factor. Before log ratios were made overflow-safe, that overflow became
+    an infinite quotient and callers silently returned infinite bounds; an
+    infinite answer isn't useful for a report, so refuse explicitly instead.
+    """
+    try:
+        return math.exp(exponent)
+    except OverflowError as exc:
+        raise SpecError(
+            f"a log magnitude of {exponent!r} spans too many orders of magnitude "
+            f"to express as {purpose}"
+        ) from exc
+
+
+def _percent(log_change: float) -> float:
+    """Convert a log change to a percentage, refusing an infinite answer."""
+    return 100.0 * (_guarded_exp(log_change, purpose="a percentage change") - 1.0)
 
 
 def endpoint_interval(series: Sequence[float]) -> tuple[float, float, float]:
@@ -51,11 +90,11 @@ def endpoint_interval(series: Sequence[float]) -> tuple[float, float, float]:
     values = _levels(series, name="series")
     changes = weekly_log_changes(values)
     band = 2.0 * statistics.stdev(changes)
-    total = math.log(values[-1]) - math.log(values[0])
+    total = _log_ratio(values[-1], values[0])
     return (
-        100.0 * (math.exp(total) - 1.0),
-        100.0 * (math.exp(total - band) - 1.0),
-        100.0 * (math.exp(total + band) - 1.0),
+        _percent(total),
+        _percent(total - band),
+        _percent(total + band),
     )
 
 
@@ -65,7 +104,7 @@ def ribbon_bounds(
     """Multiplicative +/-2 sigma bounds around each observed level."""
     values = _levels(series, name="series")
     sigma = level_noise(values)
-    factor = math.exp(2.0 * sigma)
+    factor = _guarded_exp(2.0 * sigma, purpose="a +/-2 sigma ribbon")
     return (
         tuple(value / factor for value in values),
         tuple(value * factor for value in values),
@@ -117,6 +156,25 @@ def identity_gap(parent: Sequence[float], children: Sequence[Sequence[float]], o
     ) / len(values)
 
 
+def _is_effectively_constant(values: Sequence[float]) -> bool:
+    """Report whether a change series has no real variation, only rounding noise.
+
+    An exact `len(set(values)) == 1` check is wrong here: even with the
+    overflow-safe quotient in `_log_ratio`, floating-point division and
+    logarithms are not perfectly associative, so a genuinely constant-ratio
+    series can still produce a handful of changes that differ by ~1e-16.
+    Comparing the spread of the changes to their magnitude - rather than to
+    a fixed absolute epsilon - treats that float-epsilon-scale noise as "no
+    variation" regardless of whether the series' changes are large or tiny,
+    while any variation of a real size still counts.
+    """
+    spread = max(values) - min(values)
+    scale = max(abs(value) for value in values)
+    if scale == 0.0:
+        return spread == 0.0
+    return spread <= 1e-9 * scale
+
+
 def tradeoff_pairs(
     named: Sequence[tuple[str, Sequence[float]]],
 ) -> tuple[tuple[str, str, float], ...]:
@@ -124,15 +182,16 @@ def tradeoff_pairs(
 
     Correlating changes rather than levels is deliberate: two rising series are
     trivially correlated in level while their movements may be unrelated. A
-    perfectly steady sibling has zero variance in its changes; statistics.correlation
-    is undefined for it, so it is skipped rather than treated as an error - every
-    other pair is still evaluated normally.
+    perfectly steady sibling has (up to float noise) zero variance in its
+    changes; statistics.correlation is undefined for it, so it is skipped
+    rather than treated as an error - every other pair is still evaluated
+    normally.
     """
     all_changes = [(name, weekly_log_changes(series)) for name, series in named]
     changes = [
         (name, series_changes)
         for name, series_changes in all_changes
-        if len(set(series_changes)) > 1
+        if not _is_effectively_constant(series_changes)
     ]
     found: list[tuple[str, str, float]] = []
     for index, (left_name, left) in enumerate(changes):
