@@ -100,6 +100,40 @@ def test_tradeoff_pairs_flag_only_strongly_negative_change_correlation():
     assert ("a", "c") not in names
 
 
+def test_tradeoff_pairs_skips_a_steady_sibling_instead_of_erroring():
+    steady = (100.0, 100.0, 100.0, 100.0)
+    rising = (100.0, 110.0, 121.0, 133.0)
+    # Exact reciprocal of `rising`, so its correlation with `rising` is -1.0.
+    falling = tuple(10000.0 / value for value in rising)
+    pairs = tradeoff_pairs((("steady", steady), ("a", rising), ("b", falling)))
+    names = {(x, y) for x, y, _ in pairs}
+    assert ("a", "b") in names
+    assert all("steady" not in pair for pair in names)
+
+
+def test_weekly_log_changes_stay_finite_across_wildly_different_magnitudes():
+    series = (1e-300, 1e300, 1e-300)
+    changes = weekly_log_changes(series)
+    assert all(math.isfinite(change) for change in changes)
+    assert changes == pytest.approx(
+        (math.log(1e300) - math.log(1e-300), math.log(1e-300) - math.log(1e300))
+    )
+
+
+def test_tradeoff_pairs_excludes_a_pair_exactly_at_the_threshold():
+    # Correlation is scale-invariant: these two series' weekly log changes are
+    # proportional to (1, 0, -1) and (-1, 1, 0), whose correlation is exactly
+    # -0.5 - right at TRADEOFF_R, which must NOT count as "strongly negative".
+    e = math.e
+    first = (100.0, 100.0 * e, 100.0 * e, 100.0)
+    second = (100.0, 100.0 / e, 100.0, 100.0)
+    import statistics
+
+    correlation = statistics.correlation(weekly_log_changes(first), weekly_log_changes(second))
+    assert correlation == pytest.approx(TRADEOFF_R)
+    assert tradeoff_pairs((("first", first), ("second", second))) == ()
+
+
 def test_tradeoff_threshold_is_strict():
     assert TRADEOFF_R == -0.5
 
