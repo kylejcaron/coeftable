@@ -72,6 +72,16 @@ from coeftable.theme import DEFAULT, Direction
             "StateRule.when_all must not contain duplicates",
         ),
         (
+            lambda: StateRule(
+                (
+                    Atom(ControlRef("card", "select"), "option_checked", "yes"),
+                    Atom(ControlRef("card", "select"), "option_checked", "no"),
+                ),
+                hide_cards=("x",),
+            ),
+            "StateRule.when_all must not contain conflicting options for the same control",
+        ),
+        (
             lambda: StateRule((Atom(ControlRef("card"), "checked"),), hide_cards=("",)),
             "StateRule.hide_cards[0] must be a non-empty str",
         ),
@@ -1057,14 +1067,11 @@ def test_shared_slot_controller_cannot_be_hidden_by_a_rule():
         ),
         (
             StateRule(
-                (
-                    Atom(ControlRef("controller", "mode"), "option_checked", "left"),
-                    Atom(ControlRef("controller", "mode"), "option_checked", "right"),
-                ),
+                (Atom(ControlRef("controller", "mode"), "option_checked", "left"),),
                 hide_cards=("right",),
             ),
             StateRule(
-                (Atom(ControlRef("controller", "mode"), "option_checked", "right"),),
+                (Atom(ControlRef("controller", "mode"), "option_checked", "left"),),
                 hide_cards=("left",),
             ),
         ),
@@ -1396,9 +1403,13 @@ def test_graph_renderer_uses_cached_anchor_and_vertical_route_geometry():
     y0 = source_top + source_out[1]
     x1 = target_left + target_in[0]
     y1 = target_top + target_in[1]
-    my1 = source_top + source_height + graph.layer_gap / 2
+    src_layer_bottom = source_top + source_height
+    my1 = src_layer_bottom + graph.layer_gap / 2
     my2 = target_top - graph.layer_gap / 2
-    expected_path = f"M {x0:g},{y0:g} C {x0:g},{my1:g} {x1:g},{my2:g} {x1:g},{y1 - 3:g}"
+    expected_path = (
+        f"M {x0:g},{y0:g} L {x0:g},{src_layer_bottom:g} "
+        f"C {x0:g},{my1:g} {x1:g},{my2:g} {x1:g},{y1 - 3:g}"
+    )
     expected_geometry = (("wire", (expected_path, (x1, y1 - 13))),)
     assert layout.wire_geometry == expected_geometry
     expected = f'd="{expected_path}"'
@@ -1441,21 +1452,137 @@ def test_graph_measure_swings_skip_layer_wire_through_column_corridor():
     target_in = anchors["c"][0]
     x0, y0 = source_left + source_out[0], source_top + source_out[1]
     x1, y1 = target_left + target_in[0], target_top + target_in[1]
-    my1 = source_top + source_height + graph.layer_gap / 2
+    src_layer_bottom = source_top + source_height
+    my1 = src_layer_bottom + graph.layer_gap / 2
     my2 = target_top - graph.layer_gap / 2
     source_column_right = max(boxes[card_id][0] + boxes[card_id][2] for card_id in ("r", "a", "c"))
-    xg = source_column_right + graph.gap / 2
+    xg = max(2, min(graph.measure().width - 2, source_column_right + graph.gap / 2))
 
     path, _label_anchor = dict(graph._layout.wire_geometry)["r-c"]
     y_a = my1 + graph.layer_gap / 2
     y_b = my2 - graph.layer_gap / 2
     expected_path = (
-        f"M {x0:g},{y0:g} C {x0:g},{my1:g} {xg:g},{my1:g} {xg:g},{y_a:g} "
+        f"M {x0:g},{y0:g} L {x0:g},{src_layer_bottom:g} "
+        f"C {x0:g},{my1:g} {xg:g},{my1:g} {xg:g},{y_a:g} "
         f"L {xg:g},{y_b:g} C {xg:g},{my2:g} {x1:g},{my2:g} {x1:g},{y1 - 3:g}"
     )
     assert path == expected_path
     assert xg != x0
     assert xg != x1
+
+
+def test_graph_measure_adjacent_route_exits_source_layer_before_bending():
+    graph = Graph(
+        nodes=(
+            ("source", Card("Source")),
+            (
+                "sibling",
+                Card(
+                    "Sibling",
+                    content=(TextBlock("one"), TextBlock("two"), TextBlock("three")),
+                ),
+            ),
+            ("target", Card("Target")),
+        ),
+        layout=Slotted(
+            (
+                Slot("source", 0, 0),
+                Slot("sibling", 0, 1),
+                Slot("target", 1, 2),
+            )
+        ),
+        wires=(Wire("wire", "source", "target"),),
+        gap=20,
+        layer_gap=40,
+    )
+    boxes = dict(graph.measure().boxes)
+    source_left, source_top, _source_width, source_height = boxes["source"]
+    sibling_left, sibling_top, sibling_width, sibling_height = boxes["sibling"]
+    target_left, target_top, _target_width, _target_height = boxes["target"]
+    assert sibling_height > source_height
+    anchors = dict(graph._layout.anchors)
+    source_out = anchors["source"][1]
+    target_in = anchors["target"][0]
+    x0, y0 = source_left + source_out[0], source_top + source_out[1]
+    x1, y1 = target_left + target_in[0], target_top + target_in[1]
+    values = tuple(
+        float(value)
+        for value in re.findall(r"-?\d+(?:\.\d+)?", dict(graph._layout.wire_geometry)["wire"][0])
+    )
+    assert len(values) == 10
+    (
+        path_x0,
+        path_y0,
+        lead_x,
+        lead_y,
+        control_x0,
+        control_y1,
+        control_x1,
+        control_y2,
+        end_x,
+        end_y,
+    ) = values
+    assert (path_x0, path_y0, lead_x, lead_y) == (
+        x0,
+        y0,
+        x0,
+        sibling_top + sibling_height,
+    )
+    assert (control_x0, control_y1, end_x, end_y) == (x0, control_y1, x1, y1 - 3)
+
+    def cubic(start, control_a, control_b, end, t):
+        u = 1 - t
+        return (
+            u**3 * start[0]
+            + 3 * u**2 * t * control_a[0]
+            + 3 * u * t**2 * control_b[0]
+            + t**3 * end[0],
+            u**3 * start[1]
+            + 3 * u**2 * t * control_a[1]
+            + 3 * u * t**2 * control_b[1]
+            + t**3 * end[1],
+        )
+
+    def inside_sibling(point):
+        x, y = point
+        return (
+            sibling_left <= x <= sibling_left + sibling_width
+            and sibling_top <= y <= sibling_top + sibling_height
+        )
+
+    samples = [(lead_x, path_y0 + t * (lead_y - path_y0)) for t in (0.1, 0.25, 0.5, 0.75, 0.9)]
+    samples.extend(
+        cubic(
+            (lead_x, lead_y),
+            (control_x0, control_y1),
+            (control_x1, control_y2),
+            (end_x, end_y),
+            t,
+        )
+        for t in (0.1, 0.25, 0.5, 0.75, 0.9)
+    )
+    assert not any(inside_sibling(point) for point in samples)
+
+
+def test_graph_measure_skip_corridor_stays_on_canvas_in_single_column():
+    graph = Graph(
+        nodes=(
+            ("source", Card("Source")),
+            ("middle", Card("Middle")),
+            ("target", Card("Target")),
+        ),
+        layout=Slotted(
+            (
+                Slot("source", 0, 0),
+                Slot("middle", 1, 0),
+                Slot("target", 2, 0),
+            )
+        ),
+        wires=(Wire("wire", "source", "target"),),
+    )
+    path = dict(graph._layout.wire_geometry)["wire"][0]
+    xs = tuple(float(value) for value in re.findall(r"-?\d+(?:\.\d+)?", path)[::2])
+    assert all(0 <= x <= graph.measure().width for x in xs)
 
 
 def test_graph_measure_skip_layer_route_samples_stay_outside_intervening_card():
@@ -1484,7 +1611,8 @@ def test_graph_measure_skip_layer_route_samples_stay_outside_intervening_card():
     target_in = anchors["target"][0]
     x0, y0 = source_left + source_out[0], source_top + source_out[1]
     x1, y1 = target_left + target_in[0], target_top + target_in[1]
-    my1 = source_top + source_height + graph.layer_gap / 2
+    src_layer_bottom = source_top + source_height
+    my1 = src_layer_bottom + graph.layer_gap / 2
     my2 = target_top - graph.layer_gap / 2
     blocker_left, blocker_top, blocker_width, blocker_height = boxes["blocker"]
 
@@ -1517,10 +1645,12 @@ def test_graph_measure_skip_layer_route_samples_stay_outside_intervening_card():
         float(value)
         for value in re.findall(r"-?\d+(?:\.\d+)?", dict(graph._layout.wire_geometry)["wire"][0])
     )
-    assert len(values) == 16
+    assert len(values) == 18
     (
         path_x0,
         path_y0,
+        lead_x,
+        lead_y,
         control_x0,
         control_y1,
         control_x1,
@@ -1537,16 +1667,18 @@ def test_graph_measure_skip_layer_route_samples_stay_outside_intervening_card():
         end_y,
     ) = values
     assert (path_x0, path_y0) == (x0, y0)
-    samples = [
+    assert (lead_x, lead_y) == (x0, src_layer_bottom)
+    samples = [(path_x0, path_y0 + t * (lead_y - path_y0)) for t in (0.0, 0.25, 0.5, 0.75, 1.0)]
+    samples.extend(
         cubic(
-            (path_x0, path_y0),
+            (lead_x, lead_y),
             (control_x0, control_y1),
             (control_x1, control_y2),
             (first_end_x, first_end_y),
             t,
         )
         for t in (0.25, 0.5, 0.75)
-    ]
+    )
     samples.extend(
         (
             first_end_x + t * (line_x - first_end_x),
@@ -1591,10 +1723,14 @@ def test_graph_measure_routes_to_synthetic_in_anchor(monkeypatch):
     target_left, target_top, _target_width, _target_height = boxes["target"]
     x0, y0 = source_left + source_out[0], source_top + source_out[1]
     x1, y1 = target_left + 10, target_top + 5
-    my1 = source_top + source_height + graph.layer_gap / 2
+    src_layer_bottom = source_top + source_height
+    my1 = src_layer_bottom + graph.layer_gap / 2
     my2 = target_top - graph.layer_gap / 2
     path, label_anchor = dict(graph._layout.wire_geometry)["wire"]
-    expected_path = f"M {x0:g},{y0:g} C {x0:g},{my1:g} {x1:g},{my2:g} {x1:g},{y1 - 3:g}"
+    expected_path = (
+        f"M {x0:g},{y0:g} L {x0:g},{src_layer_bottom:g} "
+        f"C {x0:g},{my1:g} {x1:g},{my2:g} {x1:g},{y1 - 3:g}"
+    )
     assert path == expected_path
     assert label_anchor == (x1, y1 - 13)
     assert f'd="{expected_path}"' in graph.as_raw_html()
@@ -2136,7 +2272,8 @@ def test_metric_tree_driver_fixture_has_exact_layout_wires_labels_nubs_and_deter
     ):
         assert index == str(expected_index)
         match = re.fullmatch(
-            r"M ([^,]+),([^ ]+) C ([^,]+),([^ ]+) ([^,]+),([^ ]+) ([^,]+),([^ ]+)",
+            r"M ([^,]+),([^ ]+) L ([^,]+),([^ ]+) C ([^,]+),([^ ]+) "
+            r"([^,]+),([^ ]+) ([^,]+),([^ ]+)",
             path_d,
         )
         assert match is not None
@@ -2148,9 +2285,12 @@ def test_metric_tree_driver_fixture_has_exact_layout_wires_labels_nubs_and_deter
         x0, y0 = src_left + out_x, src_top + out_y
         x1, y1 = dst_left + in_x, dst_top + in_y
         src_layer = slot_by_id[wire.src].layer
-        my1 = src_top + layer_heights[src_layer] + graph.layer_gap / 2
+        src_layer_bottom = src_top + layer_heights[src_layer]
+        my1 = src_layer_bottom + graph.layer_gap / 2
         my2 = dst_top - graph.layer_gap / 2
-        assert coordinates == pytest.approx((x0, y0, x0, my1, x1, my2, x1, y1 - 3))
+        assert coordinates == pytest.approx(
+            (x0, y0, x0, src_layer_bottom, x0, my1, x1, my2, x1, y1 - 3)
+        )
     # Construction-level determinism: a FRESH fixture build yields identical HTML.
     assert html == _driver_tree_fixture().as_raw_html()
 

@@ -93,11 +93,22 @@ class StateRule:
         when_all = _canonical(self.when_all, name="StateRule.when_all")
         if not when_all:
             raise SpecError("StateRule.when_all must not be empty")
+        atoms: list[Atom] = []
         for index, atom in enumerate(when_all):
             if not isinstance(atom, Atom):
                 raise SpecError(f"StateRule.when_all[{index}] must be an Atom")
+            atoms.append(atom)
         if len(set(when_all)) != len(when_all):
             raise SpecError("StateRule.when_all must not contain duplicates")
+        option_by_control: dict[ControlRef, str] = {}
+        for atom in atoms:
+            if atom.predicate != "option_checked" or atom.option is None:
+                continue
+            previous = option_by_control.setdefault(atom.control, atom.option)
+            if previous != atom.option:
+                raise SpecError(
+                    "StateRule.when_all must not contain conflicting options for the same control"
+                )
 
         hide_cards = _canonical(self.hide_cards, name="StateRule.hide_cards")
         hide_wires = _canonical(self.hide_wires, name="StateRule.hide_wires")
@@ -623,14 +634,18 @@ def _graph_measure(
                 xg = padding + column_offsets[src_slot.slot] - gap / 2
             y_a = my1 + layer_gap / 2
             y_b = my2 - layer_gap / 2
+            xg = max(2, min(footprint.width - 2, xg))
             path = (
-                f"M {x0:g},{y0:g} "
+                f"M {x0:g},{y0:g} L {x0:g},{src_layer_bottom:g} "
                 f"C {x0:g},{my1:g} {xg:g},{my1:g} {xg:g},{y_a:g} "
                 f"L {xg:g},{y_b:g} "
                 f"C {xg:g},{my2:g} {x1:g},{my2:g} {x1:g},{y1 - 3:g}"
             )
         else:
-            path = f"M {x0:g},{y0:g} C {x0:g},{my1:g} {x1:g},{my2:g} {x1:g},{y1 - 3:g}"
+            path = (
+                f"M {x0:g},{y0:g} L {x0:g},{src_layer_bottom:g} "
+                f"C {x0:g},{my1:g} {x1:g},{my2:g} {x1:g},{y1 - 3:g}"
+            )
         if wire.label is None:
             spread = 0
         else:
