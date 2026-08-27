@@ -19,7 +19,7 @@ from typing import cast
 from coeftable.annotations import Dash
 from coeftable.cards import Event, InlineSvg
 from coeftable.errors import SpecError
-from coeftable.svg import _CHAR_WIDTH_RATIO, _clip_label, _projector
+from coeftable.svg import _CHAR_WIDTH_RATIO, _MIN_LABEL_GAP, _clip_label, _projector
 from coeftable.theme import Theme
 
 _DASHES = ("solid", "dashed", "dotted")
@@ -35,6 +35,16 @@ _TICK_LABEL_OFFSET = 14.0
 _TICK_FONT_SIZE = 9
 _CIRCLE_R = 3.5
 _LABEL_FONT_SIZE = 10.0
+
+# Human-readable stride ladder for tick spacing -- the same "1-2-5"
+# convention `coeftable.svg.nice_ticks` uses for plot axes, kept to whole
+# numbers since tick positions here are integer week indices.
+_TICK_STRIDE_STEPS = (1.0, 2.0, 5.0)
+
+# Hard ceiling on rendered ticks, independent of the width-aware stride
+# below: a very large `width` could otherwise still ask for more ticks than
+# are worth rendering, so no accepted input can produce unbounded output.
+_TICK_MAX_COUNT = 50
 
 # Half of the event label's stroke-width halo (`stroke-width="3"`), which
 # paints outside the glyphs' own outline on every side. Kept clear of both
@@ -184,6 +194,79 @@ def _label_anchor_and_text(x: float, label: str, width: int) -> tuple[str, str]:
     return anchor, _clip_label(label, max(budget, 0.0), _LABEL_FONT_SIZE)
 
 
+def _min_tick_gap(low: float, high: float, width: int) -> float:
+    """Minimum domain-unit spacing between adjacent ticks that keeps their labels apart.
+
+    Derived from the pixel width the widest label in the domain needs at
+    `_TICK_FONT_SIZE` -- using the widest label in the domain, since week
+    indices only grow, so it is always the last tick's -- converted to
+    domain units via the strip's pixels-per-unit.
+
+    The budget is 1.5x the label width rather than 1x: the first and last
+    ticks anchor inward (`text-anchor="start"`/`"end"`) instead of
+    centring, so their box extends a full label width to one side instead
+    of half a label width each way. A boundary-adjacent pair therefore
+    needs `0.5 * width + 1.0 * width` of clearance, not `width`.
+    """
+    span = high - low
+    if span <= 0:
+        return 0.0
+    plot_width = max(width - 2 * _INSET, 1.0)
+    widest_label = f"W{math.floor(high) + 1}"
+    label_width = len(widest_label) * _TICK_FONT_SIZE * _CHAR_WIDTH_RATIO
+    min_gap_px = 1.5 * label_width + _MIN_LABEL_GAP
+    return min_gap_px * span / plot_width
+
+
+def _tick_stride(low: float, high: float, width: int) -> int:
+    """Choose an integer week stride so tick labels neither overlap nor exceed the hard cap.
+
+    Rounds `_min_tick_gap` up to a human-readable step (1, 2, 5, 10, 20,
+    50, ...) -- the same "1-2-5" ladder `coeftable.svg.nice_ticks` uses for
+    plot axes -- instead of an arbitrary divisor, so strides read
+    naturally. `_TICK_MAX_COUNT` bounds the count regardless, since a wide
+    enough strip could otherwise still want more ticks than are worth
+    rendering.
+    """
+    span = high - low
+    if span <= 0:
+        return 1
+    min_stride = max(_min_tick_gap(low, high, width), span / (_TICK_MAX_COUNT - 1), 1e-9)
+    magnitude = 10.0 ** math.floor(math.log10(min_stride))
+    stride = next(
+        (step * magnitude for step in _TICK_STRIDE_STEPS if min_stride <= step * magnitude),
+        10.0 * magnitude,
+    )
+    return max(math.ceil(stride), 1)
+
+
+def _tick_positions(low: float, high: float, width: int) -> list[int]:
+    """Integer tick positions across `[low, high]`, strided to avoid overlap and unbounded output.
+
+    Always keeps the first and last integer in range so boundary ticks stay
+    anchored and clipped the way they already are. When the stride doesn't
+    divide the span evenly, the regular grid's final tick can land closer
+    to the forced last tick than `_min_tick_gap` allows -- appending both
+    would overlap, so that near-boundary regular tick is replaced by the
+    endpoint instead of drawn alongside it. The mandatory first tick is
+    never dropped this way, even on a domain too narrow to keep both ends
+    apart -- the same case the pre-existing anchor-and-clip handling
+    already accepts.
+    """
+    start, end = math.ceil(low), math.floor(high)
+    if end < start:
+        return []
+    stride = _tick_stride(low, high, width)
+    ticks = list(range(start, end, stride))
+    if not ticks:
+        return [end]
+    if len(ticks) > 1 and end - ticks[-1] < _min_tick_gap(low, high, width):
+        ticks[-1] = end
+    elif ticks[-1] != end:
+        ticks.append(end)
+    return ticks
+
+
 def timeline_strip(
     events: Sequence[TimelineEvent],
     *,
@@ -195,7 +278,7 @@ def timeline_strip(
 ) -> InlineSvg:
     """Render a full-width strip indexing every event over `x_domain`.
 
-    Draws a horizontal spine with one tick per integer step across
+    Draws a horizontal spine with a width-aware tick stride across
     `x_domain`, and per event a colour-matched dashed stem from a staggered
     label height down to an `r=3.5` dot on the spine. Labels alternate
     between two heights by event index to reduce collisions, and carry a
@@ -224,7 +307,7 @@ def timeline_strip(
         f'y2="{spine_y:.2f}" stroke="{_esc(theme.axis)}" stroke-width="1"/>',
     ]
 
-    for tick in range(math.ceil(low), math.floor(high) + 1):
+    for tick in _tick_positions(low, high, width):
         x = project(float(tick))
         parts.append(
             f'<line x1="{x:.2f}" y1="{spine_y:.2f}" x2="{x:.2f}" '

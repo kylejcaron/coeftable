@@ -1,4 +1,5 @@
 import html
+import itertools
 import re
 
 import pytest
@@ -13,6 +14,7 @@ from coeftable.graph.timeline import (
     _MIN_HEIGHT,
     _MIN_WIDTH,
     _TICK_FONT_SIZE,
+    _TICK_MAX_COUNT,
     _TITLE_FONT_SIZE,
     TimelineEvent,
     _clip_label,
@@ -308,3 +310,37 @@ def test_strip_clips_anchored_tick_labels_on_a_narrow_strip():
         }[anchor]
         assert low >= -0.5
         assert high <= width + 0.5
+
+
+def test_strip_bounds_tick_count_and_avoids_overlap_on_a_wide_domain():
+    # A domain spanning tens of thousands of steps used to render one tick
+    # per integer -- thousands of overlapping labels. The width-aware
+    # stride must keep the count bounded and consecutive labels clear of
+    # each other, using the module's own font constants to measure extent
+    # rather than pasted pixel values.
+    strip = timeline_strip((), x_domain=(0.0, 20000.0), width=400, theme=DEFAULT)
+    ticks = re.findall(r'<text x="([\d.]+)"[^>]*text-anchor="(\w+)">(W[^<]*)</text>', strip.svg)
+    assert ticks
+    assert len(ticks) <= _TICK_MAX_COUNT
+
+    extents = []
+    for x_text, anchor, label in ticks:
+        span = len(label) * _TICK_FONT_SIZE * _CHAR_WIDTH_RATIO
+        x = float(x_text)
+        left, right = {
+            "start": (x, x + span),
+            "end": (x - span, x),
+            "middle": (x - span / 2, x + span / 2),
+        }[anchor]
+        extents.append((left, right))
+
+    for (_, right), (left, _) in itertools.pairwise(extents):
+        assert right <= left
+
+
+def test_strip_keeps_svg_size_bounded_for_a_very_large_domain():
+    # Before the width-aware stride, 0..20000 at one tick per integer
+    # rendered a ~3.5 MB SVG (20003 tick elements). The stride must keep
+    # the whole strip small regardless of how large the domain is.
+    strip = timeline_strip((), x_domain=(0.0, 20000.0), width=400, theme=DEFAULT)
+    assert len(strip.svg.encode()) < 5_000
