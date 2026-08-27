@@ -8,9 +8,11 @@ emit exactly the shape the graph kernel's shared-position proof requires: one
 external keyed select whose option count matches the alternative count, and
 one single-condition rule per option hiding every other option's cards.
 
-`reject_nested_switchers` guards a shape the kernel proof does not yet cover:
+`reject_nested_switchers` guards two shapes the kernel proof does not cover:
 a switcher nested inside another switcher's alternative, which would need a
-hidden governing controller plus multi-condition partition rules.
+hidden governing controller plus multi-condition partition rules; and a
+descendant whose only paths run through two or more independent switchers,
+which no single switcher's own liveness proof can see.
 """
 
 from __future__ import annotations
@@ -230,15 +232,105 @@ def _hidden_subtree(
     return tuple(hidden)
 
 
+def _child_closures(
+    parents: Sequence[str], adjacency: dict[str, tuple[str, ...]]
+) -> dict[str, dict[str, frozenset[str]]]:
+    """Map each real switcher parent to `{direct child: that child's closure}`.
+
+    A parent with fewer than two direct children is not a real fork --
+    `breakout_control` requires at least two options -- so it cannot gate
+    anything and is left out entirely.
+    """
+    closures: dict[str, dict[str, frozenset[str]]] = {}
+    for parent in parents:
+        children = adjacency.get(parent, ())
+        if len(children) < 2:
+            continue
+        closures[parent] = {
+            child: frozenset({child}) | _reachable(child, adjacency) for child in children
+        }
+    return closures
+
+
+def _sole_gating_child(node: str, per_child: Mapping[str, frozenset[str]]) -> str | None:
+    """Return the one direct child whose closure reaches `node`, if only one does.
+
+    Two or more reaching children cannot be proven to share an option --
+    or to each own a separate one -- without the option groupings
+    themselves, so that case is left alone rather than guessed at.
+    """
+    reaching = [child for child, closure in per_child.items() if node in closure]
+    return reaching[0] if len(reaching) == 1 else None
+
+
+def _gating_switchers(
+    node: str, closures: Mapping[str, Mapping[str, frozenset[str]]]
+) -> dict[str, str]:
+    """Map every switcher that sole-gates `node` to its one gating child."""
+    gates: dict[str, str] = {}
+    for parent, per_child in closures.items():
+        child = _sole_gating_child(node, per_child)
+        if child is not None:
+            gates[parent] = child
+    return gates
+
+
+def _reject_orphanable_descendants(
+    parents: Sequence[str],
+    edges: Sequence[tuple[str, str]],
+    adjacency: dict[str, tuple[str, ...]],
+) -> None:
+    """Reject a descendant whose only paths depend on two or more switchers.
+
+    `partition_rules` proves liveness one switcher at a time: a descendant
+    still reachable through some other, currently-unpruned path is judged
+    safe by that switcher's own rule -- correctly, from its own narrow
+    view. When that "other path" is itself only live because a *different*
+    switcher's alternative happens to be selected, every contributing
+    switcher's rule independently declines to hide the descendant, yet the
+    combination that excludes all of them at once leaves it with nothing
+    pointing at it. Each contributing switcher is identified by the one
+    direct child of its own that reaches the descendant -- since that
+    child belongs to exactly one of the switcher's two-or-more disjoint
+    options, some other option is guaranteed to exclude it. Pruning
+    exactly those edges and finding the descendant still unreachable from
+    every root proves the orphaning combination is real and selectable.
+    """
+    closures = _child_closures(parents, adjacency)
+    if len(closures) < 2:
+        return
+    roots = _graph_roots(edges)
+    candidates = {node for edge in edges for node in edge} - roots
+    for node in sorted(candidates):
+        gates = _gating_switchers(node, closures)
+        if len(gates) < 2:
+            continue
+        pruned = {
+            src: tuple(dst for dst in dsts if dst != gates.get(src))
+            for src, dsts in adjacency.items()
+        }
+        visible = set(roots)
+        for root in roots:
+            visible |= _reachable(root, pruned)
+        if node not in visible:
+            switchers = ", ".join(sorted(gates))
+            raise SpecError(
+                f"{node!r} visibility depends on more than one breakout switcher: {switchers}"
+            )
+
+
 def reject_nested_switchers(
     parents_with_switchers: Sequence[str], edges: Sequence[tuple[str, str]]
 ) -> None:
-    """Reject a breakout switcher nested inside another switcher's alternative.
+    """Reject a breakout switcher shape the kernel proof cannot cover.
 
     The kernel proof covers one switcher per shared-position group; a
     switcher nested inside another's alternative would additionally need a
-    hidden governing controller and multi-condition partition rules, neither
-    of which it provides. Switchers in disjoint branches are unaffected.
+    hidden governing controller and multi-condition partition rules,
+    neither of which it provides. A descendant governed by two or more
+    independent switchers is rejected too, for the reasons in
+    `_reject_orphanable_descendants`. Switchers in disjoint branches that
+    do not share a descendant are unaffected.
     """
     parents = tuple(parents_with_switchers)
     adjacency = _build_adjacency(edges)
@@ -250,3 +342,4 @@ def reject_nested_switchers(
                     "at most one breakout switcher may appear on any root-to-leaf path; "
                     f"{outer} and {inner} are nested"
                 )
+    _reject_orphanable_descendants(parents, edges, adjacency)

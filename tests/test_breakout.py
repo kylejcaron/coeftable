@@ -305,6 +305,48 @@ def test_switchers_in_disjoint_branches_are_allowed():
     reject_nested_switchers(("users", "aov"), edges)  # must not raise
 
 
+def test_a_descendant_gated_by_two_independent_switchers_is_rejected():
+    # `a` and `b` are non-nested switchers (neither reachable from the
+    # other): `a1`/`b1` both lead to `shared`, `a2`/`b2` lead nowhere near
+    # it, and `shared` has no other, unconditional path. Each switcher's
+    # own liveness proof would see the *other* switcher's still-unpruned
+    # `a1`/`b1` edge and (correctly, from its own narrow view) call
+    # `shared` safe -- but selecting `a2` and `b2` together leaves nothing
+    # pointing at it. That combination is real and selectable, so the
+    # topology must be refused up front rather than silently orphaning it.
+    edges = (
+        ("root", "a"),
+        ("root", "b"),
+        ("a", "a1"),
+        ("a", "a2"),
+        ("b", "b1"),
+        ("b", "b2"),
+        ("a1", "shared"),
+        ("b1", "shared"),
+    )
+    with pytest.raises(SpecError, match=r"'shared'.*more than one breakout switcher"):
+        reject_nested_switchers(("a", "b"), edges)
+
+
+def test_a_descendant_shared_by_two_switchers_with_an_unconditional_path_is_allowed():
+    # Same two switchers and shared descendant as above, but `other` sits
+    # outside both switchers entirely and always points at `shared`. No
+    # combination of options can orphan it, so this must not raise.
+    edges = (
+        ("root", "a"),
+        ("root", "b"),
+        ("root", "other"),
+        ("a", "a1"),
+        ("a", "a2"),
+        ("b", "b1"),
+        ("b", "b2"),
+        ("a1", "shared"),
+        ("b1", "shared"),
+        ("other", "shared"),
+    )
+    reject_nested_switchers(("a", "b"), edges)  # must not raise
+
+
 def test_a_single_breakout_needs_no_switcher():
     with pytest.raises(SpecError, match="at least two"):
         breakout_control(
