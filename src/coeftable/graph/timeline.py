@@ -157,40 +157,47 @@ def _validate_strip_size(width: int, height: int) -> None:
         raise SpecError(f"timeline_strip.height must be greater than {_MIN_HEIGHT}, got {height}")
 
 
-def _label_anchor_and_text(x: float, label: str, width: int) -> tuple[str, str]:
-    """Choose a text-anchor and (possibly truncated) label for a pin at pixel `x`.
+def _anchor_and_budget(x: float, half: float, low: float, high: float) -> tuple[str, float]:
+    """Choose a text-anchor and pixel budget for text of half-width `half` centred at `x`.
 
-    Centring every label on its projected coordinate clips events near
-    either domain edge -- the strip's viewport doesn't grow to fit text, so
-    a boundary event's centred label runs straight off the canvas.
+    Centring text on its projected coordinate clips it near either domain
+    edge -- the strip's viewport doesn't grow to fit text, so a
+    boundary-adjacent element's centred text runs straight off the canvas.
 
     When centring spills past exactly one edge, anchor away from it: at the
     start for a left spill, at the end for a right spill. Spilling past BOTH
-    means neither side of `x` has room for the centred label within the
-    halo-safe text area, so no anchor can show it whole; pick the side with
-    more room, since anchoring to the cramped side would truncate to almost
-    nothing. Truncate with an ellipsis when the chosen side still cannot fit
-    it.
+    means neither side of `x` has room for the centred text within
+    `[low, high]`, so no anchor can show it whole; pick the side with more
+    room, since anchoring to the cramped side would truncate to almost
+    nothing.
+    """
+    overflows_left = x - half < low
+    overflows_right = x + half > high
+    if overflows_left and overflows_right:
+        start_budget, end_budget = high - x, x - low
+        if end_budget >= start_budget:
+            return "end", end_budget
+        return "start", start_budget
+    if overflows_left:
+        return "start", high - x
+    if overflows_right:
+        return "end", x - low
+    return "middle", 2 * min(x - low, high - x)
+
+
+def _label_anchor_and_text(x: float, label: str, width: int) -> tuple[str, str]:
+    """Choose a text-anchor and (possibly truncated) label for a pin at pixel `x`.
+
+    Delegates the anchor/budget choice to `_anchor_and_budget`; see there
+    for how two-sided overflow is resolved. Truncates with an ellipsis when
+    the chosen side still cannot fit the label.
 
     The pin, its stem, and its dot stay on `x` regardless -- only the text
     anchor moves.
     """
     half = len(label) * _LABEL_FONT_SIZE * _CHAR_WIDTH_RATIO / 2
     low, high = _LABEL_HALO, width - _LABEL_HALO
-    overflows_left = x - half < low
-    overflows_right = x + half > high
-    if overflows_left and overflows_right:
-        start_budget, end_budget = high - x, x - low
-        if end_budget >= start_budget:
-            anchor, budget = "end", end_budget
-        else:
-            anchor, budget = "start", start_budget
-    elif overflows_left:
-        anchor, budget = "start", high - x
-    elif overflows_right:
-        anchor, budget = "end", x - low
-    else:
-        anchor, budget = "middle", 2 * min(x - low, high - x)
+    anchor, budget = _anchor_and_budget(x, half, low, high)
     return anchor, _clip_label(label, max(budget, 0.0), _LABEL_FONT_SIZE)
 
 
@@ -322,14 +329,10 @@ def timeline_strip(
         # past the declared width, so anchor them inward the way event labels
         # already are. Interior ticks stay centred on their own coordinate.
         # Anchoring alone is not enough: a large week index on a narrow strip
-        # overflows even one-sided, so clip to whichever budget applies.
+        # can overflow both sides at once, so `_anchor_and_budget` picks
+        # whichever side has more room, same as event labels.
         tick_half = len(tick_text) * _TICK_FONT_SIZE * _CHAR_WIDTH_RATIO / 2
-        if x - tick_half < 0.0:
-            tick_anchor, tick_budget = "start", float(width) - x
-        elif x + tick_half > width:
-            tick_anchor, tick_budget = "end", x
-        else:
-            tick_anchor, tick_budget = "middle", 2 * min(x, float(width) - x)
+        tick_anchor, tick_budget = _anchor_and_budget(x, tick_half, 0.0, float(width))
         tick_text = _clip_label(tick_text, max(tick_budget, 0.0), _TICK_FONT_SIZE)
         parts.append(
             f'<text x="{x:.2f}" y="{spine_y + _TICK_LABEL_OFFSET:.2f}" '

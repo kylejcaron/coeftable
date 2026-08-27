@@ -1,5 +1,6 @@
 import html
 import itertools
+import math
 import re
 
 import pytest
@@ -17,8 +18,12 @@ from coeftable.graph.timeline import (
     _TICK_MAX_COUNT,
     _TITLE_FONT_SIZE,
     TimelineEvent,
+    _anchor_and_budget,
     _clip_label,
+    _min_tick_gap,
     _projector,
+    _tick_positions,
+    _tick_stride,
     events_for,
     timeline_strip,
 )
@@ -310,6 +315,79 @@ def test_strip_clips_anchored_tick_labels_on_a_narrow_strip():
         }[anchor]
         assert low >= -0.5
         assert high <= width + 0.5
+
+    # The leftmost tick overflows only to the left of the canvas, so it must
+    # anchor "start" and be clipped against the room remaining to its right
+    # -- not against the (irrelevant, and here much smaller) room to its left.
+    leftmost_x, leftmost_anchor, leftmost_label = min(ticks, key=lambda tick: float(tick[0]))
+    assert leftmost_anchor == "start"
+    x = float(leftmost_x)
+    right_side_budget = float(width) - x
+    assert leftmost_label == _clip_label("W1000000", max(right_side_budget, 0.0), _TICK_FONT_SIZE)
+
+
+def test_strip_anchors_a_both_edge_overflowing_tick_to_its_larger_budget():
+    # A tick label long enough to overflow past both edges of the canvas
+    # once centred must anchor toward whichever side has more room, not
+    # whichever side the overflow check happens to test first -- the same
+    # rule event labels already follow. Placed near the right edge, the
+    # leftward ("end") budget dwarfs the rightward ("start") budget.
+    width = _MIN_WIDTH + 1
+    x_domain = (1e8, 1e8 + 1)
+    strip = timeline_strip(
+        (TimelineEvent(at=x_domain[0], label="e", color="#c33", affects=("a",)),),
+        x_domain=x_domain,
+        width=width,
+        theme=DEFAULT,
+    )
+    ticks = re.findall(r'<text x="([\d.]+)"[^>]*text-anchor="(\w+)">(W[^<]*)</text>', strip.svg)
+    rightmost_x, rightmost_anchor, rightmost_label = max(ticks, key=lambda tick: float(tick[0]))
+    x = float(rightmost_x)
+    tick_text = "W100000002"
+    half = len(tick_text) * _TICK_FONT_SIZE * _CHAR_WIDTH_RATIO / 2
+    expected_anchor, expected_budget = _anchor_and_budget(x, half, 0.0, float(width))
+
+    # Confirm the fixture actually exercises the both-edges-overflow branch.
+    assert x - half < 0.0
+    assert x + half > width
+
+    assert rightmost_anchor == expected_anchor == "end"
+    assert rightmost_label == _clip_label(tick_text, max(expected_budget, 0.0), _TICK_FONT_SIZE)
+
+
+def test_strip_tick_stride_respects_the_hard_cap_when_label_room_alone_would_not():
+    # A generously wide strip over a small integer span has plenty of room
+    # for finer label spacing (`_min_tick_gap` is tiny relative to the
+    # span) -- without a stride floor of `span / (_TICK_MAX_COUNT - 1)`,
+    # the stride would default to the finest ladder step and render nearly
+    # one tick per integer, far past the hard cap.
+    low, high, width = 0.0, 1000.0, 100_000
+    cap_floor = (high - low) / (_TICK_MAX_COUNT - 1)
+    assert _min_tick_gap(low, high, width) < cap_floor
+    assert _tick_stride(low, high, width) >= cap_floor
+
+    strip = timeline_strip((), x_domain=(low, high), width=width, theme=DEFAULT)
+    ticks = re.findall(r'<text x="([\d.]+)"[^>]*text-anchor="(\w+)">(W[^<]*)</text>', strip.svg)
+    assert ticks
+    assert len(ticks) <= _TICK_MAX_COUNT
+
+
+def test_strip_replaces_a_near_endpoint_regular_tick_with_the_endpoint():
+    # When the stride doesn't divide the span evenly, the regular grid's
+    # final tick can land closer to the forced last tick than
+    # `_min_tick_gap` allows. Drawing both would overlap, so the
+    # near-boundary regular tick is replaced by the endpoint instead of
+    # appended alongside it.
+    low, high, width = 0.0, 11.0, 200
+    stride = _tick_stride(low, high, width)
+    start, end = math.ceil(low), math.floor(high)
+    regular_grid = list(range(start, end, stride))
+    assert regular_grid  # sanity: this domain does produce a regular grid to replace from
+    assert end - regular_grid[-1] < _min_tick_gap(low, high, width)
+
+    ticks = _tick_positions(low, high, width)
+    assert ticks[-1] == end
+    assert regular_grid[-1] not in ticks
 
 
 def test_strip_bounds_tick_count_and_avoids_overlap_on_a_wide_domain():
