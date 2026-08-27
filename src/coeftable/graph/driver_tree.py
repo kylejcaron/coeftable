@@ -78,31 +78,17 @@ _LEVEL_FORMAT = Number(decimals=1)
 
 _CARD_WIDTH = 300
 
-# Wide enough that the verbatim disclaimer sentence (see `DEFAULT_DISCLAIMER`)
-# never splits its "not causal impact and not levers" clause across a
-# wrapped line, regardless of the injected week count's digit width.
+# Wide enough that a moderate-length caller-supplied caption sentence does
+# not awkwardly wrap after just a word or two. Applied only to a root card
+# that actually carries a caption -- a root card with none stays the same
+# width as every other card.
 _ROOT_CARD_WIDTH = 560
 
-#: Default text for `DriverTree`'s root-card disclaimer. Interpolates the
-#: observed period count via a literal ``{weeks}`` placeholder (substituted
-#: by simple text replacement, never `str.format`, so a caller-supplied
-#: override containing other braces is never at risk of a format error).
-#: Exposed publicly so a caller building a custom disclaimer can still open
-#: with, or otherwise reuse, the stock wording.
-DEFAULT_DISCLAIMER = (
-    "Edge labels are an accounting of the realized {weeks}-week change under "
-    "the chosen decomposition \u2014 they are not causal impact and not "
-    "levers. Each is measured against its parent's starting value, not its "
-    "own, so siblings sum to about the parent's change (a gap badge or "
-    "residual card flags any shortfall). For causal claims, attach "
-    "an experiment / causal graph."
-)
 
-
-def _render_disclaimer(text: str, *, weeks: str) -> str:
+def _render_caption(text: str, *, weeks: str) -> str:
     """Substitute a literal ``{weeks}`` placeholder into `text`.
 
-    A caller-supplied disclaimer is arbitrary text, not a template this
+    A caller-supplied caption is arbitrary text, not a template this
     module controls, so it must never be run through `str.format`: any
     other brace in it (say, a literal ``{`` the caller wants shown
     verbatim) would either raise or silently demand an unrelated
@@ -185,7 +171,7 @@ def _validate_scalars(
     level_fmt: object,
     direction: object,
     chrome: object,
-    disclaimer: object,
+    caption: object,
 ) -> None:
     if not isinstance(series, Mapping):
         raise SpecError("DriverTree.series must be a mapping")
@@ -201,12 +187,12 @@ def _validate_scalars(
         raise SpecError("DriverTree.direction must be valid")
     if not isinstance(chrome, CardChrome):
         raise SpecError("DriverTree.chrome must be a CardChrome")
-    if disclaimer is not None and not isinstance(disclaimer, str):
-        raise SpecError("DriverTree.disclaimer must be a str or None")
+    if caption is not None and not isinstance(caption, str):
+        raise SpecError("DriverTree.caption must be a str or None")
 
 
 def _format_period_count(span: float) -> str:
-    """Render a period span for `DEFAULT_DISCLAIMER`: whole numbers stay bare."""
+    """Render a period span for a caption's `{weeks}` placeholder: whole numbers stay bare."""
     if span == int(span):
         return str(int(span))
     return f"{span:g}"
@@ -241,8 +227,8 @@ def _prepare_x(x: Sequence[float]) -> tuple[tuple[float, ...], tuple[float, floa
     magnitude` is about `1`, so gaps of `1` and `2` would compare equal),
     whereas `math.ulp` tracks only the cancellation error actually
     incurred by the subtraction. A gap that differs by more than that
-    combined tolerance is real irregularity, not rounding. The
-    disclaimer's period count is the coordinates' own span
+    combined tolerance is real irregularity, not rounding. A caption's
+    `{weeks}` placeholder, if used, substitutes the coordinates' own span
     (`x[-1] - x[0]`), measured directly from the endpoints rather than
     recomputed as `(len(x) - 1)` times the shared gap -- the two are only
     approximately equal once the tolerated per-gap rounding is accounted
@@ -879,7 +865,7 @@ def _build_card(
     fmt: Format,
     level_fmt: Format,
     weeks: float,
-    disclaimer: str | None,
+    caption: str | None,
     select_controls: dict[str, SelectControl],
     outcome: _HonestyOutcome,
     residual_by_id: dict[str, _Residual],
@@ -923,19 +909,20 @@ def _build_card(
         content.append(Badge(badge_text, role="unfavorable"))
     for callout_text in outcome.tradeoff_callouts.get(node_id, ()):
         content.append(Callout(callout_text, role="unfavorable"))
-    if node_id in topology.roots and disclaimer is not None:
+    has_caption = node_id in topology.roots and caption is not None
+    if has_caption:
         content.append(
             TextBlock(
-                _render_disclaimer(disclaimer, weeks=_format_period_count(weeks)),
+                _render_caption(caption, weeks=_format_period_count(weeks)),
                 variant="caption",
                 max_lines=8,
             )
         )
     if resid is not None:
-        title, subtitle, width = "Unattributed", resid.subtitle, _CARD_WIDTH
+        title, subtitle = "Unattributed", resid.subtitle
     else:
         title, subtitle = titles[node_id], None
-        width = _ROOT_CARD_WIDTH if node_id in topology.roots else _CARD_WIDTH
+    width = _ROOT_CARD_WIDTH if has_caption else _CARD_WIDTH
     return node_id, Card(
         title, content=tuple(content), subtitle=subtitle, width=width, chrome=chrome
     )
@@ -965,7 +952,7 @@ def DriverTree(
     chrome: CardChrome = DEFAULT_CHROME,
     dom_prefix: str = "g0",
     level_fmt: Format = _LEVEL_FORMAT,
-    disclaimer: str | None = DEFAULT_DISCLAIMER,
+    caption: str | None = None,
 ) -> GraphReport:
     """Build a complete driver-tree report from level series and breakouts.
 
@@ -985,29 +972,20 @@ def DriverTree(
     dollars, users, or a ratio, never a contribution share.
 
     ``x`` must be strictly increasing and evenly spaced (no duplicate,
-    descending, or irregular coordinates): the root card's disclaimer
-    describes the realized change over ``x[-1] - x[0]`` "weeks", and every
-    credibility statistic downstream treats each adjacent pair as one equal
-    noise-model period, so unevenly spaced ``x`` would silently mis-scale
-    those statistics rather than generalizing them, and is rejected instead.
+    descending, or irregular coordinates): a caller-supplied caption's
+    ``{weeks}`` placeholder, if used, describes the realized change over
+    ``x[-1] - x[0]`` "weeks", and every credibility statistic downstream
+    treats each adjacent pair as one equal noise-model period, so unevenly
+    spaced ``x`` would silently mis-scale those statistics rather than
+    generalizing them, and is rejected instead.
 
-    ``disclaimer`` is the caption placed on the root card. It defaults to
-    ``DEFAULT_DISCLAIMER``:
-
-        "Edge labels are an accounting of the realized {weeks}-week change
-        under the chosen decomposition -- they are not causal impact and
-        not levers. Each is measured against its parent's starting value,
-        not its own, so siblings sum to about the parent's change (a gap
-        badge or residual card flags any shortfall). For causal claims,
-        attach an experiment / causal graph."
-
-    opt-out rather than opt-in, since the whole point of the disclaimer is
-    to stop the tree being misread. Pass a replacement string to use it
-    verbatim instead, or ``None`` to omit the caption entirely. A ``{weeks}``
-    placeholder in a caller-supplied string is substituted with the observed
-    period count exactly as in the default text (by plain substring
-    replacement, never `str.format`, so any other brace in the string is
-    left untouched rather than risking a format error).
+    ``caption`` is optional text placed on the root card. It defaults to
+    ``None``, so nothing renders unless a caller supplies one -- this
+    module ships no built-in wording of its own. A supplied string renders
+    verbatim. A ``{weeks}`` placeholder in it is substituted with the
+    observed period count (by plain substring replacement, never
+    `str.format`, so any other brace in the string is left untouched
+    rather than risking a format error).
 
     Every decomposition is checked against ``coeftable.graph.honesty``'s
     identity-gap thresholds: additive shortfalls above ``RESIDUAL_WARN`` get
@@ -1018,7 +996,7 @@ def DriverTree(
     raw contribution sign, so a confident-looking number backed by noisy
     data still renders muted with a ``" · ns"`` marker.
     """
-    _validate_scalars(series, titles, breakouts, fmt, level_fmt, direction, chrome, disclaimer)
+    _validate_scalars(series, titles, breakouts, fmt, level_fmt, direction, chrome, caption)
     x_values, x_domain, weeks = _prepare_x(x)
 
     breakout_map = _build_breakout_map(breakouts)
@@ -1079,7 +1057,7 @@ def DriverTree(
             fmt=fmt,
             level_fmt=level_fmt,
             weeks=weeks,
-            disclaimer=disclaimer,
+            caption=caption,
             select_controls=select_controls,
             outcome=outcome,
             residual_by_id=residual_by_id,

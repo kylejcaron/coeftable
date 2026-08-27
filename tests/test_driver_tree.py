@@ -12,7 +12,7 @@ from dataclasses import replace
 
 import pytest
 
-from coeftable.cards.adornments import Callout
+from coeftable.cards.adornments import Callout, TextBlock
 from coeftable.cards.chrome import DEFAULT_CHROME, CardChrome
 from coeftable.cards.regions import Metric, Trend
 from coeftable.errors import SpecError
@@ -21,7 +21,6 @@ from coeftable.graph import DriverTree, GraphReport
 from coeftable.graph.breakout import Breakout
 from coeftable.graph.driver_tree import (
     _CARD_WIDTH,
-    DEFAULT_DISCLAIMER,
     _compute_contributions,
     _Topology,
 )
@@ -36,7 +35,7 @@ def _fixture(
     *,
     chrome: CardChrome = DEFAULT_CHROME,
     events: tuple[TimelineEvent, ...] | None = None,
-    disclaimer: str | None = DEFAULT_DISCLAIMER,
+    caption: str | None = None,
 ) -> GraphReport:
     """A two-way revenue switcher (drivers x vs. region +), both exact."""
     x = (0.0, 1.0, 2.0, 3.0)
@@ -60,7 +59,7 @@ def _fixture(
             TimelineEvent(at=1.0, label="Launch", color="#4C72B0", affects=("revenue", "users")),
         )
     return DriverTree(
-        series, titles, breakouts, _FMT, x, events=events, chrome=chrome, disclaimer=disclaimer
+        series, titles, breakouts, _FMT, x, events=events, chrome=chrome, caption=caption
     )
 
 
@@ -325,16 +324,16 @@ def test_anticorrelated_siblings_raise_a_trade_off_callout():
     assert "trade-off: A Metric \u2194 B Metric" in html
 
 
-def test_the_accounting_disclaimer_is_present_verbatim():
-    html = _fixture().as_raw_html()
-    assert "not causal impact and not levers" in html
-    assert "realized 3-week change" in html
+def test_no_caption_renders_by_default():
+    report = _fixture()
+    card = dict(report.graph.nodes)["revenue"]
+    assert not any(isinstance(item, TextBlock) for item in card.content)
 
 
 def _wide_span_fixture() -> GraphReport:
     """Same identity shape as `_fixture`, but `x` is irregularly spaced with
-    a span of 20 units rather than 3: pins the disclaimer's period count to
-    the coordinates' own span, not to `len(x) - 1`."""
+    a span of 20 units rather than 3: pins a caption's `{weeks}` substitution
+    to the coordinates' own span, not to `len(x) - 1`."""
     x = (0.0, 10.0, 20.0)
     titles = {"total": "Total", "a": "A", "b": "B"}
     series = {
@@ -343,10 +342,10 @@ def _wide_span_fixture() -> GraphReport:
         "b": (40.0, 44.0, 48.4),
     }
     breakouts = {"total": (Breakout(key="split", label="by split", op="+", children=("a", "b")),)}
-    return DriverTree(series, titles, breakouts, _FMT, x)
+    return DriverTree(series, titles, breakouts, _FMT, x, caption="realized {weeks}-week change")
 
 
-def test_the_disclaimer_describes_the_actual_span_not_the_observation_count():
+def test_a_captions_weeks_placeholder_describes_the_actual_span_not_the_observation_count():
     html = _wide_span_fixture().as_raw_html()
     assert "realized 20-week change" in html
     assert "realized 2-week change" not in html
@@ -364,47 +363,33 @@ def _fractional_span_fixture() -> GraphReport:
         "b": (40.0, 44.0, 48.4),
     }
     breakouts = {"total": (Breakout(key="split", label="by split", op="+", children=("a", "b")),)}
-    return DriverTree(series, titles, breakouts, _FMT, x)
+    return DriverTree(series, titles, breakouts, _FMT, x, caption="realized {weeks}-week change")
 
 
-def test_the_disclaimer_formats_a_fractional_span_without_a_trailing_zero():
+def test_a_captions_weeks_placeholder_formats_a_fractional_span_without_a_trailing_zero():
     html = _fractional_span_fixture().as_raw_html()
     assert "realized 2.5-week change" in html
 
 
-def test_the_disclaimer_defaults_to_the_public_default_text():
-    html = _fixture().as_raw_html()
-    flat = " ".join(re.sub(r"<[^>]+>", " ", html).split())
-    flat = flat.replace("&#x27;", "'").replace("&amp;", "&")
-    assert DEFAULT_DISCLAIMER.replace("{weeks}", "3") in flat
-
-
-def test_a_custom_disclaimer_renders_verbatim():
-    html = _fixture(disclaimer="Ask finance before repeating these numbers.").as_raw_html()
+def test_a_supplied_caption_renders_verbatim():
+    html = _fixture(caption="Ask finance before repeating these numbers.").as_raw_html()
     assert "Ask finance before repeating these numbers." in html
-    assert "not causal impact and not levers" not in html
 
 
-def test_disclaimer_none_suppresses_the_caption_entirely():
-    html = _fixture(disclaimer=None).as_raw_html()
-    assert "not causal impact and not levers" not in html
-    assert "accounting of the realized" not in html
-
-
-def test_a_custom_disclaimer_still_substitutes_weeks():
-    html = _fixture(disclaimer="Covers the last {weeks} weeks only.").as_raw_html()
+def test_a_supplied_caption_still_substitutes_weeks():
+    html = _fixture(caption="Covers the last {weeks} weeks only.").as_raw_html()
     assert "Covers the last 3 weeks only." in html
 
 
-def test_a_custom_disclaimer_with_unrelated_braces_does_not_raise():
+def test_a_supplied_caption_with_unrelated_braces_does_not_raise():
     text = "Formula: {a} + {b} is literal text, only {weeks} is substituted."
-    html = _fixture(disclaimer=text).as_raw_html()
+    html = _fixture(caption=text).as_raw_html()
     assert "Formula: {a} + {b} is literal text, only 3 is substituted." in html
 
 
-def test_disclaimer_must_be_a_str_or_none():
-    with pytest.raises(SpecError, match="disclaimer must be a str or None"):
-        _fixture(disclaimer=123)  # ty: ignore[invalid-argument-type]
+def test_caption_must_be_a_str_or_none():
+    with pytest.raises(SpecError, match="caption must be a str or None"):
+        _fixture(caption=123)  # ty: ignore[invalid-argument-type]
 
 
 def test_an_event_reaches_every_affected_card_and_no_others():
@@ -717,7 +702,7 @@ def test_large_magnitude_unequal_spacing_is_refused_not_swallowed():
         DriverTree(series, titles, breakouts, _FMT, x)
 
 
-def test_equal_non_unit_spacing_is_accepted_with_a_correct_disclaimer():
+def test_equal_non_unit_spacing_is_accepted_with_a_correct_weeks_substitution():
     """Coordinates need not be unit-spaced, only *evenly* spaced."""
     x = (0.0, 7.0, 14.0, 21.0)
     titles = {"p": "P", "a": "A", "b": "B"}
@@ -728,7 +713,9 @@ def test_equal_non_unit_spacing_is_accepted_with_a_correct_disclaimer():
         "b": (40.0, 44.0, 48.4, 53.2),
     }
     breakouts = {"p": (Breakout(key="k", label="K", op="+", children=("a", "b")),)}
-    html = DriverTree(series, titles, breakouts, _FMT, x).as_raw_html()
+    html = DriverTree(
+        series, titles, breakouts, _FMT, x, caption="realized {weeks}-week change"
+    ).as_raw_html()
     assert "realized 21-week change" in html
 
 
@@ -1370,15 +1357,18 @@ def test_an_event_may_target_an_injected_residual():
     assert report.measure().width > 0
 
 
-def test_the_disclaimer_names_the_contribution_reference_point():
-    # Without this, an edge label reading "+12.1%" is naturally misread as the
-    # child's own growth, when it is the child's share of the PARENT's change.
-    # Compare against the unwrapped text: each rendered line is its own element,
-    # so a phrase spanning a line break never appears contiguously in the HTML.
-    html = _fixture().as_raw_html()
+def test_a_wrapped_multiline_caption_still_reconstructs_correctly():
+    # A caption long enough to wrap renders one HTML element per line;
+    # compare against the unwrapped text to confirm a phrase spanning a
+    # line break still appears contiguously once flattened with spaces.
+    caption = (
+        "Edge labels are measured against a parent's starting value, not "
+        "its own, so siblings sum to about the parent's change."
+    )
+    html = _fixture(caption=caption).as_raw_html()
     flat = " ".join(re.sub(r"<[^>]+>", " ", html).split())
     flat = flat.replace("&#x27;", "'").replace("&amp;", "&")
-    assert "measured against its parent's starting value, not its own" in flat
+    assert "measured against a parent's starting value, not its own" in flat
     assert "siblings sum to about the parent's change" in flat
 
 
