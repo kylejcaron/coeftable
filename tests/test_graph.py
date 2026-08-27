@@ -291,6 +291,26 @@ def test_graph_rejects_collapsible_nubs_in_too_small_layer_gap():
         match=re.escape("Graph.layer_gap must be at least 18 when collapsible cards are present"),
     ):
         _plain_graph(collapsible=("root",), layer_gap=10)
+    with pytest.raises(
+        SpecError,
+        match=re.escape("Graph.layer_gap must be at least 18 when wires are present"),
+    ):
+        _plain_graph(
+            nodes=(("a", Card("a")), ("b", Card("b"))),
+            slots=(Slot("a", 0, 0), Slot("b", 1, 0)),
+            wires=(Wire("w", "a", "b"),),
+            layer_gap=10,
+        )
+    with pytest.raises(
+        SpecError,
+        match=re.escape("Graph.layer_gap must be at least 28 when wire labels are present"),
+    ):
+        _plain_graph(
+            nodes=(("a", Card("a")), ("b", Card("b"))),
+            slots=(Slot("a", 0, 0), Slot("b", 1, 0)),
+            wires=(Wire("w", "a", "b", label="+1", label_role="favorable"),),
+            layer_gap=20,
+        )
 
 
 def test_graph_measure_sums_different_column_widths_and_layer_heights():
@@ -1134,7 +1154,7 @@ def test_shared_slot_rejects_stray_rule_intersecting_group():
         )
 
 
-def _state_diamond(*, collapsible=("a", "b"), prefix="g") -> Graph:
+def _state_diamond(*, collapsible=("a", "b"), prefix="g", theme=DEFAULT) -> Graph:
     nodes = tuple((card_id, Card(card_id)) for card_id in ("r", "a", "b", "c"))
     layout = Slotted(
         tuple(Slot(card_id, layer, 0) for layer, card_id in enumerate(("r", "a", "b", "c")))
@@ -1145,7 +1165,9 @@ def _state_diamond(*, collapsible=("a", "b"), prefix="g") -> Graph:
         Wire("ac", "a", "c"),
         Wire("bc", "b", "c"),
     )
-    return Graph(nodes, layout, wires=wires, collapsible=collapsible, dom_prefix=prefix)
+    return Graph(
+        nodes, layout, wires=wires, collapsible=collapsible, dom_prefix=prefix, theme=theme
+    )
 
 
 def test_graph_compiles_diamond_state_to_exact_record():
@@ -1843,7 +1865,10 @@ def test_graph_renderer_serializes_compiled_rules_and_nub_glyph_swap():
     assert "<span>−</span><span>+</span></label>" in output
     assert "#rules-nub-1:checked + label span:first-child{display:none}" in style
     assert "#rules-nub-1:checked + label span:last-child{display:inline}" in style
-    assert "#rules-nub-1:focus-visible + label{outline:2px solid #616161}" in style
+    assert "#rules-nub-1:focus-visible + label{outline:2px solid currentColor}" in style
+    hostile = dataclasses.replace(DEFAULT, axis="red}body{display:none}/*")
+    hostile_style = _state_diamond(prefix="hostile", theme=hostile).as_raw_html()
+    assert "body{display:none}" not in hostile_style.split("<style>")[-1]
 
 
 def test_graph_renderer_contains_nubs_inside_their_card_wrappers():

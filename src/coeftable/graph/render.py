@@ -93,7 +93,9 @@ def _nub_markup(
                 f"#{nub_id} + label span:last-child{{display:none}}",
                 f"#{nub_id}:checked + label span:first-child{{display:none}}",
                 f"#{nub_id}:checked + label span:last-child{{display:inline}}",
-                f"#{nub_id}:focus-visible + label{{outline:2px solid {_esc(graph.theme.axis)}}}",
+                # currentColor: the label carries the axis color inline, so no
+                # theme string ever reaches raw CSS.
+                f"#{nub_id}:focus-visible + label{{outline:2px solid currentColor}}",
             )
         )
     return markup, "".join(rules)

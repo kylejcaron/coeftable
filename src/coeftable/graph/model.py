@@ -702,6 +702,10 @@ class Graph:
             raise SpecError(
                 "Graph.layer_gap must be at least 18 when collapsible cards are present"
             )
+        if wires and self.layer_gap < 18:
+            raise SpecError("Graph.layer_gap must be at least 18 when wires are present")
+        if any(wire.label is not None for wire in wires) and self.layer_gap < 28:
+            raise SpecError("Graph.layer_gap must be at least 28 when wire labels are present")
         cards, rebound_nodes = _graph_rebound_nodes(nodes, theme=self.theme, chrome=self.chrome)
         card_options = {node_id: card.control_options() for node_id, card in rebound_nodes}
         visibility, visibility_wires = _graph_visibility(
