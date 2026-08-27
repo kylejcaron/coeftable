@@ -504,6 +504,25 @@ def _build_switcher_state(
     return rules, select_controls
 
 
+def _residual_domain(values: Sequence[float]) -> tuple[float, float]:
+    """Pad a residual trend's own extent; no ribbon exists to derive it from.
+
+    An injected residual is signed -- zero where children exactly explain the
+    parent, negative where they over-explain it -- so `ribbon_bounds`'s
+    multiplicative noise model (which works in log space and requires
+    strictly positive input) is not defined for it. Mirror `ribbon_domain`'s
+    own flat-series guard instead: a flat residual has zero span, so fall
+    back to the level's own magnitude, then to 1.0 for a flat-at-zero
+    residual.
+    """
+    lo_value = _finite(min(values), name="residual domain")
+    hi_value = _finite(max(values), name="residual domain")
+    span = (hi_value - lo_value) or abs(hi_value) or 1.0
+    lo = _finite(lo_value - 0.1 * span, name="residual domain")
+    hi = _finite(hi_value + 0.1 * span, name="residual domain")
+    return (lo, hi)
+
+
 def _build_card(
     node_id: str,
     *,
@@ -523,8 +542,16 @@ def _build_card(
 ) -> tuple[str, Card]:
     values = node_series[node_id]
     role = node_role[node_id]
-    lower_ribbon, upper_ribbon = ribbon_bounds(values)
-    domain = ribbon_domain(values, lower_ribbon, upper_ribbon)
+    resid = residual_by_id.get(node_id)
+    if resid is not None:
+        # Signed by nature (see `_residual_domain`): no multiplicative
+        # ribbon is defined for it, so the card renders the trend alone.
+        lower_ribbon: tuple[float, ...] | None = None
+        upper_ribbon: tuple[float, ...] | None = None
+        domain = _residual_domain(values)
+    else:
+        lower_ribbon, upper_ribbon = ribbon_bounds(values)
+        domain = ribbon_domain(values, lower_ribbon, upper_ribbon)
     node_events = events_for(events, node_id)
     annotations = Events(node_events).rules() if node_events else ()
     trend = Trend(
@@ -553,8 +580,6 @@ def _build_card(
         content.append(Callout(callout_text, role="unfavorable"))
     if node_id in topology.roots:
         content.append(TextBlock(_DISCLAIMER.format(weeks=weeks), variant="caption", max_lines=8))
-
-    resid = residual_by_id.get(node_id)
     if resid is not None:
         title, subtitle, width = "Unattributed", resid.subtitle, _CARD_WIDTH
     else:

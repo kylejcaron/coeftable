@@ -409,3 +409,83 @@ def test_multiplicative_contribution_uses_the_shared_log_ratio_for_a_subnormal_q
 
     assert contributions[("parent", "a")] == pytest.approx(expected_a)
     assert abs(contributions[("parent", "a")] - stale_expected_a) > 1e-8
+
+
+def _zero_residual_fixture() -> GraphReport:
+    """A residual that is exactly zero at one observation, never negative."""
+    x = (0.0, 1.0, 2.0)
+    titles = {"budget": "Budget", "paid_b": "Paid", "organic_b": "Organic"}
+    series = {
+        "budget": (1000.0, 1040.0, 1081.0),
+        "paid_b": (600.0, 620.0, 645.0),
+        "organic_b": (400.0, 335.0, 345.0),
+    }
+    # implied = paid_b + organic_b = (1000, 955, 990); residual = budget - implied
+    #   = (0, 85, 91); gap = (0/1000 + 85/1040 + 91/1081) / 3 ~= 0.0553 (0.5%-20%).
+    breakouts = {
+        "budget": (
+            Breakout(
+                key="channel_b", label="by channel", op="+", children=("paid_b", "organic_b")
+            ),
+        )
+    }
+    return DriverTree(series, titles, breakouts, _FMT, x)
+
+
+def _negative_residual_fixture() -> GraphReport:
+    """Children over-explain the parent at every point: the residual is negative throughout."""
+    x = (0.0, 1.0, 2.0)
+    titles = {"outlay": "Outlay", "paid_o": "Paid", "organic_o": "Organic"}
+    series = {
+        "outlay": (1000.0, 1040.0, 1081.0),
+        "paid_o": (700.0, 730.0, 760.0),
+        "organic_o": (400.0, 420.0, 430.0),
+    }
+    # implied = paid_o + organic_o = (1100, 1150, 1190); residual = outlay - implied
+    #   = (-100, -110, -109); gap = (100/1000 + 110/1040 + 109/1081) / 3 ~= 0.1022 (0.5%-20%).
+    breakouts = {
+        "outlay": (
+            Breakout(
+                key="channel_o", label="by channel", op="+", children=("paid_o", "organic_o")
+            ),
+        )
+    }
+    return DriverTree(series, titles, breakouts, _FMT, x)
+
+
+def _trend_for(report: GraphReport, node_id: str) -> Trend:
+    card = dict(report.graph.nodes)[node_id]
+    for region in card.content:
+        if isinstance(region, Trend):
+            return region
+    raise AssertionError(f"no Trend region on {node_id!r}")
+
+
+def test_a_residual_touching_zero_renders_without_a_ribbon():
+    report = _zero_residual_fixture()
+    trend = _trend_for(report, "resid_budget_channel_b")
+    assert trend.y == (0.0, 85.0, 91.0)
+    assert trend.lower is None
+    assert trend.upper is None
+    assert trend.domain[0] < trend.domain[1]  # non-degenerate despite the touched zero
+    assert "Unattributed" in report.as_raw_html()
+
+
+def test_a_residual_that_over_explains_the_parent_is_negative_and_still_renders():
+    report = _negative_residual_fixture()
+    trend = _trend_for(report, "resid_outlay_channel_o")
+    assert trend.y == (-100.0, -110.0, -109.0)
+    assert all(value is not None and value < 0 for value in trend.y)
+    assert trend.lower is None
+    assert trend.upper is None
+    assert trend.domain[0] < trend.domain[1]
+    assert "Unattributed" in report.as_raw_html()
+
+
+def test_a_normal_positive_node_series_still_gets_its_ribbon():
+    """The residual fix must not strip ribbons from ordinary level series."""
+    report = _short_fixture()
+    trend = _trend_for(report, "paid")
+    assert trend.lower is not None
+    assert trend.upper is not None
+    assert trend.domain[0] < trend.domain[1]
