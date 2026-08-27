@@ -10,11 +10,15 @@ import re
 
 import pytest
 
+from coeftable.cards.chrome import DEFAULT_CHROME
+from coeftable.cards.regions import Trend
 from coeftable.errors import SpecError
 from coeftable.format import Percent
 from coeftable.graph import DriverTree, GraphReport
 from coeftable.graph.breakout import Breakout
+from coeftable.graph.driver_tree import _CARD_WIDTH
 from coeftable.graph.timeline import TimelineEvent
+from coeftable.svg import _projector
 
 _FMT = Percent(decimals=1)
 
@@ -215,6 +219,26 @@ def test_driver_tree_builds_a_report_with_a_timeline_and_switcher():
     assert "<script" not in html  # zero-JS law
 
 
+def test_a_switcher_parent_has_no_operator_badge_but_its_options_do():
+    """A dropdown's option labels already name each operator; a badge would
+    be stuck showing only the default alternative's operator, so a parent
+    with two or more alternatives gets none at all.
+    """
+    html = _fixture().as_raw_html()
+    assert re.search(r">\u00d7 decomposition</span>", html) is None
+    assert re.search(r">\+ slice</span>", html) is None
+    assert "by drivers (\u00d7 decomposition)" in html
+    assert "by region (+ slice)" in html
+
+
+def test_a_single_alternative_parent_still_shows_its_operator_badge():
+    """No dropdown, no option labels: the badge is the only place the
+    (fixed) operator is stated, so it must render.
+    """
+    html = _short_fixture().as_raw_html()
+    assert re.search(r">\+ slice</span>", html) is not None
+
+
 def test_an_inconclusive_delta_renders_muted_with_an_ns_marker():
     html = _noisy_fixture().as_raw_html()
     assert html.count("\u00b7 ns") == 1  # exactly the noisy child's own wire
@@ -260,6 +284,38 @@ def test_an_event_reaches_every_affected_card_and_no_others():
     # card ("left"): if the event had also reached "hub" or "right" (or
     # missed "left"), this count would be off.
     assert html.count(event.label) == 2
+
+    graph = report.graph
+    node_ids = tuple(node_id for node_id, _ in graph.nodes)
+    card_dom_ids = dict(zip(node_ids, graph._compiled.card_dom_ids, strict=True))
+
+    # Derive the pixel the fan-out's sparkline rule must land on from the
+    # same projection `coeftable.svg` applies when resolving a `Trend`
+    # region: `left`/`right` are non-root cards, so `_CARD_WIDTH` minus
+    # `DEFAULT_CHROME`'s padding/border is the usable width `Card` hands
+    # every region, and `Trend`'s own endpoint reserve narrows it further.
+    usable = _CARD_WIDTH - 2 * (DEFAULT_CHROME.padding + DEFAULT_CHROME.border_width)
+    trend_defaults = Trend(x=(0.0,), y=(0.0,), x_domain=(0.0, 1.0), domain=(0.0, 1.0))
+    plot_width = usable - trend_defaults.endpoint_width
+    inset = trend_defaults.inset
+    project = _projector((0.0, 2.0), plot_width, inset)
+    expected_x = re.escape(f"{project(event.at):.2f}")
+    rule = re.compile(
+        rf'<line x1="{expected_x}" y1="[0-9.]+" x2="{expected_x}" y2="[0-9.]+" '
+        rf'stroke="{re.escape(event.color)}"'
+    )
+
+    def card_html(node_id: str) -> str:
+        dom_id = card_dom_ids[node_id]
+        start = html.index(f'<div id="{dom_id}"')
+        next_start = html.find('<div id="', start + 1)
+        return html[start : next_start if next_start != -1 else len(html)]
+
+    # The projected rule shows up in the affected card's own sparkline...
+    assert rule.search(card_html("left"))
+    # ...and nowhere in an unaffected sibling's, even though it shares the
+    # same x-domain and would land on the identical pixel if it leaked.
+    assert rule.search(card_html("right")) is None
 
 
 def test_a_nested_switcher_is_refused_with_the_documented_rule():

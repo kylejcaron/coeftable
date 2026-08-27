@@ -551,9 +551,9 @@ def _build_card(
         content.append(Events(node_events, captions=True))
     if node_id in select_controls:
         content.append(select_controls[node_id])
-    if node_id in topology.switcher_parents:
-        default_op = topology.breakout_map[node_id][0].op
-        content.append(Badge(_operator_badge_text(default_op), role="neutral"))
+    if node_id in topology.breakout_map and node_id not in topology.switcher_parents:
+        op = topology.breakout_map[node_id][0].op
+        content.append(Badge(_operator_badge_text(op), role="neutral"))
     for badge_text in outcome.gap_badges.get(node_id, ()):
         content.append(Badge(badge_text, role="unfavorable"))
     for callout_text in outcome.tradeoff_callouts.get(node_id, ()):
