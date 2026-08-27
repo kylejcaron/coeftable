@@ -554,6 +554,33 @@ def test_a_cyclic_breakout_topology_is_refused_before_layout():
         _cyclic_breakout_fixture()
 
 
+def _collapsed_self_cycle_fixture() -> GraphReport:
+    """`p` switches between `a` and `b`, and `b` decomposes into `a`. The raw
+    topology is acyclic, but collapsing `b` onto its representative (`a`,
+    the default alternative's own child) yields a self-edge `a -> a`."""
+    x = (0.0, 1.0, 2.0)
+    titles = {"p": "P", "a": "A", "b": "B"}
+    series = {"p": (10.0, 11.0, 12.0), "a": (10.0, 11.0, 12.0), "b": (10.0, 11.0, 12.0)}
+    breakouts = {
+        "p": (
+            Breakout(key="opt_a", label="A", op="+", children=("a",)),
+            Breakout(key="opt_b", label="B", op="+", children=("b",)),
+        ),
+        "b": (Breakout(key="only", label="Only", op="+", children=("a",)),),
+    }
+    return DriverTree(series, titles, breakouts, _FMT, x)
+
+
+def test_a_collapsed_representative_self_edge_is_refused_not_a_recursion_error():
+    """Regression: the acyclicity check validated only the raw breakout
+    edges, but layout runs on representative-collapsed edges, which can
+    introduce a cycle (here a self-edge on `a`) the raw graph never had --
+    this used to overflow the recursion stack instead of raising."""
+    with pytest.raises(SpecError, match="cyclic") as excinfo:
+        _collapsed_self_cycle_fixture()
+    assert "a" in str(excinfo.value)
+
+
 def _switcher_with_residual_fixture() -> GraphReport:
     """A two-way switcher whose additive alternative falls short by ~8% and
     injects a residual: exercises the shared-slot exclusivity proof together
@@ -600,6 +627,62 @@ def test_a_switcher_with_an_injected_residual_builds_and_merges_the_hide_rule():
     hidden = drivers_rules[0].hide_cards
     assert "paid" in hidden and "organic" in hidden
     assert "resid_revenue_channel" in hidden
+
+
+def _nested_residual_orphan_fixture() -> GraphReport:
+    """`revenue` switches drivers x vs. region +; `users` (a `drivers`
+    child) has its own additive decomposition that falls short by ~8% and
+    injects its own residual. Switching away from `drivers` must hide that
+    nested residual too, not just `users`, `aov`, `new`, and `returning`.
+    """
+    x = (0.0, 1.0, 2.0)
+    titles = {
+        "revenue": "Revenue",
+        "users": "Users",
+        "aov": "AOV",
+        "us": "US",
+        "eu": "EU",
+        "new": "New",
+        "returning": "Returning",
+    }
+    series = {
+        "revenue": (1000.0, 1040.0, 1081.0),
+        "users": (1000.0, 1040.0, 1081.0),  # users * aov == revenue exactly (aov == 1)
+        "aov": (1.0, 1.0, 1.0),
+        "us": (600.0, 620.0, 645.0),  # us + eu == revenue exactly
+        "eu": (400.0, 420.0, 436.0),
+        # new + returning falls short of users by ~8%: injects a residual
+        # owned by `users`, a plain non-switcher descendant one layer down.
+        "new": (600.0, 620.0, 645.0),
+        "returning": (320.0, 335.0, 345.0),
+    }
+    breakouts = {
+        "revenue": (
+            Breakout(key="drivers", label="by drivers", op="x", children=("users", "aov")),
+            Breakout(key="region", label="by region", op="+", children=("us", "eu")),
+        ),
+        "users": (
+            Breakout(key="cohort", label="by cohort", op="+", children=("new", "returning")),
+        ),
+    }
+    return DriverTree(series, titles, breakouts, _FMT, x)
+
+
+def test_switching_away_hides_a_nested_descendants_own_residual_too():
+    """Regression: the edges used for switcher descendant traversal were
+    captured before residuals joined the topology, so a residual injected
+    by a nested (non-switcher) descendant survived as a visible orphan
+    once its owner was switched away."""
+    report = _nested_residual_orphan_fixture()
+    assert "Unattributed" in report.as_raw_html()
+
+    region_rule = next(
+        rule
+        for rule in report.graph.rules
+        if len(rule.when_all) == 1 and rule.when_all[0].option == "region"
+    )
+    hidden = set(region_rule.hide_cards)
+    assert {"users", "aov", "new", "returning", "resid_users_cohort"} <= hidden
 
 
 def test_a_level_trends_endpoint_label_is_not_percent_formatted():

@@ -59,7 +59,7 @@ from coeftable.graph.metric_tree import _label, _layers, _slots
 from coeftable.graph.model import Graph, Slot, Slotted, StateRule, Wire
 from coeftable.graph.report import GraphReport
 from coeftable.graph.timeline import TimelineEvent, events_for, timeline_strip
-from coeftable.graph.topology import check_acyclic
+from coeftable.graph.topology import check_acyclic, is_acyclic
 from coeftable.theme import DEFAULT, Direction, Role, Theme, role_for
 
 _DIRECTIONS: tuple[Direction, ...] = ("higher_is_better", "lower_is_better", "neutral")
@@ -484,6 +484,48 @@ def _build_wires(
     return wires
 
 
+def _cyclic_nodes(
+    node_ids: tuple[str, ...], edges: tuple[tuple[str, str], ...]
+) -> tuple[str, ...]:
+    """Nodes Kahn's algorithm never dequeues: exactly the ones stuck in a cycle."""
+    outgoing: dict[str, list[str]] = {node_id: [] for node_id in node_ids}
+    indegree = {node_id: 0 for node_id in node_ids}
+    for src, dst in edges:
+        outgoing[src].append(dst)
+        indegree[dst] += 1
+    ready = [node_id for node_id in node_ids if indegree[node_id] == 0]
+    visited: set[str] = set()
+    while ready:
+        node_id = ready.pop()
+        visited.add(node_id)
+        for child in outgoing[node_id]:
+            indegree[child] -= 1
+            if indegree[child] == 0:
+                ready.append(child)
+    return tuple(sorted(node_id for node_id in node_ids if node_id not in visited))
+
+
+def _check_layout_acyclic(
+    canonical_ids: tuple[str, ...], canonical_edges: list[tuple[str, str, float | None]]
+) -> None:
+    """Validate the edges layout actually walks, not just the raw breakout ones.
+
+    Collapsing a non-default alternative onto its default sibling (`rep`)
+    can introduce a cycle the raw edges never had -- an alternative that
+    decomposes into its own sibling's representative collapses to a
+    self-edge. `_layers` recurses with no cycle guard of its own, so this
+    must run before it does.
+    """
+    pairs = tuple((src, dst) for src, dst, _ in canonical_edges)
+    if is_acyclic(canonical_ids, pairs):
+        return
+    cyclic = _cyclic_nodes(canonical_ids, pairs)
+    raise SpecError(
+        "breakout layout is cyclic once alternatives collapse to shared positions: "
+        f"{', '.join(cyclic)}"
+    )
+
+
 def _compute_layout(
     topology: _Topology, rep: dict[str, str], residuals: dict[tuple[str, str], _Residual]
 ) -> tuple[Slot, ...]:
@@ -516,6 +558,7 @@ def _compute_layout(
                 add_canonical(resid.id)
                 canonical_edges.append((rp, resid.id, None))
 
+    _check_layout_acyclic(tuple(canonical_ids), canonical_edges)
     canonical_layers = _layers(tuple(canonical_ids), tuple(canonical_edges))
     canonical_slots = _slots(tuple(canonical_ids), tuple(canonical_edges), canonical_layers)
     canonical_position = {slot.card_id: slot for slot in canonical_slots}
@@ -530,40 +573,11 @@ def _compute_layout(
     )
 
 
-def _merge_residual_hides(
-    base_rules: tuple[StateRule, ...],
-    breakout_list: tuple[Breakout, ...],
+def _residual_edges(
     residuals: dict[tuple[str, str], _Residual],
-    parent: str,
-) -> tuple[StateRule, ...]:
-    """Fold each residual's hide target into its sibling options' rule.
-
-    A second rule for the same `option_checked` atom would give that
-    option two rules, and the shared-slot exclusivity proof requires
-    exactly one rule per option -- so the residual's hide target joins
-    the governing rule `partition_rules` already built for that option
-    instead.
-    """
-    extra_hides: dict[int, list[str]] = {}
-    for index, breakout in enumerate(breakout_list):
-        resid = residuals.get((parent, breakout.key))
-        if resid is None:
-            continue
-        for other_index in range(len(breakout_list)):
-            if other_index != index:
-                extra_hides.setdefault(other_index, []).append(resid.id)
-    if not extra_hides:
-        return base_rules
-    return tuple(
-        rule
-        if index not in extra_hides
-        else StateRule(
-            rule.when_all,
-            hide_cards=(*rule.hide_cards, *extra_hides[index]),
-            hide_wires=rule.hide_wires,
-        )
-        for index, rule in enumerate(base_rules)
-    )
+) -> tuple[tuple[str, str], ...]:
+    """One `(parent, resid.id)` edge per injected residual, in registration order."""
+    return tuple((parent, resid.id) for (parent, _breakout_key), resid in residuals.items())
 
 
 def _build_switcher_state(
@@ -577,8 +591,14 @@ def _build_switcher_state(
         key = f"{parent}_breakout"
         breakout_list = topology.breakout_map[parent]
         select_controls[parent] = breakout_control(breakout_list, key=key)
-        base_rules = partition_rules(parent, key, breakout_list, edges)
-        rules.extend(_merge_residual_hides(base_rules, breakout_list, residuals, parent))
+        residual_children = {
+            breakout.key: residuals[(parent, breakout.key)].id
+            for breakout in breakout_list
+            if (parent, breakout.key) in residuals
+        }
+        rules.extend(
+            partition_rules(parent, key, breakout_list, edges, residual_children=residual_children)
+        )
     return rules, select_controls
 
 
@@ -746,7 +766,13 @@ def DriverTree(
     contribution_by_edge = _compute_contributions(topology, node_series, outcome.residuals)
     wires = _build_wires(topology, outcome.residuals, contribution_by_edge, node_role, fmt)
     final_slots = _compute_layout(topology, rep, outcome.residuals)
-    rules, select_controls = _build_switcher_state(topology, outcome.residuals, edges)
+
+    # Residual nodes/edges join the topology only above, in `_register_residuals`
+    # -- so the edges used for switcher descendant traversal must be built only
+    # now, or a nested descendant's own residual leaks as a visible orphan once
+    # its owner is switched away.
+    switcher_edges = edges + _residual_edges(outcome.residuals)
+    rules, select_controls = _build_switcher_state(topology, outcome.residuals, switcher_edges)
 
     # Validate events only now: the node set is not final until residuals have
     # been registered, and an event may legitimately target one. A misspelled
