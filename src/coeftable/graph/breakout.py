@@ -86,12 +86,18 @@ def breakout_control(
     return SelectControl(label, options, selected=breakouts[0].key, key=key)
 
 
-def partition_rules(parent: str, key: str, breakouts: Sequence[Breakout]) -> tuple[StateRule, ...]:
+def partition_rules(
+    parent: str, key: str, breakouts: Sequence[Breakout], edges: Sequence[tuple[str, str]]
+) -> tuple[StateRule, ...]:
     """Build one rule per breakout, hiding every other breakout's cards.
 
     Alternatives must be pairwise disjoint and equally sized: shared
     positions are proven per (layer, slot), so an overlapping or uneven
-    alternative would leave a position unoccupied or doubly claimed.
+    alternative would leave a position unoccupied or doubly claimed. Hiding
+    an alternative also hides everything beneath it: a child that is itself
+    declared elsewhere in `edges` as having its own deeper decomposition
+    does not survive as an orphan once its parent alternative is switched
+    away.
     """
     breakouts = tuple(breakouts)
     seen: set[str] = set()
@@ -103,21 +109,22 @@ def partition_rules(parent: str, key: str, breakouts: Sequence[Breakout]) -> tup
     sizes = {len(breakout.children) for breakout in breakouts}
     if len(sizes) > 1:
         raise SpecError("breakout alternatives must have the same number of children")
-    rules = []
-    for index, breakout in enumerate(breakouts):
-        others = tuple(
-            child
-            for other_index, other in enumerate(breakouts)
-            if other_index != index
-            for child in other.children
+    adjacency = _build_adjacency(edges)
+    return tuple(
+        StateRule(
+            (Atom(ControlRef(parent, key), "option_checked", breakout.key),),
+            hide_cards=_hidden_subtree(breakouts, index, adjacency),
         )
-        rules.append(
-            StateRule(
-                (Atom(ControlRef(parent, key), "option_checked", breakout.key),),
-                hide_cards=others,
-            )
-        )
-    return tuple(rules)
+        for index, breakout in enumerate(breakouts)
+    )
+
+
+def _build_adjacency(edges: Sequence[tuple[str, str]]) -> dict[str, tuple[str, ...]]:
+    """Group `edges` by source, preserving each source's per-node edge order."""
+    adjacency: dict[str, list[str]] = {}
+    for src, dst in edges:
+        adjacency.setdefault(src, []).append(dst)
+    return {node: tuple(children) for node, children in adjacency.items()}
 
 
 def _reachable(start: str, adjacency: dict[str, tuple[str, ...]]) -> set[str]:
@@ -133,6 +140,25 @@ def _reachable(start: str, adjacency: dict[str, tuple[str, ...]]) -> set[str]:
     return seen
 
 
+def _hidden_subtree(
+    breakouts: tuple[Breakout, ...],
+    selected_index: int,
+    adjacency: dict[str, tuple[str, ...]],
+) -> tuple[str, ...]:
+    """Every other breakout's children plus their transitive descendants."""
+    hidden: list[str] = []
+    seen: set[str] = set()
+    for other_index, other in enumerate(breakouts):
+        if other_index == selected_index:
+            continue
+        for child in other.children:
+            for node in (child, *_reachable(child, adjacency)):
+                if node not in seen:
+                    seen.add(node)
+                    hidden.append(node)
+    return tuple(hidden)
+
+
 def reject_nested_switchers(
     parents_with_switchers: Sequence[str], edges: Sequence[tuple[str, str]]
 ) -> None:
@@ -144,12 +170,9 @@ def reject_nested_switchers(
     of which it provides. Switchers in disjoint branches are unaffected.
     """
     parents = tuple(parents_with_switchers)
-    adjacency: dict[str, list[str]] = {}
-    for src, dst in edges:
-        adjacency.setdefault(src, []).append(dst)
-    frozen_adjacency = {node: tuple(children) for node, children in adjacency.items()}
+    adjacency = _build_adjacency(edges)
     for outer in parents:
-        reachable = _reachable(outer, frozen_adjacency)
+        reachable = _reachable(outer, adjacency)
         for inner in parents:
             if inner != outer and inner in reachable:
                 raise SpecError(

@@ -29,11 +29,8 @@ def test_control_offers_one_option_per_breakout_with_the_operator_in_the_label()
 
 
 def test_each_rule_hides_exactly_the_other_alternatives():
-    rules = partition_rules("revenue", "rev_breakout", _two_way())
-    assert len(rules) == 2
+    rules = partition_rules("revenue", "rev_breakout", _two_way(), ())
     drivers, region = rules
-    assert len(drivers.when_all) == 1
-    assert drivers.when_all[0].option == "drivers"
     assert set(drivers.hide_cards) == {"us", "eu"}
     assert set(region.hide_cards) == {"users", "aov"}
 
@@ -67,16 +64,76 @@ def test_the_emitted_shape_satisfies_the_kernel_proof():
         nodes,
         Slotted(slots),
         wires=wires,
-        rules=partition_rules("revenue", "rev_breakout", breakouts),
+        rules=partition_rules("revenue", "rev_breakout", breakouts, ()),
     )
     assert graph.measure().width > 0
+
+
+def test_switching_away_from_an_alternative_hides_its_deeper_descendants():
+    # `users` (a `drivers` child) has its own two-child decomposition one
+    # layer deeper. Selecting `region` must hide `users`' grandchildren too,
+    # not just `users` itself -- checked from the compiled/rendered output.
+    breakouts = _two_way()
+    edges = (
+        ("revenue", "users"),
+        ("revenue", "aov"),
+        ("revenue", "us"),
+        ("revenue", "eu"),
+        ("users", "new"),
+        ("users", "returning"),
+    )
+    control = breakout_control(breakouts, key="rev_breakout")
+    nodes = (
+        ("revenue", Card("Revenue", content=(control,), width=140)),
+        ("users", Card("Users", width=140)),
+        ("aov", Card("AOV", width=140)),
+        ("us", Card("US", width=140)),
+        ("eu", Card("EU", width=140)),
+        ("new", Card("New", width=140)),
+        ("returning", Card("Returning", width=140)),
+    )
+    slots = (
+        Slot("revenue", 0, 0),
+        Slot("users", 1, 0),
+        Slot("aov", 1, 1),
+        Slot("us", 1, 0),
+        Slot("eu", 1, 1),
+        Slot("new", 2, 0),
+        Slot("returning", 2, 1),
+    )
+    wires = tuple(Wire(f"w{i}", src, dst) for i, (src, dst) in enumerate(edges))
+    rules = partition_rules("revenue", "rev_breakout", breakouts, edges)
+    graph = Graph(nodes, Slotted(slots), wires=wires, rules=rules, dom_prefix="brk3")
+
+    card_dom_ids = dict(
+        zip((node_id for node_id, _ in nodes), graph._compiled.card_dom_ids, strict=True)
+    )
+    region_conditions, region_targets = next(
+        (conditions, targets)
+        for conditions, targets in graph._compiled.rules
+        if any('value="region"' in condition for condition in conditions)
+    )
+    orphaned = {
+        card_dom_ids["users"],
+        card_dom_ids["aov"],
+        card_dom_ids["new"],
+        card_dom_ids["returning"],
+    }
+    assert orphaned <= set(region_targets)
+
+    output = graph.as_raw_html()
+    style = output[output.rindex("<style>") :]
+    prefix = ".brk3-canvas" + "".join(f":has({condition})" for condition in region_conditions)
+    expected = ",".join(f"{prefix} #{target}" for target in region_targets)
+    assert f"{expected}{{display:none}}" in style
+    assert graph.measure().width > 0  # the shared-position proof still accepts this graph
 
 
 def test_hiding_a_card_hides_its_wires_without_being_asked():
     # Per-wire DOM identity means a converging edge is never collaterally
     # hidden - the defect the hand-rolled explorations had.
     breakouts = _two_way()
-    rules = partition_rules("revenue", "rev_breakout", breakouts)
+    rules = partition_rules("revenue", "rev_breakout", breakouts, ())
     assert all(rule.hide_wires == () for rule in rules)
 
     control = breakout_control(breakouts, key="rev_breakout")
@@ -162,7 +219,7 @@ def test_shared_position_layout_is_materially_more_compact_than_distinct_positio
         shared_nodes,
         Slotted(shared_slots),
         wires=wires,
-        rules=partition_rules("revenue", "rev_breakout", breakouts),
+        rules=partition_rules("revenue", "rev_breakout", breakouts, ()),
     )
 
     distinct_nodes = (
@@ -214,7 +271,7 @@ def test_alternatives_must_be_disjoint():
         Breakout(key="b", label="B", op="+", children=("shared",)),
     )
     with pytest.raises(SpecError, match="disjoint"):
-        partition_rules("p", "k", overlapping)
+        partition_rules("p", "k", overlapping, ())
 
 
 def test_alternatives_must_be_equally_sized():
@@ -225,4 +282,4 @@ def test_alternatives_must_be_equally_sized():
         Breakout(key="b", label="B", op="+", children=("z",)),
     )
     with pytest.raises(SpecError, match="same number of children"):
-        partition_rules("p", "k", uneven)
+        partition_rules("p", "k", uneven, ())

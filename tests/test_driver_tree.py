@@ -168,6 +168,44 @@ def _nested_fixture() -> GraphReport:
     return DriverTree(series, titles, breakouts, _FMT, (0.0, 1.0, 2.0))
 
 
+def _orphan_fixture() -> GraphReport:
+    """`revenue` switches drivers x vs. region +; `users` (a `drivers` child)
+    has its own always-on two-child decomposition. Switching `revenue` away
+    from `drivers` must hide `users`' grandchildren too, not just `users`.
+    """
+    x = (0.0, 1.0, 2.0)
+    titles = {
+        "revenue": "Revenue",
+        "users": "Users",
+        "aov": "AOV",
+        "us": "US",
+        "eu": "EU",
+        "new": "New",
+        "returning": "Returning",
+    }
+    series = {
+        # revenue = users * aov exactly, and = us + eu exactly: gap 0 both ways.
+        "revenue": (1000.0, 1100.0, 1200.0),
+        "users": (100.0, 110.0, 120.0),
+        "aov": (10.0, 10.0, 10.0),
+        "us": (600.0, 660.0, 720.0),
+        "eu": (400.0, 440.0, 480.0),
+        # users = new + returning exactly: users' own always-on decomposition.
+        "new": (60.0, 66.0, 72.0),
+        "returning": (40.0, 44.0, 48.0),
+    }
+    breakouts = {
+        "revenue": (
+            Breakout(key="drivers", label="by drivers", op="x", children=("users", "aov")),
+            Breakout(key="region", label="by region", op="+", children=("us", "eu")),
+        ),
+        "users": (
+            Breakout(key="cohort", label="by cohort", op="+", children=("new", "returning")),
+        ),
+    }
+    return DriverTree(series, titles, breakouts, _FMT, x)
+
+
 def test_driver_tree_builds_a_report_with_a_timeline_and_switcher():
     report = _fixture()
     assert isinstance(report, GraphReport)
@@ -227,6 +265,27 @@ def test_an_event_reaches_every_affected_card_and_no_others():
 def test_a_nested_switcher_is_refused_with_the_documented_rule():
     with pytest.raises(SpecError, match="at most one breakout switcher"):
         _nested_fixture()
+
+
+def test_switching_away_from_drivers_hides_users_own_decomposition_too():
+    report = _orphan_fixture()
+    graph = report.graph
+    node_ids = tuple(node_id for node_id, _ in graph.nodes)
+    card_dom_ids = dict(zip(node_ids, graph._compiled.card_dom_ids, strict=True))
+
+    region_conditions, region_targets = next(
+        (conditions, targets)
+        for conditions, targets in graph._compiled.rules
+        if any('value="region"' in condition for condition in conditions)
+    )
+    orphaned = {card_dom_ids["users"], card_dom_ids["new"], card_dom_ids["returning"]}
+    assert orphaned <= set(region_targets)
+
+    html = report.as_raw_html()
+    style = html[html.rindex("<style>") :]
+    prefix = ".g0-canvas" + "".join(f":has({condition})" for condition in region_conditions)
+    expected = ",".join(f"{prefix} #{target}" for target in region_targets)
+    assert f"{expected}{{display:none}}" in style
 
 
 def test_output_is_deterministic():

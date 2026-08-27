@@ -484,7 +484,9 @@ def _compute_layout(
 
 
 def _build_switcher_state(
-    topology: _Topology, residuals: dict[tuple[str, str], _Residual]
+    topology: _Topology,
+    residuals: dict[tuple[str, str], _Residual],
+    edges: tuple[tuple[str, str], ...],
 ) -> tuple[list[StateRule], dict[str, SelectControl]]:
     rules: list[StateRule] = []
     select_controls: dict[str, SelectControl] = {}
@@ -492,7 +494,7 @@ def _build_switcher_state(
         key = f"{parent}_breakout"
         breakout_list = topology.breakout_map[parent]
         select_controls[parent] = breakout_control(breakout_list, key=key)
-        rules.extend(partition_rules(parent, key, breakout_list))
+        rules.extend(partition_rules(parent, key, breakout_list, edges))
         for index, breakout in enumerate(breakout_list):
             resid = residuals.get((parent, breakout.key))
             if resid is None:
@@ -618,10 +620,11 @@ def DriverTree(
     breakout_map = _build_breakout_map(breakouts)
     topology = _build_topology(breakout_map)
     node_series = _collect_node_series(topology, series, titles, x_values)
+    edges = _raw_edges(topology)
 
     # `reject_nested_switchers` runs before any honesty arithmetic, so the
     # clearest error (naming the two nested switcher parents) surfaces first.
-    reject_nested_switchers(topology.switcher_parents, _raw_edges(topology))
+    reject_nested_switchers(topology.switcher_parents, edges)
 
     rep = _build_rep_mapping(topology)
     node_role = _compute_node_roles(topology.node_order, node_series, direction)
@@ -631,7 +634,7 @@ def DriverTree(
     contribution_by_edge = _compute_contributions(topology, node_series, outcome.residuals)
     wires = _build_wires(topology, outcome.residuals, contribution_by_edge, node_role, fmt)
     final_slots = _compute_layout(topology, rep, outcome.residuals)
-    rules, select_controls = _build_switcher_state(topology, outcome.residuals)
+    rules, select_controls = _build_switcher_state(topology, outcome.residuals, edges)
 
     cards = [
         _build_card(
