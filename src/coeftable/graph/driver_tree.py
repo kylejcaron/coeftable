@@ -78,18 +78,39 @@ _LEVEL_FORMAT = Number(decimals=1)
 
 _CARD_WIDTH = 300
 
-# Wide enough that the verbatim disclaimer sentence (see `_DISCLAIMER`) never
-# splits its "not causal impact and not levers" clause across a wrapped line,
-# regardless of the injected week count's digit width.
+# Wide enough that the verbatim disclaimer sentence (see `DEFAULT_DISCLAIMER`)
+# never splits its "not causal impact and not levers" clause across a
+# wrapped line, regardless of the injected week count's digit width.
 _ROOT_CARD_WIDTH = 560
 
-_DISCLAIMER = (
+#: Default text for `DriverTree`'s root-card disclaimer. Interpolates the
+#: observed period count via a literal ``{weeks}`` placeholder (substituted
+#: by simple text replacement, never `str.format`, so a caller-supplied
+#: override containing other braces is never at risk of a format error).
+#: Exposed publicly so a caller building a custom disclaimer can still open
+#: with, or otherwise reuse, the stock wording.
+DEFAULT_DISCLAIMER = (
     "Edge labels are an accounting of the realized {weeks}-week change under "
     "the chosen decomposition \u2014 they are not causal impact and not "
     "levers. Each is measured against its parent's starting value, not its "
-    "own, so siblings sum to the parent's change. For causal claims, attach "
+    "own, so siblings sum to about the parent's change (a gap badge or "
+    "residual card flags any shortfall). For causal claims, attach "
     "an experiment / causal graph."
 )
+
+
+def _render_disclaimer(text: str, *, weeks: str) -> str:
+    """Substitute a literal ``{weeks}`` placeholder into `text`.
+
+    A caller-supplied disclaimer is arbitrary text, not a template this
+    module controls, so it must never be run through `str.format`: any
+    other brace in it (say, a literal ``{`` the caller wants shown
+    verbatim) would either raise or silently demand an unrelated
+    substitution. Plain substring replacement only ever touches the one
+    placeholder this module knows about and leaves everything else --
+    including unrelated braces -- untouched.
+    """
+    return text.replace("{weeks}", weeks)
 
 
 def _non_empty_str(value: object, *, name: str) -> None:
@@ -164,6 +185,7 @@ def _validate_scalars(
     level_fmt: object,
     direction: object,
     chrome: object,
+    disclaimer: object,
 ) -> None:
     if not isinstance(series, Mapping):
         raise SpecError("DriverTree.series must be a mapping")
@@ -179,10 +201,12 @@ def _validate_scalars(
         raise SpecError("DriverTree.direction must be valid")
     if not isinstance(chrome, CardChrome):
         raise SpecError("DriverTree.chrome must be a CardChrome")
+    if disclaimer is not None and not isinstance(disclaimer, str):
+        raise SpecError("DriverTree.disclaimer must be a str or None")
 
 
 def _format_period_count(span: float) -> str:
-    """Render a period span for `_DISCLAIMER`: whole numbers stay bare."""
+    """Render a period span for `DEFAULT_DISCLAIMER`: whole numbers stay bare."""
     if span == int(span):
         return str(int(span))
     return f"{span:g}"
@@ -465,20 +489,26 @@ def _apply_breakout_honesty(
             outcome.gap_badges.setdefault(parent, []).append(f"{breakout.key} gap {gap:.0%}")
 
     non_muted = [
-        (titles[child], node_series[child])
+        (child, node_series[child])
         for child in breakout.children
         if node_role[child] != "inconclusive"
     ]
     pairs = tradeoff_pairs(non_muted)
     if pairs:
-        text = "\u26a0 trade-off: " + "; ".join(f"{a} \u2194 {b} (r={r:.2f})" for a, b, r in pairs)
+        # Pairs are keyed by child id, not title: titles are not required to
+        # be unique, so a title-keyed lookup could resolve a duplicate title
+        # to the wrong sibling and host the warning on a non-participating
+        # or muted card. Ids are resolved directly; titles are substituted
+        # only when formatting the display text below.
+        text = "\u26a0 trade-off: " + "; ".join(
+            f"{titles[a]} \u2194 {titles[b]} (r={r:.2f})" for a, b, r in pairs
+        )
         # Host the warning on a participating child, never on the parent. The
         # parent card is visible under every option, so a warning about one
         # alternative's siblings would survive a switch and keep naming cards
         # the reader can no longer see. A child hides and shows with its own
         # alternative, so the warning appears exactly when its subject does.
-        id_by_title = {titles[child]: child for child in breakout.children}
-        host = id_by_title.get(pairs[0][0], breakout.children[0])
+        host = pairs[0][0]
         outcome.tradeoff_callouts.setdefault(host, []).append(text)
 
 
@@ -849,6 +879,7 @@ def _build_card(
     fmt: Format,
     level_fmt: Format,
     weeks: float,
+    disclaimer: str | None,
     select_controls: dict[str, SelectControl],
     outcome: _HonestyOutcome,
     residual_by_id: dict[str, _Residual],
@@ -892,10 +923,10 @@ def _build_card(
         content.append(Badge(badge_text, role="unfavorable"))
     for callout_text in outcome.tradeoff_callouts.get(node_id, ()):
         content.append(Callout(callout_text, role="unfavorable"))
-    if node_id in topology.roots:
+    if node_id in topology.roots and disclaimer is not None:
         content.append(
             TextBlock(
-                _DISCLAIMER.format(weeks=_format_period_count(weeks)),
+                _render_disclaimer(disclaimer, weeks=_format_period_count(weeks)),
                 variant="caption",
                 max_lines=8,
             )
@@ -934,6 +965,7 @@ def DriverTree(
     chrome: CardChrome = DEFAULT_CHROME,
     dom_prefix: str = "g0",
     level_fmt: Format = _LEVEL_FORMAT,
+    disclaimer: str | None = DEFAULT_DISCLAIMER,
 ) -> GraphReport:
     """Build a complete driver-tree report from level series and breakouts.
 
@@ -959,6 +991,24 @@ def DriverTree(
     noise-model period, so unevenly spaced ``x`` would silently mis-scale
     those statistics rather than generalizing them, and is rejected instead.
 
+    ``disclaimer`` is the caption placed on the root card. It defaults to
+    ``DEFAULT_DISCLAIMER``:
+
+        "Edge labels are an accounting of the realized {weeks}-week change
+        under the chosen decomposition -- they are not causal impact and
+        not levers. Each is measured against its parent's starting value,
+        not its own, so siblings sum to about the parent's change (a gap
+        badge or residual card flags any shortfall). For causal claims,
+        attach an experiment / causal graph."
+
+    opt-out rather than opt-in, since the whole point of the disclaimer is
+    to stop the tree being misread. Pass a replacement string to use it
+    verbatim instead, or ``None`` to omit the caption entirely. A ``{weeks}``
+    placeholder in a caller-supplied string is substituted with the observed
+    period count exactly as in the default text (by plain substring
+    replacement, never `str.format`, so any other brace in the string is
+    left untouched rather than risking a format error).
+
     Every decomposition is checked against ``coeftable.graph.honesty``'s
     identity-gap thresholds: additive shortfalls above ``RESIDUAL_WARN`` get
     an injected ``"Unattributed"`` residual card, multiplicative shortfalls
@@ -968,7 +1018,7 @@ def DriverTree(
     raw contribution sign, so a confident-looking number backed by noisy
     data still renders muted with a ``" · ns"`` marker.
     """
-    _validate_scalars(series, titles, breakouts, fmt, level_fmt, direction, chrome)
+    _validate_scalars(series, titles, breakouts, fmt, level_fmt, direction, chrome, disclaimer)
     x_values, x_domain, weeks = _prepare_x(x)
 
     breakout_map = _build_breakout_map(breakouts)
@@ -1029,6 +1079,7 @@ def DriverTree(
             fmt=fmt,
             level_fmt=level_fmt,
             weeks=weeks,
+            disclaimer=disclaimer,
             select_controls=select_controls,
             outcome=outcome,
             residual_by_id=residual_by_id,

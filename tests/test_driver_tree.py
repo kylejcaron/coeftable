@@ -19,7 +19,12 @@ from coeftable.errors import SpecError
 from coeftable.format import Number, Percent
 from coeftable.graph import DriverTree, GraphReport
 from coeftable.graph.breakout import Breakout
-from coeftable.graph.driver_tree import _CARD_WIDTH, _compute_contributions, _Topology
+from coeftable.graph.driver_tree import (
+    _CARD_WIDTH,
+    DEFAULT_DISCLAIMER,
+    _compute_contributions,
+    _Topology,
+)
 from coeftable.graph.honesty import log_ratio
 from coeftable.graph.timeline import TimelineEvent
 from coeftable.svg import _projector
@@ -31,6 +36,7 @@ def _fixture(
     *,
     chrome: CardChrome = DEFAULT_CHROME,
     events: tuple[TimelineEvent, ...] | None = None,
+    disclaimer: str | None = DEFAULT_DISCLAIMER,
 ) -> GraphReport:
     """A two-way revenue switcher (drivers x vs. region +), both exact."""
     x = (0.0, 1.0, 2.0, 3.0)
@@ -53,7 +59,9 @@ def _fixture(
         events = (
             TimelineEvent(at=1.0, label="Launch", color="#4C72B0", affects=("revenue", "users")),
         )
-    return DriverTree(series, titles, breakouts, _FMT, x, events=events, chrome=chrome)
+    return DriverTree(
+        series, titles, breakouts, _FMT, x, events=events, chrome=chrome, disclaimer=disclaimer
+    )
 
 
 def _noisy_fixture() -> GraphReport:
@@ -126,7 +134,11 @@ def _mult_gap_fixture() -> GraphReport:
 
 
 def _tradeoff_fixture() -> GraphReport:
-    """Two siblings whose weekly log-changes are an exact negative linear pair (r=-1)."""
+    """Two siblings whose weekly log-changes are an exact negative linear pair
+    (r=-1), plus a second, unrelated breakout so `combo` is an actual
+    switcher: a fixture with only one breakout is never a switcher (see
+    `_Topology.switcher_parents`), so it cannot exercise a card hiding with
+    its alternative."""
     import math
 
     a_changes = [0.3, 0.1, 0.25, 0.05]
@@ -138,10 +150,26 @@ def _tradeoff_fixture() -> GraphReport:
     for change in b_changes:
         b.append(b[-1] * math.exp(change))
     parent = tuple(x + y for x, y in zip(a, b, strict=True))
+    # `c` and `d` split the same parent evenly, so they move in lockstep with
+    # each other (r=1, never a trade-off) and explain `combo` exactly, unlike
+    # `a`/`b`'s trade-off pair.
+    c = tuple(value / 2.0 for value in parent)
+    d = c
     x = (0.0, 1.0, 2.0, 3.0, 4.0)
-    titles = {"combo": "Combo", "a": "A Metric", "b": "B Metric"}
-    series = {"combo": parent, "a": tuple(a), "b": tuple(b)}
-    breakouts = {"combo": (Breakout(key="split", label="by split", op="+", children=("a", "b")),)}
+    titles = {
+        "combo": "Combo",
+        "a": "A Metric",
+        "b": "B Metric",
+        "c": "C Metric",
+        "d": "D Metric",
+    }
+    series = {"combo": parent, "a": tuple(a), "b": tuple(b), "c": c, "d": d}
+    breakouts = {
+        "combo": (
+            Breakout(key="split", label="by split", op="+", children=("a", "b")),
+            Breakout(key="alt", label="by alt", op="+", children=("c", "d")),
+        )
+    }
     return DriverTree(series, titles, breakouts, _FMT, x)
 
 
@@ -342,6 +370,41 @@ def _fractional_span_fixture() -> GraphReport:
 def test_the_disclaimer_formats_a_fractional_span_without_a_trailing_zero():
     html = _fractional_span_fixture().as_raw_html()
     assert "realized 2.5-week change" in html
+
+
+def test_the_disclaimer_defaults_to_the_public_default_text():
+    html = _fixture().as_raw_html()
+    flat = " ".join(re.sub(r"<[^>]+>", " ", html).split())
+    flat = flat.replace("&#x27;", "'").replace("&amp;", "&")
+    assert DEFAULT_DISCLAIMER.replace("{weeks}", "3") in flat
+
+
+def test_a_custom_disclaimer_renders_verbatim():
+    html = _fixture(disclaimer="Ask finance before repeating these numbers.").as_raw_html()
+    assert "Ask finance before repeating these numbers." in html
+    assert "not causal impact and not levers" not in html
+
+
+def test_disclaimer_none_suppresses_the_caption_entirely():
+    html = _fixture(disclaimer=None).as_raw_html()
+    assert "not causal impact and not levers" not in html
+    assert "accounting of the realized" not in html
+
+
+def test_a_custom_disclaimer_still_substitutes_weeks():
+    html = _fixture(disclaimer="Covers the last {weeks} weeks only.").as_raw_html()
+    assert "Covers the last 3 weeks only." in html
+
+
+def test_a_custom_disclaimer_with_unrelated_braces_does_not_raise():
+    text = "Formula: {a} + {b} is literal text, only {weeks} is substituted."
+    html = _fixture(disclaimer=text).as_raw_html()
+    assert "Formula: {a} + {b} is literal text, only 3 is substituted." in html
+
+
+def test_disclaimer_must_be_a_str_or_none():
+    with pytest.raises(SpecError, match="disclaimer must be a str or None"):
+        _fixture(disclaimer=123)  # ty: ignore[invalid-argument-type]
 
 
 def test_an_event_reaches_every_affected_card_and_no_others():
@@ -1316,13 +1379,15 @@ def test_the_disclaimer_names_the_contribution_reference_point():
     flat = " ".join(re.sub(r"<[^>]+>", " ", html).split())
     flat = flat.replace("&#x27;", "'").replace("&amp;", "&")
     assert "measured against its parent's starting value, not its own" in flat
-    assert "siblings sum to the parent's change" in flat
+    assert "siblings sum to about the parent's change" in flat
 
 
 def test_a_trade_off_warning_hides_with_the_alternative_it_describes():
     # The warning names two specific siblings, so it must not live on the
     # parent card: that card survives every switch and would keep warning
-    # about cards the reader can no longer see.
+    # about cards the reader can no longer see. `_tradeoff_fixture` has two
+    # breakouts (`split` and `alt`), so `combo` is an actual switcher and the
+    # host really does disappear when the reader picks the other option.
     report = _tradeoff_fixture()
     html = report.as_raw_html()
     hosts = {
@@ -1334,3 +1399,16 @@ def test_a_trade_off_warning_hides_with_the_alternative_it_describes():
     parents = {"combo"}  # the switcher parent in _tradeoff_fixture
     assert not (hosts & parents), f"callout must not sit on a switcher parent: {hosts & parents}"
     assert "trade-off" in html
+
+    split_host = hosts & {"a", "b"}
+    assert split_host, f"expected the trade-off host among split's children, got {hosts}"
+    other_option_rules = [
+        rule
+        for rule in report.graph.rules
+        for atom in rule.when_all
+        if atom.control.card_id == "combo" and atom.option != "split"
+    ]
+    assert other_option_rules, "expected a state rule for combo's non-default option"
+    assert all(split_host <= set(rule.hide_cards) for rule in other_option_rules), (
+        f"host {split_host} must be hidden once combo switches away from split"
+    )

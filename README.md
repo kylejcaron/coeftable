@@ -646,11 +646,16 @@ decomposition explaining under 80% of its parent refuses to build rather than
 render a misleading tree. Every wire's label role comes from its own child's
 noise-aware confidence interval, so a wobbly delta renders muted with a
 `· ns` marker instead of a confident color. Anti-correlated siblings (movers
-that trade off against each other week to week) surface a callout on their
-parent card, and the root card carries a fixed disclaimer that edge labels
-are accounting, not causal claims. `events` fan out to every card named in
-their `affects` tuple, both as sparkline markers and as captions, and the
-report's header is a timeline strip indexing them across the whole canvas.
+that trade off against each other week to week) surface a callout hosted on
+one of the participating children, so it stays visible only alongside that
+alternative rather than the parent, which stays visible under every switch.
+The root card carries a disclaimer that edge labels are accounting, not
+causal claims; pass `disclaimer=` to replace it or `disclaimer=None` to omit
+it, or leave it at its default,
+`coeftable.graph.driver_tree.DEFAULT_DISCLAIMER`. `events` fan out to every
+card named in their `affects` tuple, both as sparkline markers and as
+captions, and the report's header is a timeline strip indexing them across
+the whole canvas.
 
 **Switchers can nest.** Every level of the tree may carry its own switcher at
 the same time — revenue by drivers or region, and within drivers, active users
