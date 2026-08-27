@@ -501,7 +501,7 @@ class MeasuredGraph:
 
 type AnchorOffset = tuple[float, float]
 type GraphAnchors = tuple[tuple[str, tuple[AnchorOffset, AnchorOffset]], ...]
-type WirePath = tuple[float, ...]
+type WirePath = str
 type WireGeometry = tuple[WirePath, AnchorOffset]
 type GraphWireGeometry = tuple[tuple[str, WireGeometry], ...]
 
@@ -602,9 +602,16 @@ def _graph_measure(
                 )
             else:
                 xg = padding + column_offsets[src_slot.slot] - gap / 2
-            path = (x0, y0, xg, my1, xg, my2, x1, y1 - 3)
+            y_a = my1 + layer_gap / 2
+            y_b = my2 - layer_gap / 2
+            path = (
+                f"M {x0:g},{y0:g} "
+                f"C {x0:g},{my1:g} {xg:g},{my1:g} {xg:g},{y_a:g} "
+                f"L {xg:g},{y_b:g} "
+                f"C {xg:g},{my2:g} {x1:g},{my2:g} {x1:g},{y1 - 3:g}"
+            )
         else:
-            path = (x0, y0, x0, my1, x1, my2, x1, y1 - 3)
+            path = f"M {x0:g},{y0:g} C {x0:g},{my1:g} {x1:g},{my2:g} {x1:g},{y1 - 3:g}"
         if wire.label is None:
             spread = 0
         else:

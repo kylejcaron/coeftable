@@ -52,13 +52,10 @@ def _wire_svg(graph: Graph, layout: _GraphLayout, compiled: _CompiledState) -> s
         )
     ]
     for wire, wire_dom_id in zip(graph.wires, compiled.wire_dom_ids, strict=True):
-        path_coordinates, label_anchor = geometry[wire.id]
-        x0, y0, control_x0, control_y1, x1, control_y2, end_x, end_y = path_coordinates
+        path_d, label_anchor = geometry[wire.id]
         label_x, label_y = label_anchor
         path = (
-            f'<path d="M {_number(x0)},{_number(y0)} '
-            f"C {_number(control_x0)},{_number(control_y1)} "
-            f'{_number(x1)},{_number(control_y2)} {_number(end_x)},{_number(end_y)}" '
+            f'<path d="{path_d}" '
             f'fill="none" stroke="{axis}" stroke-width="1.5" marker-end="url(#{marker_id})"/>'
         )
         label = ""

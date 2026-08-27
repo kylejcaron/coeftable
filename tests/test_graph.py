@@ -1358,17 +1358,10 @@ def test_graph_renderer_uses_cached_anchor_and_vertical_route_geometry():
     y1 = target_top + target_in[1]
     my1 = source_top + source_height + graph.layer_gap / 2
     my2 = target_top - graph.layer_gap / 2
-    expected_geometry = (
-        (
-            "wire",
-            (
-                (x0, y0, x0, my1, x1, my2, x1, y1 - 3),
-                (x1, y1 - 13),
-            ),
-        ),
-    )
+    expected_path = f"M {x0:g},{y0:g} C {x0:g},{my1:g} {x1:g},{my2:g} {x1:g},{y1 - 3:g}"
+    expected_geometry = (("wire", (expected_path, (x1, y1 - 13))),)
     assert layout.wire_geometry == expected_geometry
-    expected = f'd="M {x0:g},{y0:g} C {x0:g},{my1:g} {x1:g},{my2:g} {x1:g},{y1 - 3:g}"'
+    expected = f'd="{expected_path}"'
     output = graph.as_raw_html()
     assert expected in output
     assert graph.as_raw_html() == output
@@ -1414,9 +1407,118 @@ def test_graph_measure_swings_skip_layer_wire_through_column_corridor():
     xg = source_column_right + graph.gap / 2
 
     path, _label_anchor = dict(graph._layout.wire_geometry)["r-c"]
-    assert path == (x0, y0, xg, my1, xg, my2, x1, y1 - 3)
+    y_a = my1 + graph.layer_gap / 2
+    y_b = my2 - graph.layer_gap / 2
+    expected_path = (
+        f"M {x0:g},{y0:g} C {x0:g},{my1:g} {xg:g},{my1:g} {xg:g},{y_a:g} "
+        f"L {xg:g},{y_b:g} C {xg:g},{my2:g} {x1:g},{my2:g} {x1:g},{y1 - 3:g}"
+    )
+    assert path == expected_path
     assert xg != x0
     assert xg != x1
+
+
+def test_graph_measure_skip_layer_route_samples_stay_outside_intervening_card():
+    graph = Graph(
+        nodes=(
+            ("source", Card("Source")),
+            ("blocker", Card("Blocker", width=220)),
+            ("target", Card("Target")),
+        ),
+        layout=Slotted(
+            (
+                Slot("source", 0, 0),
+                Slot("blocker", 1, 1),
+                Slot("target", 2, 2),
+            )
+        ),
+        wires=(Wire("wire", "source", "target"),),
+        gap=20,
+        layer_gap=40,
+    )
+    boxes = dict(graph.measure().boxes)
+    anchors = dict(graph._layout.anchors)
+    source_left, source_top, _source_width, source_height = boxes["source"]
+    target_left, target_top, _target_width, _target_height = boxes["target"]
+    source_out = anchors["source"][1]
+    target_in = anchors["target"][0]
+    x0, y0 = source_left + source_out[0], source_top + source_out[1]
+    x1, y1 = target_left + target_in[0], target_top + target_in[1]
+    my1 = source_top + source_height + graph.layer_gap / 2
+    my2 = target_top - graph.layer_gap / 2
+    blocker_left, blocker_top, blocker_width, blocker_height = boxes["blocker"]
+
+    def inside_blocker(point):
+        x, y = point
+        return (
+            blocker_left <= x <= blocker_left + blocker_width
+            and blocker_top <= y <= blocker_top + blocker_height
+        )
+
+    def cubic(start, control_a, control_b, end, t):
+        u = 1 - t
+        return (
+            u**3 * start[0]
+            + 3 * u**2 * t * control_a[0]
+            + 3 * u * t**2 * control_b[0]
+            + t**3 * end[0],
+            u**3 * start[1]
+            + 3 * u**2 * t * control_a[1]
+            + 3 * u * t**2 * control_b[1]
+            + t**3 * end[1],
+        )
+
+    straight_samples = [
+        cubic((x0, y0), (x0, my1), (x1, my2), (x1, y1 - 3), t) for t in (0.25, 0.5, 0.75)
+    ]
+    assert any(inside_blocker(point) for point in straight_samples)
+
+    values = tuple(
+        float(value)
+        for value in re.findall(r"-?\d+(?:\.\d+)?", dict(graph._layout.wire_geometry)["wire"][0])
+    )
+    assert len(values) == 16
+    (
+        path_x0,
+        path_y0,
+        control_x0,
+        control_y1,
+        control_x1,
+        control_y2,
+        first_end_x,
+        first_end_y,
+        line_x,
+        line_y,
+        control_x2,
+        control_y3,
+        control_x3,
+        control_y4,
+        end_x,
+        end_y,
+    ) = values
+    assert (path_x0, path_y0) == (x0, y0)
+    samples = [
+        cubic(
+            (path_x0, path_y0),
+            (control_x0, control_y1),
+            (control_x1, control_y2),
+            (first_end_x, first_end_y),
+            t,
+        )
+        for t in (0.25, 0.5, 0.75)
+    ]
+    samples.extend((line_x, line_y + t * (control_y3 - line_y)) for t in (0.25, 0.5, 0.75))
+    samples.extend(
+        cubic(
+            (line_x, line_y),
+            (control_x2, control_y3),
+            (control_x3, control_y4),
+            (end_x, end_y),
+            t,
+        )
+        for t in (0.25, 0.5, 0.75)
+    )
+    assert not any(inside_blocker(point) for point in samples)
 
 
 def test_graph_measure_routes_to_synthetic_in_anchor(monkeypatch):
@@ -1446,10 +1548,10 @@ def test_graph_measure_routes_to_synthetic_in_anchor(monkeypatch):
     my1 = source_top + source_height + graph.layer_gap / 2
     my2 = target_top - graph.layer_gap / 2
     path, label_anchor = dict(graph._layout.wire_geometry)["wire"]
-    assert path[-2:] == (x1, y1 - 3)
+    expected_path = f"M {x0:g},{y0:g} C {x0:g},{my1:g} {x1:g},{my2:g} {x1:g},{y1 - 3:g}"
+    assert path == expected_path
     assert label_anchor == (x1, y1 - 13)
-    expected_svg_path = f'd="M {x0:g},{y0:g} C {x0:g},{my1:g} {x1:g},{my2:g} {x1:g},{y1 - 3:g}"'
-    assert expected_svg_path in graph.as_raw_html()
+    assert f'd="{expected_path}"' in graph.as_raw_html()
 
 
 def test_graph_renderer_does_not_remeasure_cards(monkeypatch):
