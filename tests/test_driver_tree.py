@@ -417,6 +417,65 @@ def test_multiplicative_contribution_uses_the_shared_log_ratio_for_a_subnormal_q
     assert abs(contributions[("parent", "a")] - stale_expected_a) > 1e-8
 
 
+def test_offsetting_multiplicative_factors_report_large_opposite_shares_not_zero():
+    """Regression: users roughly doubling (100 -> 200) while aov roughly
+    halves (10 -> 5) used to leave the parent flat at 1000 and collapse both
+    edge labels to 0.0%, because the old scale (parent_delta / total_sum)
+    multiplied every share by the parent's own ~0 delta. The continuous-limit
+    fix reports the two real, opposite moves as roughly +/-69 log points
+    instead of hiding them as nothing happening.
+    """
+    topology = _Topology(
+        parents=("revenue",),
+        breakout_map={
+            "revenue": (
+                Breakout(key="drivers", label="by drivers", op="x", children=("users", "aov")),
+            )
+        },
+    )
+    node_series: dict[str, tuple[float, ...]] = {
+        "revenue": (1000.0, 1000.0, 1000.0),
+        "users": (100.0, 150.0, 200.0),
+        "aov": (10.0, 7.5, 5.0),
+    }
+
+    contributions = _compute_contributions(topology, node_series, {})
+    users_share = contributions[("revenue", "users")]
+    aov_share = contributions[("revenue", "aov")]
+
+    assert users_share > 50.0
+    assert aov_share < -50.0
+    assert users_share == pytest.approx(-aov_share, rel=1e-9)
+    assert users_share == pytest.approx(math.log(2.0) * 100.0)
+
+
+def test_multiplicative_contribution_still_sums_to_the_parents_total_change():
+    """Sanity check for the near-zero fallback: an ordinary, non-flat
+    multiplicative decomposition (users and aov both genuinely growing) must
+    still apportion the parent's exact percentage change across its
+    children, the way the un-patched formula always did.
+    """
+    topology = _Topology(
+        parents=("revenue",),
+        breakout_map={
+            "revenue": (
+                Breakout(key="drivers", label="by drivers", op="x", children=("users", "aov")),
+            )
+        },
+    )
+    node_series: dict[str, tuple[float, ...]] = {
+        "revenue": (1000.0, 1035.0, 1071.0),
+        "users": (100.0, 102.0, 105.0),
+        "aov": (10.0, 10.1, 10.2),
+    }
+
+    contributions = _compute_contributions(topology, node_series, {})
+    total = contributions[("revenue", "users")] + contributions[("revenue", "aov")]
+    parent_delta = (1071.0 - 1000.0) / 1000.0 * 100.0
+
+    assert total == pytest.approx(parent_delta)
+
+
 def _zero_residual_fixture() -> GraphReport:
     """A residual that is exactly zero at one observation, never negative."""
     x = (0.0, 1.0, 2.0)

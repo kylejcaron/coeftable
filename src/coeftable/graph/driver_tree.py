@@ -422,6 +422,32 @@ def _register_residuals(
     return residual_by_id
 
 
+# The multiplicative scale below is `parent_delta / total_sum`: the parent's
+# own observed percentage change, spread across children in proportion to
+# each child's share of the combined log change. That division is undefined
+# at `total_sum == 0` and untrustworthy near it -- two factors that roughly
+# offset (one doubling, another halving) drive `total_sum` toward zero while
+# each factor's own log ratio stays large, so a near-zero denominator either
+# divides by zero or amplifies float noise into an unbounded share, and the
+# parent's own delta (also ~0 when the factors truly cancel) collapses every
+# share to 0 even though large, real moves happened underneath it. In the
+# continuous-compounding limit, `expm1(total) / total -> 1` as `total -> 0`,
+# so each factor's true share converges on its own log ratio expressed
+# directly in percentage points -- the flat `100.0` below, used instead of
+# dividing by a total too small to trust. `_MULTIPLICATIVE_SCALE_FLOOR` sits
+# many orders of magnitude above the ~1e-16 per-term float noise floor of a
+# `math.fsum` over a handful of `log_ratio` values, so it only catches a
+# genuine near-cancellation, never a total that is merely small but real.
+_MULTIPLICATIVE_SCALE_FLOOR = 1e-9
+
+
+def _multiplicative_scale(parent_delta: float, total_sum: float) -> float:
+    """Percentage-point scale applied to each child's log ratio (C3)."""
+    if abs(total_sum) < _MULTIPLICATIVE_SCALE_FLOOR:
+        return 100.0
+    return parent_delta / total_sum
+
+
 def _compute_contributions(
     topology: _Topology,
     node_series: dict[str, tuple[float, ...]],
@@ -445,10 +471,9 @@ def _compute_contributions(
                     for child in breakout.children
                 }
                 total_sum = math.fsum(totals.values())
+                scale = _multiplicative_scale(parent_delta, total_sum)
                 for child in breakout.children:
-                    contribution_by_edge[(parent, child)] = (
-                        0.0 if total_sum == 0.0 else parent_delta * (totals[child] / total_sum)
-                    )
+                    contribution_by_edge[(parent, child)] = totals[child] * scale
             resid = residuals.get((parent, breakout.key))
             if resid is not None:
                 contribution_by_edge[(parent, resid.id)] = (
