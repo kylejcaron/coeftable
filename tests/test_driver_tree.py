@@ -418,6 +418,31 @@ def test_duplicate_x_is_refused_naming_the_offending_index():
         DriverTree(series, titles, breakouts, _FMT, x)
 
 
+def test_unequal_spacing_is_refused_naming_the_offending_gaps():
+    x = (0.0, 1.0, 3.0)
+    titles = {"p": "P", "a": "A", "b": "B"}
+    series = {"p": (10.0, 11.0, 12.0), "a": (5.0, 5.5, 6.0), "b": (5.0, 5.5, 6.0)}
+    breakouts = {"p": (Breakout(key="k", label="K", op="+", children=("a", "b")),)}
+    match = r"evenly spaced.*x\[2\] - x\[1\]=2\.0.*x\[1\] - x\[0\]=1\.0"
+    with pytest.raises(SpecError, match=match):
+        DriverTree(series, titles, breakouts, _FMT, x)
+
+
+def test_equal_non_unit_spacing_is_accepted_with_a_correct_disclaimer():
+    """Coordinates need not be unit-spaced, only *evenly* spaced."""
+    x = (0.0, 7.0, 14.0, 21.0)
+    titles = {"p": "P", "a": "A", "b": "B"}
+    series = {
+        # a + b = p exactly at every point: no gap, no residual.
+        "p": (100.0, 110.0, 121.0, 133.0),
+        "a": (60.0, 66.0, 72.6, 79.8),
+        "b": (40.0, 44.0, 48.4, 53.2),
+    }
+    breakouts = {"p": (Breakout(key="k", label="K", op="+", children=("a", "b")),)}
+    html = DriverTree(series, titles, breakouts, _FMT, x).as_raw_html()
+    assert "realized 21-week change" in html
+
+
 def test_gap_badge_text_matches_hand_computed_percentage():
     html = _mult_gap_fixture().as_raw_html()
     assert re.search(r"factors gap 9%", html)
@@ -513,6 +538,54 @@ def test_multiplicative_contribution_still_sums_to_the_parents_total_change():
     parent_delta = (1071.0 - 1000.0) / 1000.0 * 100.0
 
     assert total == pytest.approx(parent_delta)
+
+
+def _near_cancel_mismatch_series():
+    """Users double (100 -> 200) while aov nearly, but not exactly, halves
+    (10 -> 5.0000000005): the combined log ratio lands at ~1e-10, well
+    below the near-cancellation floor. Unlike the fixtures above, revenue
+    does *not* track users * aov at every period -- it is an approximate
+    decomposition, not an exact one -- so the near-cancellation limit must
+    not apply here.
+    """
+    x = (0.0, 1.0, 2.0)
+    titles = {"revenue": "Revenue", "users": "Users", "aov": "AOV"}
+    series = {
+        "revenue": (1000.0, 1080.0, 1158.0),
+        "users": (100.0, 150.0, 200.0),
+        "aov": (10.0, 7.5, 5.0000000005),
+    }
+    # product = (1000, 1125, 1000.000000003); gap = mean(|revenue-product|/revenue)
+    #   = (0/1000 + 45/1080 + 158/1158) / 3 ~= 0.0594 (~6%, between 0.5% and 20%)
+    breakouts = {
+        "revenue": (
+            Breakout(key="drivers", label="by drivers", op="x", children=("users", "aov")),
+        )
+    }
+    return series, titles, breakouts, x
+
+
+def test_a_near_cancelling_approximate_decomposition_sums_to_the_parent_and_flags_the_gap():
+    """Regression for the fix to the fix: near-cancellation used to collapse
+    every share to ~0% whenever the combined log ratio was tiny, even when
+    the parent's own change disagreed with that -- e.g. revenue moving
+    +15.8% while users/aov merely offset each other. The shares must sum
+    to what the parent actually did, and the mismatch must show up as a
+    gap badge rather than being smoothed away.
+    """
+    series, titles, breakouts, x = _near_cancel_mismatch_series()
+    topology = _Topology(parents=("revenue",), breakout_map={"revenue": breakouts["revenue"]})
+    contributions = _compute_contributions(topology, dict(series), {})
+    users_share = contributions[("revenue", "users")]
+    aov_share = contributions[("revenue", "aov")]
+    parent_delta = (1158.0 - 1000.0) / 1000.0 * 100.0
+
+    assert users_share + aov_share == pytest.approx(parent_delta)
+    # Not the old bug's flat +/-69.31% (log(2) * 100) that summed to ~0.
+    assert abs(users_share) > 1000.0
+
+    html = DriverTree(series, titles, breakouts, _FMT, x).as_raw_html()
+    assert re.search(r"drivers gap 6%", html)
 
 
 def _zero_residual_fixture() -> GraphReport:

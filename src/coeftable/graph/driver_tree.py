@@ -191,21 +191,37 @@ def _prepare_x(x: Sequence[float]) -> tuple[tuple[float, ...], tuple[float, floa
 
     `x` must be strictly increasing -- duplicate or descending coordinates
     would silently disconnect the right-hand endpoint label from the last
-    observation, so both are rejected outright rather than tolerated. The
-    disclaimer's period count is derived from the coordinates' own span
-    (`x[-1] - x[0]`), not from `len(x) - 1`, so irregularly spaced input is
-    still described honestly instead of being mislabeled as unit-spaced.
+    observation, so both are rejected outright rather than tolerated.
+    `x` must also be evenly spaced: every credibility statistic downstream
+    (`honesty.weekly_log_changes`, `level_noise`, `ribbon_bounds`, the
+    trade-off and role checks built on them) treats each adjacent pair of
+    observations as one equal period of a per-period multiplicative noise
+    model, so unequal gaps would silently mis-scale that model rather than
+    generalizing it. Irregular spacing is therefore rejected, naming the
+    offending index and the two differing gaps, rather than accepted and
+    mislabeled. The disclaimer's period count is the coordinates' own span
+    (`x[-1] - x[0]`), which -- once spacing is uniform -- is exactly
+    `(len(x) - 1)` periods times the shared gap, so it stays correct by
+    construction instead of needing a separate `len(x) - 1` computation.
     """
     raw = _canonical(x, name="DriverTree.x")
     x_values = tuple(_finite(value, name="DriverTree.x") for value in raw)
     if len(x_values) < 3:
         raise SpecError("DriverTree.x must have at least 3 observations")
+    gap = x_values[1] - x_values[0]
     for index in range(1, len(x_values)):
         previous, current = x_values[index - 1], x_values[index]
         if current <= previous:
             raise SpecError(
                 "DriverTree.x must be strictly increasing: "
                 f"x[{index}]={current!r} is not greater than x[{index - 1}]={previous!r}"
+            )
+        this_gap = current - previous
+        if this_gap != gap:
+            raise SpecError(
+                "DriverTree.x must be evenly spaced: "
+                f"x[{index}] - x[{index - 1}]={this_gap!r} differs from the first gap "
+                f"x[1] - x[0]={gap!r}"
             )
     return x_values, (x_values[0], x_values[-1]), x_values[-1] - x_values[0]
 
@@ -445,29 +461,76 @@ def _register_residuals(
     return residual_by_id
 
 
-# The multiplicative scale below is `parent_delta / total_sum`: the parent's
-# own observed percentage change, spread across children in proportion to
-# each child's share of the combined log change. That division is undefined
-# at `total_sum == 0` and untrustworthy near it -- two factors that roughly
-# offset (one doubling, another halving) drive `total_sum` toward zero while
-# each factor's own log ratio stays large, so a near-zero denominator either
-# divides by zero or amplifies float noise into an unbounded share, and the
-# parent's own delta (also ~0 when the factors truly cancel) collapses every
-# share to 0 even though large, real moves happened underneath it. In the
-# continuous-compounding limit, `expm1(total) / total -> 1` as `total -> 0`,
-# so each factor's true share converges on its own log ratio expressed
-# directly in percentage points -- the flat `100.0` below, used instead of
-# dividing by a total too small to trust. `_MULTIPLICATIVE_SCALE_FLOOR` sits
-# many orders of magnitude above the ~1e-16 per-term float noise floor of a
-# `math.fsum` over a handful of `log_ratio` values, so it only catches a
-# genuine near-cancellation, never a total that is merely small but real.
-_MULTIPLICATIVE_SCALE_FLOOR = 1e-9
+def _multiplicative_identity_delta(total_sum: float) -> float:
+    """`100 * expm1(total_sum)`, the parent's change under an exact identity.
+
+    Guards against a combined log ratio too large to express as a
+    percentage without overflowing the exponential.
+    """
+    try:
+        return 100.0 * math.expm1(total_sum)
+    except OverflowError as exc:
+        raise SpecError(
+            f"a combined log ratio of {total_sum!r} is too large to express as a percentage"
+        ) from exc
 
 
-def _multiplicative_scale(parent_delta: float, total_sum: float) -> float:
+def _multiplicative_identity_holds(parent_series: tuple[float, ...], total_sum: float) -> bool:
+    """Whether the parent's own change is consistent with the exact identity.
+
+    Checked within the same relative tolerance `identity_gap` uses
+    everywhere else (`RESIDUAL_WARN`). The identity predicts the parent's
+    last value as `parent[0] * exp(total_sum)`; comparing that prediction
+    to the parent's *actual* last value -- the same "predicted vs.
+    observed, relative to observed" shape `identity_gap` already uses per
+    period -- answers whether the near-cancellation limit below is
+    describing a real exact decomposition or merely a coincidental
+    near-zero total.
+    """
+    implied_final = parent_series[0] * (1.0 + _multiplicative_identity_delta(total_sum) / 100.0)
+    gap = abs(parent_series[-1] - implied_final) / abs(parent_series[-1])
+    return gap <= RESIDUAL_WARN
+
+
+# `parent_delta / total_sum` spreads the parent's own observed percentage
+# change across children in proportion to each child's share of the
+# combined log change -- correct, and self-consistent (the shares always
+# sum back to `parent_delta`), for any `total_sum != 0`. Two problems only
+# show up as `total_sum` nears zero -- e.g. two factors that roughly offset
+# (one doubling, another halving):
+#
+# 1. When the decomposition is genuinely *exact* (parent == product of
+#    children at both endpoints), `parent_delta` is itself forced to
+#    `100 * expm1(total_sum)`, so dividing two independently-observed
+#    values that are both converging on zero amplifies float noise into
+#    an unbounded share. `_multiplicative_identity_delta(total_sum) /
+#    total_sum` sidesteps that: it is the same quantity in the
+#    `expm1(total) / total -> 1` continuous-compounding limit, computed
+#    from `total_sum` alone rather than from two near-zero observations,
+#    so it stays smooth (no floor, no branch) across the *entire* range,
+#    not just near zero.
+# 2. When the decomposition is only *approximate* -- the factors' combined
+#    log change cancels while the parent still moved for some other
+#    reason -- that limit does not apply: forcing every share toward the
+#    flat 100.0 collapses two real, offsetting moves down to a sum of
+#    ~0%, silently misreporting a parent that plainly did move. In that
+#    case the honest scale is still `parent_delta / total_sum`, however
+#    large a number it produces, because it is the only value under which
+#    the shares keep summing to what the parent actually did; the
+#    decomposition's own identity gap (checked independently, and
+#    reported on the parent as a badge) is what tells the reader not to
+#    trust the individual factors' split.
+def _multiplicative_scale(parent_delta: float, total_sum: float, identity_holds: bool) -> float:
     """Percentage-point scale applied to each child's log ratio (C3)."""
-    if abs(total_sum) < _MULTIPLICATIVE_SCALE_FLOOR:
+    if total_sum == 0.0:
+        # The one true singularity: no finite scale can spread a nonzero
+        # parent delta across children whose combined log change is
+        # exactly zero. The identity's own limit is the least-wrong
+        # answer available; the identity-gap badge (if the parent's
+        # actual move disagrees) still surfaces the shortfall.
         return 100.0
+    if identity_holds:
+        return _multiplicative_identity_delta(total_sum) / total_sum
     return parent_delta / total_sum
 
 
@@ -494,7 +557,8 @@ def _compute_contributions(
                     for child in breakout.children
                 }
                 total_sum = math.fsum(totals.values())
-                scale = _multiplicative_scale(parent_delta, total_sum)
+                holds = _multiplicative_identity_holds(parent_series, total_sum)
+                scale = _multiplicative_scale(parent_delta, total_sum, holds)
                 for child in breakout.children:
                     contribution_by_edge[(parent, child)] = totals[child] * scale
             resid = residuals.get((parent, breakout.key))
