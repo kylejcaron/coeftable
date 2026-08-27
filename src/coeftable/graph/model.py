@@ -224,16 +224,14 @@ def _graph_shared_slot_groups(slots: tuple[Slot, ...]) -> tuple[frozenset[str], 
 
 
 def _graph_partition_rules(
-    group: frozenset[str],
     *,
     card_id: str,
     key: str,
     options: tuple[str, ...],
     rules: tuple[StateRule, ...],
 ) -> tuple[StateRule, ...] | None:
-    """Return exact one-rule-per-option partition rules, if present."""
+    """Return the select's one-rule-per-option partition, if every option has one."""
     governing: list[StateRule] = []
-    selected: set[str] = set()
     for option in options:
         matches = [
             rule
@@ -245,74 +243,168 @@ def _graph_partition_rules(
         ]
         if len(matches) != 1:
             return None
-        rule = matches[0]
-        hidden = set(rule.hide_cards)
-        if not hidden <= group or len(group - hidden) != 1:
-            return None
-        governing.append(rule)
-        selected.update(group - hidden)
-    if selected != group:
-        return None
+        governing.append(matches[0])
     return tuple(governing)
 
 
+def _graph_select_governed_groups(
+    governing: tuple[StateRule, ...],
+    groups: tuple[frozenset[str], ...],
+) -> tuple[tuple[frozenset[str], ...], tuple[tuple[frozenset[str], StateRule], ...]]:
+    """Classify each shared group a select's rules touch.
+
+    A candidate group is any group one of the rules touches. A candidate is
+    strictly governed when every option leaves exactly one member visible,
+    covering the whole group across options. A candidate is instead an
+    ancestor hide when every option either empties it completely or leaves
+    it untouched: that shape belongs to a switcher retiring the group's
+    owner wholesale, not to a governor of the group itself, and each
+    emptying option is validated separately once the real governor is
+    known. Any other shape a select's rules touch a group with is a bug,
+    not a reason to keep looking for another governor.
+    """
+    hidden_by_option = tuple(frozenset(rule.hide_cards) for rule in governing)
+    hidden_union: frozenset[str] = frozenset().union(*hidden_by_option)
+    strict: list[frozenset[str]] = []
+    ancestor: list[tuple[frozenset[str], StateRule]] = []
+    for group in (candidate for candidate in groups if candidate & hidden_union):
+        remaining_by_option = tuple(group - hidden for hidden in hidden_by_option)
+        if all(len(remaining) == 1 for remaining in remaining_by_option):
+            if frozenset().union(*remaining_by_option) != group:
+                raise SpecError("shared slots require one governing external SelectControl")
+            strict.append(group)
+            continue
+        if all(len(remaining) in (0, len(group)) for remaining in remaining_by_option):
+            ancestor.extend(
+                (group, rule)
+                for rule, remaining in zip(governing, remaining_by_option, strict=True)
+                if not remaining
+            )
+            continue
+        raise SpecError("shared slots require one governing external SelectControl")
+    return tuple(strict), tuple(ancestor)
+
+
+def _graph_reject_unguarded_ancestor_hides(
+    ancestor_touches: tuple[tuple[frozenset[str], StateRule], ...],
+    *,
+    resolved: Mapping[frozenset[str], tuple[str, tuple[StateRule, ...]]],
+) -> None:
+    """Require a rule that empties a shared group to also hide its controller."""
+    for group, rule in ancestor_touches:
+        controller, _ = resolved[group]
+        if controller not in rule.hide_cards:
+            raise SpecError(
+                "shared-slot ancestor rule empties a group without hiding its "
+                f"controller {controller!r}"
+            )
+
+
+def _graph_require_controller_hide_obligations(
+    resolved: Mapping[frozenset[str], tuple[str, tuple[StateRule, ...]]],
+    *,
+    rules: tuple[StateRule, ...],
+) -> None:
+    """Require any rule hiding a shared-slot controller to also hide what it governs."""
+    controller_groups: dict[str, frozenset[str]] = {}
+    for group, (controller, _) in resolved.items():
+        controller_groups[controller] = controller_groups.get(controller, frozenset()) | group
+
+    for rule in rules:
+        hidden = frozenset(rule.hide_cards)
+        for controller, members in controller_groups.items():
+            if controller not in hidden:
+                continue
+            left_behind = members - hidden
+            if not left_behind:
+                continue
+            if hidden == frozenset({controller}):
+                raise SpecError("shared-slot controller must never be hidden")
+            raise SpecError(
+                f"shared-slot controller {controller!r} hidden without hiding every "
+                f"member it governs; left visible: {sorted(left_behind)}"
+            )
+
+
 def _graph_resolve_shared_slot_controller(
-    group: frozenset[str],
+    groups: tuple[frozenset[str], ...],
     *,
     cards: Mapping[str, Card],
     rules: tuple[StateRule, ...],
     blockers: Mapping[str, frozenset[frozenset[str]]],
-) -> tuple[str, tuple[StateRule, ...]]:
-    """Resolve the sole external controller and enforce its visibility."""
-    candidates: list[tuple[str, tuple[StateRule, ...]]] = []
+) -> tuple[
+    dict[frozenset[str], tuple[str, tuple[StateRule, ...]]],
+    dict[frozenset[str], frozenset[StateRule]],
+]:
+    """Resolve the sole external controller governing each shared group.
+
+    The controller must sit outside the group it governs, but it need not stay
+    visible: an ancestor rule may hide it, provided that same rule also hides
+    every member of every group it governs. That obligation is enforced
+    separately; this function only resolves who governs what, and collects the
+    ancestor rules that legitimately touch each group.
+    """
+    governors: dict[frozenset[str], list[tuple[str, tuple[StateRule, ...]]]] = {
+        group: [] for group in groups
+    }
+    ancestor_touches: list[tuple[frozenset[str], StateRule]] = []
     for card_id, card in cards.items():
         for key, options in card.control_options().items():
-            if len(options) != len(group):
-                continue
             governing = _graph_partition_rules(
-                group,
-                card_id=card_id,
-                key=key,
-                options=options,
-                rules=rules,
+                card_id=card_id, key=key, options=options, rules=rules
             )
-            if governing is not None:
-                candidates.append((card_id, governing))
+            if governing is None:
+                continue
+            strict_groups, ancestor = _graph_select_governed_groups(governing, groups)
+            for group in strict_groups:
+                governors[group].append((card_id, governing))
+            ancestor_touches.extend(ancestor)
 
-    if any(card_id in group for card_id, _ in candidates):
-        raise SpecError("shared-slot controller must be external to its group")
-    if len(candidates) != 1:
-        raise SpecError("shared slots require one governing external SelectControl")
-    controller, governing = candidates[0]
-    if blockers[controller] or any(controller in rule.hide_cards for rule in rules):
-        raise SpecError("shared-slot controller must never be hidden")
-    return controller, governing
+    resolved: dict[frozenset[str], tuple[str, tuple[StateRule, ...]]] = {}
+    for group, candidates in governors.items():
+        if any(card_id in group for card_id, _ in candidates):
+            raise SpecError("shared-slot controller must be external to its group")
+        if len(candidates) != 1:
+            raise SpecError("shared slots require one governing external SelectControl")
+        controller, governing = candidates[0]
+        if blockers[controller]:
+            raise SpecError("shared-slot controller must never be hidden")
+        resolved[group] = (controller, governing)
+
+    _graph_reject_unguarded_ancestor_hides(tuple(ancestor_touches), resolved=resolved)
+    _graph_require_controller_hide_obligations(resolved, rules=rules)
+
+    ancestor_rules_by_group: dict[frozenset[str], frozenset[StateRule]] = {}
+    for group, rule in ancestor_touches:
+        ancestor_rules_by_group[group] = ancestor_rules_by_group.get(group, frozenset()) | {rule}
+    return resolved, ancestor_rules_by_group
 
 
 def _graph_reject_stray_shared_slot_rules(
     group: frozenset[str],
     *,
     rules: tuple[StateRule, ...],
-    governing: tuple[StateRule, ...],
+    accepted: frozenset[StateRule],
 ) -> None:
-    """Reject card-hiding rules that are not exact partition rules."""
-    governing_set = set(governing)
-    if any(set(rule.hide_cards) & group and rule not in governing_set for rule in rules):
+    """Reject card-hiding rules that are not exact partition or ancestor rules."""
+    if any(set(rule.hide_cards) & group and rule not in accepted for rule in rules):
         raise SpecError("shared-slot rules must be exact governing partition rules")
 
 
 def _graph_shared_slot_proof(
-    group: frozenset[str],
+    groups: tuple[frozenset[str], ...],
     *,
     cards: Mapping[str, Card],
     rules: tuple[StateRule, ...],
     blockers: Mapping[str, frozenset[frozenset[str]]],
 ) -> None:
-    """Require one external select to prove exclusivity for a shared slot."""
-    _, governing = _graph_resolve_shared_slot_controller(
-        group, cards=cards, rules=rules, blockers=blockers
+    """Require one external select to prove exclusivity for every shared position."""
+    resolved, ancestor_rules_by_group = _graph_resolve_shared_slot_controller(
+        groups, cards=cards, rules=rules, blockers=blockers
     )
-    _graph_reject_stray_shared_slot_rules(group, rules=rules, governing=governing)
+    for group, (_, governing) in resolved.items():
+        accepted = frozenset(governing) | ancestor_rules_by_group.get(group, frozenset())
+        _graph_reject_stray_shared_slot_rules(group, rules=rules, accepted=accepted)
 
 
 def _graph_validate_settings(graph: Graph) -> None:
@@ -795,8 +887,9 @@ class Graph:
         visibility_edges = tuple((wire.src, wire.dst) for wire in visibility_wires)
         check_acyclic(node_ids, visibility_edges)
         blockers = blocker_families(node_ids, visibility_edges, collapsible)
-        for group in _graph_shared_slot_groups(slots):
-            _graph_shared_slot_proof(group, cards=cards, rules=rules, blockers=blockers)
+        _graph_shared_slot_proof(
+            _graph_shared_slot_groups(slots), cards=cards, rules=rules, blockers=blockers
+        )
         _graph_validate_rule_controllers(rules, collapsible=collapsible, blockers=blockers)
         object.__setattr__(self, "nodes", tuple(rebound_nodes))
         object.__setattr__(self, "wires", wires)
