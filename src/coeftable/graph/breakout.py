@@ -360,15 +360,20 @@ def _prune_gate_edges(
 ) -> dict[str, tuple[str, ...]]:
     """Block traversal through every gate's reaching children.
 
-    A reaching child is a direct child of the option that keeps the node
-    it gates reachable; leaving that option unselected -- not selecting it
-    -- is what excludes the node, the exact position `_hidden_subtree`
-    always force-hides, regardless of any other incoming edge. Zeroing
-    each one's own outgoing edges here, rather than only removing the edge
-    from its switcher parent, is what keeps this reachability model from
-    disagreeing with what `_hidden_subtree` actually emits: a reaching
-    child with a second incoming edge from elsewhere must not read as
-    leaving some still-live path past it.
+    A reaching child is a direct child of some option that keeps the node
+    it gates reachable. What excludes the node is SELECTING one of the
+    switcher's non-reaching options, which force-hides every reaching
+    alternative at once -- not merely leaving one reaching option
+    unselected, since another reaching option could still be chosen when
+    several of them reach the node.
+
+    Those force-hidden positions are exactly what `_hidden_subtree` hides,
+    regardless of any other incoming edge. Zeroing each one's own outgoing
+    edges here, rather than only removing the edge from its switcher
+    parent, is what keeps this reachability model from disagreeing with
+    what `_hidden_subtree` actually emits: a reaching child with a second
+    incoming edge from elsewhere must not read as leaving some still-live
+    path past it.
     """
     forced_hidden: set[str] = set()
     for reaching in gates.values():
@@ -471,16 +476,19 @@ def _reject_orphanable_descendants(
     selectable.
 
     A descendant that is itself a reaching child of one of its own
-    surviving gates is never orphanable by this check, and needs none:
-    that gate's own switcher unconditionally force-hides it, as a direct
-    child, the instant its alternative is unselected -- the same rule
+    surviving gates is normally not orphanable, and needs no separate
+    guard: that gate's own switcher force-hides it as a direct child the
+    instant a non-reaching option is selected -- the same rule
     `_hidden_subtree` applies -- so it is either hidden outright or
-    visible through its own live, unconditional edge, never left visible
-    with nothing pointing at it. Only a descendant that is *nobody's*
-    direct child -- reachable purely through deeper edges every
-    contributing gate happens to prune -- can end up genuinely
-    unreachable once every surviving gate is pruned together, which is
-    exactly what the reachability check below still catches.
+    visible through its own live edge.
+
+    That is not an absolute exemption, which is why the check below still
+    tests it rather than skipping it. If its switcher parent is itself
+    jointly disconnected by two other surviving gates, then the parent and
+    the child both become unreachable once every gate is pruned together,
+    and the check correctly reports it. The reachability test is the
+    authority here; being somebody's direct child only makes orphaning
+    unlikely, not impossible.
     """
     option_children = _real_option_children(breakout_map)
     if len(option_children) < 2:
