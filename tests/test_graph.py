@@ -1547,7 +1547,13 @@ def test_graph_measure_skip_layer_route_samples_stay_outside_intervening_card():
         )
         for t in (0.25, 0.5, 0.75)
     ]
-    samples.extend((line_x, line_y + t * (control_y3 - line_y)) for t in (0.25, 0.5, 0.75))
+    samples.extend(
+        (
+            first_end_x + t * (line_x - first_end_x),
+            first_end_y + t * (line_y - first_end_y),
+        )
+        for t in (0.0, 0.25, 0.5, 0.75, 1.0)
+    )
     samples.extend(
         cubic(
             (line_x, line_y),
