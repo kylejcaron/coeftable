@@ -9,6 +9,7 @@ when a card starts folded (zero-JS cannot reflow).
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from coeftable.cards.adornments import Adornment, KeyValuePopover, SelectControl
@@ -53,14 +54,21 @@ class CardTemplate:
         )
         return measured
 
-    def render(self, *, theme: Theme = DEFAULT) -> str:
+    def render(
+        self,
+        *,
+        theme: Theme = DEFAULT,
+        control_dom_ids: Mapping[str, str] | None = None,
+    ) -> str:
         """Render the pinned-box shell for this card."""
         chrome = self.chrome
         measured, header_rows, body_rows, chip = measure_card(
             width=self.width, header=self.header, body=self.body, chrome=chrome
         )
         summary_content = measured.header_height - chrome.border_width - chrome.padding
-        header_html = "".join(_wrap(row, theme, chrome) for row in header_rows)
+        header_html = "".join(
+            _wrap(row, theme, chrome, control_dom_ids=control_dom_ids) for row in header_rows
+        )
         chip_html = ""
         if chip is not None:
             chip_value, chip_role = chip
@@ -72,7 +80,9 @@ class CardTemplate:
                 f"max-width:{math.ceil(chip_est)}px;overflow:hidden;"
                 f'text-overflow:ellipsis;color:{_esc(theme.color(chip_role))}">{_esc(chip_value)}</span>'
             )
-        body_html = "".join(_wrap(row, theme, chrome) for row in body_rows)
+        body_html = "".join(
+            _wrap(row, theme, chrome, control_dom_ids=control_dom_ids) for row in body_rows
+        )
         body_block = (
             ""
             if not body_rows

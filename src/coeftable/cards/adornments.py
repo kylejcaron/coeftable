@@ -161,7 +161,7 @@ class KeyValuePopover:
 class SelectControl:
     """A native select. Options are (value, label); selection is by value.
 
-    `key` is a semantic handle for future state rules; state binds to
+    `key` is a semantic handle for graph state rules; state binds to
     (key, option value), never to labels, positions, or DOM ids. The
     renderer never emits `key`.
     """
@@ -177,7 +177,14 @@ class SelectControl:
         _require_entry_tuples(self.options, name="SelectControl.options", arity=2)
         _require_str(self.selected, name="SelectControl.selected")
         _require_optional_str(self.key, name="SelectControl.key")
+        if self.key == "":
+            raise SpecError("SelectControl.key must not be empty")
         values = [value for value, _ in self.options]
+        if any("\r" in value or "\x00" in value for value in values):
+            raise SpecError(
+                "SelectControl.options values must not contain carriage returns or NUL bytes "
+                "(they cannot survive an HTML attribute round-trip)"
+            )
         if len(set(values)) != len(values):
             raise SpecError("SelectControl.options values must be unique")
         if self.selected not in values:
