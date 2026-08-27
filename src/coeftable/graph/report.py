@@ -50,13 +50,16 @@ def _canonical(value: object, *, name: str) -> tuple[object, ...]:
 
 
 def _adornment_natural_width(adornment: Adornment, *, chrome: CardChrome) -> int:
-    """Return the exact pixel width a non-wrapping adornment requires.
+    """Return the modelled pixel width floor an adornment needs.
 
-    `InlineSvg` and `MetricValue` never wrap, so their content dictates a
-    hard floor on section width. Every other adornment wraps to whatever
-    width it is given, but several still enforce their own minimum legible
-    width via `_minimum_inline_width`, measure.py's single source of truth
-    for that floor.
+    `InlineSvg` contributes its declared width, which is exact. `MetricValue`
+    never wraps, so its content dictates a floor, but that floor is an
+    estimate from the character-width ratio rather than a real text
+    measurement. Everything else contributes the minimum legible width from
+    `_minimum_inline_width`, measure.py's single source of truth for that
+    floor; those types then either wrap or clip according to their own kind,
+    so the value here is a lower bound and not a prediction of their final
+    rendered width.
     """
     if isinstance(adornment, InlineSvg):
         return adornment.width
