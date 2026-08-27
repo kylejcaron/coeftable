@@ -36,6 +36,15 @@ from coeftable.cards import (
     TextBlock,
     Trend,
 )
+
+# `text_line_plan` and `_budget` carry the one place a caption's exact
+# greedy-wrap math lives (mirrored by `resolve_rows` at measure time); reusing
+# them here -- rather than re-deriving the same char-budget arithmetic -- is
+# what keeps the line count picked below and the rows `measure_card` actually
+# lays out from drifting apart. `_budget` carries a leading underscore because
+# it is chrome-specific legibility math, not user-facing, but it is the one
+# place this distribution's package boundary needs it crossed.
+from coeftable.cards.measure import _budget, text_line_plan
 from coeftable.errors import SpecError
 from coeftable.format import Format, Number
 from coeftable.graph.breakout import (
@@ -911,11 +920,25 @@ def _build_card(
         content.append(Callout(callout_text, role="unfavorable"))
     has_caption = node_id in topology.roots and caption is not None
     if has_caption:
+        caption_text = _render_caption(caption, weeks=_format_period_count(weeks))
+        # `TextBlock.max_lines` is where `text_line_plan` starts cramming the
+        # unrendered remainder onto the last line instead of giving it its own
+        # row. The caption is the caller's own text, promised to render
+        # verbatim, so there is no fixed cap to pick -- sizing it to however
+        # many lines the text's own greedy wrap actually needs (computed with
+        # the same budget `measure_card` will use for this card's width) means
+        # every word gets a row and the card simply grows to fit, with no line
+        # ever truncated.
+        usable = _ROOT_CARD_WIDTH - 2 * (chrome.padding + chrome.border_width)
+        budget = _budget(usable, chrome.caption_size, chrome.char_width_ratio)
+        needed_lines = len(
+            text_line_plan(caption_text, budget=budget, max_lines=len(caption_text) + 1)
+        )
         content.append(
             TextBlock(
-                _render_caption(caption, weeks=_format_period_count(weeks)),
+                caption_text,
                 variant="caption",
-                max_lines=8,
+                max_lines=needed_lines,
             )
         )
     if resid is not None:

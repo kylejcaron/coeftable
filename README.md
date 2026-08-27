@@ -650,9 +650,11 @@ that trade off against each other week to week) surface a callout hosted on
 one of the participating children, so it stays visible only alongside that
 alternative rather than the parent, which stays visible under every switch.
 The root card renders no text of its own; pass `caption=` to add one. It
-renders verbatim, with a literal `{weeks}` placeholder substituted for the
-observed period count, and defaults to `None`, so nothing renders unless you
-ask for it. If you want a note that edge labels are accounting, not causal
+renders verbatim, however long it is — it wraps across as many lines as it
+needs and the card grows to fit, so nothing is ever cut off — with a literal
+`{weeks}` placeholder substituted for the observed period count, and
+defaults to `None`, so nothing renders unless you ask for it.
+If you want a note that edge labels are accounting, not causal
 claims, that wording is yours to choose — for example
 `caption="Edge labels are an accounting of the realized {weeks}-week
 change, not causal impact."` `events` fan out to every card named in their

@@ -21,6 +21,7 @@ from coeftable.graph import DriverTree, GraphReport
 from coeftable.graph.breakout import Breakout
 from coeftable.graph.driver_tree import (
     _CARD_WIDTH,
+    _ROOT_CARD_WIDTH,
     _compute_contributions,
     _Topology,
 )
@@ -169,6 +170,31 @@ def _tradeoff_fixture() -> GraphReport:
             Breakout(key="alt", label="by alt", op="+", children=("c", "d")),
         )
     }
+    return DriverTree(series, titles, breakouts, _FMT, x)
+
+
+def _tradeoff_duplicate_titles_fixture() -> GraphReport:
+    """Same trade-off pair as `_tradeoff_fixture`, but `a` and `b` -- the two
+    children that actually participate in the trade-off -- share one title.
+    A host lookup keyed by title, rather than by id, could resolve that
+    shared title back to whichever sibling happens to win the collision;
+    `tradeoff_pairs` always returns `a` first here, so `a` must host the
+    warning regardless of the duplicate title."""
+    import math
+
+    a_changes = [0.3, 0.1, 0.25, 0.05]
+    b_changes = [-0.2 * change - 0.5 for change in a_changes]  # linear in a_changes => r == -1.0
+    a = [100.0]
+    for change in a_changes:
+        a.append(a[-1] * math.exp(change))
+    b = [100.0]
+    for change in b_changes:
+        b.append(b[-1] * math.exp(change))
+    parent = tuple(x + y for x, y in zip(a, b, strict=True))
+    x = (0.0, 1.0, 2.0, 3.0, 4.0)
+    titles = {"combo": "Combo", "a": "Shared Metric", "b": "Shared Metric"}
+    series = {"combo": parent, "a": tuple(a), "b": tuple(b)}
+    breakouts = {"combo": (Breakout(key="split", label="by split", op="+", children=("a", "b")),)}
     return DriverTree(series, titles, breakouts, _FMT, x)
 
 
@@ -328,6 +354,23 @@ def test_no_caption_renders_by_default():
     report = _fixture()
     card = dict(report.graph.nodes)["revenue"]
     assert not any(isinstance(item, TextBlock) for item in card.content)
+
+
+def test_a_captionless_root_matches_every_other_cards_width():
+    # The root is only widened to fit a caption; with none supplied it must
+    # stay the same width as its non-root siblings, not the wider caption
+    # allowance.
+    report = _fixture()
+    cards = dict(report.graph.nodes)
+    assert cards["revenue"].width == _CARD_WIDTH
+    assert cards["revenue"].width == cards["users"].width
+
+
+def test_a_captioned_root_is_wider_than_a_captionless_card():
+    report = _fixture(caption="a supplied caption")
+    cards = dict(report.graph.nodes)
+    assert cards["revenue"].width == _ROOT_CARD_WIDTH
+    assert cards["revenue"].width > cards["users"].width
 
 
 def _wide_span_fixture() -> GraphReport:
@@ -1402,3 +1445,19 @@ def test_a_trade_off_warning_hides_with_the_alternative_it_describes():
     assert all(split_host <= set(rule.hide_cards) for rule in other_option_rules), (
         f"host {split_host} must be hidden once combo switches away from split"
     )
+
+
+def test_a_trade_off_host_resolves_by_id_when_sibling_titles_collide():
+    # `a` and `b` share a title in this fixture. If the host were still
+    # resolved by title -- the bug this lookup was changed to fix -- the
+    # shared title could resolve to the wrong sibling. `tradeoff_pairs`
+    # returns breakout children in order, so `a` must host the warning and
+    # `b` must not, regardless of the identical titles.
+    report = _tradeoff_duplicate_titles_fixture()
+    cards = dict(report.graph.nodes)
+
+    def _has_tradeoff_callout(card):
+        return any(isinstance(item, Callout) and "trade-off" in item.text for item in card.content)
+
+    assert _has_tradeoff_callout(cards["a"])
+    assert not _has_tradeoff_callout(cards["b"])
