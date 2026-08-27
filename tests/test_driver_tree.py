@@ -13,7 +13,7 @@ from dataclasses import replace
 import pytest
 
 from coeftable.cards.chrome import DEFAULT_CHROME, CardChrome
-from coeftable.cards.regions import Trend
+from coeftable.cards.regions import Metric, Trend
 from coeftable.errors import SpecError
 from coeftable.format import Number, Percent
 from coeftable.graph import DriverTree, GraphReport
@@ -462,6 +462,14 @@ def _trend_for(report: GraphReport, node_id: str) -> Trend:
     raise AssertionError(f"no Trend region on {node_id!r}")
 
 
+def _metric_for(report: GraphReport, node_id: str) -> Metric:
+    card = dict(report.graph.nodes)[node_id]
+    for region in card.content:
+        if isinstance(region, Metric):
+            return region
+    raise AssertionError(f"no Metric region on {node_id!r}")
+
+
 def test_a_residual_touching_zero_renders_without_a_ribbon():
     report = _zero_residual_fixture()
     trend = _trend_for(report, "resid_budget_channel_b")
@@ -609,9 +617,13 @@ def test_a_custom_level_fmt_formats_only_the_trend_not_the_headline():
     )
     trend = _trend_for(report, "root")
     assert trend.fmt(6.0) == "$6.000"
-    html = report.as_raw_html()
-    assert "$6.000" in html  # the Trend endpoint takes level_fmt
-    assert "6.0" in html  # the headline Metric keeps its own fixed format
+    # Inspect the headline's own resolved region rather than searching the
+    # whole document: "6.0" is a substring of "$6.000", so a text search
+    # cannot tell the two formatters apart.
+    metric = _metric_for(report, "root")
+    assert metric.fmt is not trend.fmt
+    assert not metric.fmt(6.0).startswith("$")
+    assert "$6.000" in report.as_raw_html()  # the Trend endpoint takes level_fmt
 
 
 def test_a_custom_chrome_is_threaded_through_every_card():

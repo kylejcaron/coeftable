@@ -27,6 +27,7 @@ _DASH_ARRAY = {"solid": None, "dashed": "2,2", "dotted": "1,2"}
 
 _INSET = 8
 _TITLE_Y = 13.0
+_TITLE_FONT_SIZE = 11
 _LABEL_ROWS = (26.0, 44.0)
 _SPINE_MARGIN = 24.0
 _TICK_LEN = 4.0
@@ -212,9 +213,13 @@ def timeline_strip(
     project = _projector((low, high), width, _INSET)
     spine_y = height - _SPINE_MARGIN
 
+    # The title starts at the left inset, so its budget is everything up to the
+    # opposite inset. A long custom title would otherwise paint past the
+    # declared width, which breaks the exact-measurement guarantee.
+    title_text = _clip_label(title, max(width - 2 * _INSET, 0.0), _TITLE_FONT_SIZE)
     parts = [
         f'<text x="{_INSET:.2f}" y="{_TITLE_Y:.2f}" fill="{_esc(theme.text)}" '
-        f'font-size="11" font-weight="600">{_esc(title)}</text>',
+        f'font-size="{_TITLE_FONT_SIZE}" font-weight="600">{_esc(title_text)}</text>',
         f'<line x1="{_INSET:.2f}" y1="{spine_y:.2f}" x2="{width - _INSET:.2f}" '
         f'y2="{spine_y:.2f}" stroke="{_esc(theme.axis)}" stroke-width="1"/>',
     ]

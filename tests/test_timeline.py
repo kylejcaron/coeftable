@@ -13,6 +13,7 @@ from coeftable.graph.timeline import (
     _MIN_HEIGHT,
     _MIN_WIDTH,
     _TICK_FONT_SIZE,
+    _TITLE_FONT_SIZE,
     TimelineEvent,
     _clip_label,
     _projector,
@@ -270,3 +271,16 @@ def test_strip_keeps_multi_digit_boundary_tick_labels_inside_the_declared_width(
         half = len(label) * _TICK_FONT_SIZE * _CHAR_WIDTH_RATIO / 2
         assert float(x_text) - half >= 0.0
         assert float(x_text) + half <= 400
+
+
+def test_strip_clips_a_long_title_to_the_declared_width():
+    # A long custom title starting at the left inset would otherwise paint past
+    # the declared width and break exact measurement.
+    long_title = "Timeline " * 20
+    strip = timeline_strip(
+        _events(), x_domain=(0.0, 11.0), width=_MIN_WIDTH + 32, theme=DEFAULT, title=long_title
+    )
+    rendered = strip.svg.split('font-weight="600">')[1].split("</text>")[0]
+    assert rendered != html.escape(long_title)
+    budget = strip.width - 2 * _INSET
+    assert len(rendered) * _TITLE_FONT_SIZE * _CHAR_WIDTH_RATIO <= budget + _TITLE_FONT_SIZE
