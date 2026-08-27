@@ -1837,6 +1837,37 @@ def test_graph_ladder_gap_boundaries_reject_and_accept_exactly():
     assert build(57, collapsible=("left",)).measure().width > 0
 
 
+def test_graph_ladder_depth_is_tracked_per_band_not_graph_wide():
+    # Band 0 stacks three labels (depth 2, no nubs -> needs 28 + 2*15 = 58);
+    # band 1 holds a single label beside t's nub (depth 0 -> needs 42).
+    # Under a graph-wide maximum the shared band would demand 42 + 30 = 72
+    # and reject this layout.
+    nodes = (
+        ("s0", Card("S0", width=90)),
+        ("s1", Card("S1", width=90)),
+        ("s2", Card("S2", width=90)),
+        ("t", Card("T", width=90)),
+        ("u", Card("U", width=90)),
+    )
+    slots = (
+        Slot("s0", 0, 0),
+        Slot("s1", 0, 1),
+        Slot("s2", 0, 2),
+        Slot("t", 1, 0),
+        Slot("u", 2, 0),
+    )
+    wires = (
+        Wire("w0", "s0", "t", label="overlapping"),
+        Wire("w1", "s1", "t", label="overlapping"),
+        Wire("w2", "s2", "t", label="overlapping"),
+        Wire("w3", "t", "u", label="solo"),
+    )
+    graph = Graph(nodes, Slotted(slots), wires=wires, collapsible=("t",), layer_gap=58)
+    assert graph._layout.label_band_depths == ((0, 2), (1, 0))
+    with pytest.raises(SpecError, match="to fit the stacked wire labels"):
+        Graph(nodes, Slotted(slots), wires=wires, collapsible=("t",), layer_gap=57)
+
+
 def test_metric_tree_derives_a_gap_that_fits_labeled_merges():
     nodes = (
         ("a", Card("A", width=90)),
@@ -1849,6 +1880,13 @@ def test_metric_tree_derives_a_gap_that_fits_labeled_merges():
     assert tree.measure().width > 0
     explicit = MetricTree(nodes, edges, fmt=lambda value: f"{value:+.6f}", layer_gap=80)
     assert explicit.layer_gap == 80
+
+
+def test_metric_tree_rejects_invalid_chrome_before_deriving_the_gap():
+    nodes = (("a", Card("A")), ("b", Card("B")))
+    edges = (("a", "b", 1.0),)
+    with pytest.raises(SpecError, match="MetricTree chrome must be a CardChrome"):
+        MetricTree(nodes, edges, fmt=str, chrome=cast(Any, 7))
 
 
 def test_graph_measure_skip_layer_route_samples_stay_outside_intervening_card():

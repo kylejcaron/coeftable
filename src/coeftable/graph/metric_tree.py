@@ -201,6 +201,9 @@ def MetricTree(
         raise SpecError("MetricTree fmt must be callable")
     if direction not in _DIRECTIONS:
         raise SpecError("MetricTree direction must be valid")
+    if not isinstance(chrome, CardChrome):
+        # The derived gap reads chrome metrics before Graph validates it.
+        raise SpecError("MetricTree chrome must be a CardChrome")
 
     node_entries = _nodes(nodes)
     node_ids = tuple(node_id for node_id, _ in node_entries)
