@@ -173,7 +173,7 @@ def _slots(
         for index, node_id in enumerate(ordered):
             barycenter = barycenters[node_id]
             lower = (slot_by_id[ordered[index - 1]] + 1) if index else 0
-            upper = max_used - (len(ordered) - 1 - index)
+            upper = max(max_used, lower)
             slot_by_id[node_id] = max(lower, min(round(barycenter), upper))
         max_used = max(max_used, slot_by_id[ordered[-1]])
     return tuple(Slot(node_id, layers[node_id], slot_by_id[node_id]) for node_id in node_ids)

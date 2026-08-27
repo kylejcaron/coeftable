@@ -722,6 +722,46 @@ def test_graph_accepts_one_way_hidden_option_controllers():
     assert graph.rules[0].hide_cards == ("downstream",)
 
 
+def test_graph_rejects_injected_rule_cycle_with_derived_nub_dependency():
+    controller = Card(
+        "controller",
+        content=(SelectControl("Mode", (("on", "On"),), selected="on", key="mode"),),
+    )
+    rule = StateRule(
+        (Atom(ControlRef("controller", "mode"), "option_checked", "on"),),
+        hide_cards=("ancestor",),
+    )
+    with pytest.raises(
+        SpecError,
+        match=re.escape("state rule controller dependencies must be acyclic"),
+    ):
+        _plain_graph(
+            nodes=(("ancestor", Card("Ancestor")), ("controller", controller)),
+            slots=(Slot("ancestor", 0, 0), Slot("controller", 1, 0)),
+            wires=(Wire("ancestry", "ancestor", "controller"),),
+            collapsible=("ancestor",),
+            rules=(rule,),
+        )
+
+
+def test_graph_accepts_injected_rule_without_collapsible_ancestry():
+    controller = Card(
+        "controller",
+        content=(SelectControl("Mode", (("on", "On"),), selected="on", key="mode"),),
+    )
+    rule = StateRule(
+        (Atom(ControlRef("controller", "mode"), "option_checked", "on"),),
+        hide_cards=("ancestor",),
+    )
+    graph = _plain_graph(
+        nodes=(("ancestor", Card("Ancestor")), ("controller", controller)),
+        slots=(Slot("ancestor", 0, 0), Slot("controller", 1, 0)),
+        wires=(Wire("ancestry", "ancestor", "controller"),),
+        rules=(rule,),
+    )
+    assert graph.rules == (rule,)
+
+
 @pytest.mark.parametrize(
     ("kwargs", "message"),
     [
@@ -1704,6 +1744,20 @@ def test_metric_tree_slots_clamp_parents_and_keep_orphans_rightward():
     slots = {slot.card_id: slot.slot for slot in graph.layout.slots}
     assert 4 <= slots["parent"] <= 5
     assert slots["orphan"] > slots["parent"]
+
+
+def test_metric_tree_orphans_flow_around_parent_barycenter():
+    nodes = tuple(
+        (node_id, Card(node_id)) for node_id in ("parent", "c0", "c1", "c2", "orphan1", "orphan2")
+    )
+    graph = _metric_tree(
+        nodes,
+        (("parent", "c0", 1.0), ("parent", "c1", 1.0), ("parent", "c2", 1.0)),
+    )
+    slots = {slot.card_id: slot.slot for slot in graph.layout.slots}
+    assert slots["parent"] == 1
+    assert slots["orphan1"] == 2
+    assert slots["orphan2"] == 3
 
 
 def test_metric_tree_childless_rank_is_within_layer_not_global():

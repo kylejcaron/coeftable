@@ -442,20 +442,36 @@ def _graph_rules(
     return cast(tuple[StateRule, ...], rules)
 
 
-def _graph_validate_rule_controllers(rules: tuple[StateRule, ...]) -> None:
-    """Reject cycles in the hide dependencies between rule controllers."""
-    controller_order = tuple(
+def _graph_validate_rule_controllers(
+    rules: tuple[StateRule, ...],
+    *,
+    collapsible: tuple[str, ...],
+    blockers: Mapping[str, frozenset[frozenset[str]]],
+) -> None:
+    """Reject cycles in the explicit and derived hide dependencies."""
+    condition_controllers = tuple(
         dict.fromkeys(atom.control.card_id for rule in rules for atom in rule.when_all)
     )
-    controllers = set(controller_order)
-    outgoing: dict[str, list[str]] = {controller: [] for controller in controller_order}
+    outgoing: dict[str, list[str]] = {controller: [] for controller in condition_controllers}
+
+    # A collapsible card's nub can hide any card for which it is a member of
+    # at least one minimal blocker set.  Include those derived dependencies in
+    # the same graph as injected rules so the two kinds cannot form a cycle.
+    for source in collapsible:
+        for target, family in blockers.items():
+            if any(source in blocker for blocker in family):
+                outgoing.setdefault(source, [])
+                outgoing.setdefault(target, [])
+                if target not in outgoing[source]:
+                    outgoing[source].append(target)
+
     for rule in rules:
         condition_controllers = tuple(
             dict.fromkeys(atom.control.card_id for atom in rule.when_all)
         )
         for source in condition_controllers:
             for target in rule.hide_cards:
-                if target in controllers and target not in outgoing[source]:
+                if target in outgoing and target not in outgoing[source]:
                     outgoing[source].append(target)
 
     for source, targets in outgoing.items():
@@ -672,7 +688,7 @@ class Graph:
         blockers = blocker_families(node_ids, visibility_edges, collapsible)
         for group in _graph_shared_slot_groups(slots):
             _graph_shared_slot_proof(group, cards=cards, rules=rules, blockers=blockers)
-        _graph_validate_rule_controllers(rules)
+        _graph_validate_rule_controllers(rules, collapsible=collapsible, blockers=blockers)
         object.__setattr__(self, "nodes", tuple(rebound_nodes))
         object.__setattr__(self, "wires", wires)
         object.__setattr__(self, "collapsible", collapsible)
