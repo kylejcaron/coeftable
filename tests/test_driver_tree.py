@@ -8,6 +8,7 @@ whatever the implementation happens to emit.
 
 import math
 import re
+from collections.abc import Callable
 from dataclasses import replace
 
 import pytest
@@ -28,7 +29,7 @@ from coeftable.graph.driver_tree import (
     _Topology,
 )
 from coeftable.graph.honesty import RESIDUAL_WARN, identity_gap, log_ratio
-from coeftable.graph.timeline import TimelineEvent
+from coeftable.graph.timeline import TimelineEvent, default_period_label
 from coeftable.svg import _projector
 
 _FMT = Percent(decimals=1)
@@ -40,6 +41,7 @@ def _fixture(
     events: tuple[TimelineEvent, ...] | None = None,
     caption: str | None = None,
     strip_title: str | None = None,
+    period_label: Callable[[float], str] = default_period_label,
 ) -> GraphReport:
     """A two-way revenue switcher (drivers x vs. region +), both exact."""
     x = (0.0, 1.0, 2.0, 3.0)
@@ -72,6 +74,7 @@ def _fixture(
         chrome=chrome,
         caption=caption,
         strip_title=strip_title,
+        period_label=period_label,
     )
 
 
@@ -386,7 +389,7 @@ def test_a_captioned_root_is_wider_than_a_captionless_card():
 
 def _wide_span_fixture() -> GraphReport:
     """Same identity shape as `_fixture`, but `x` is irregularly spaced with
-    a span of 20 units rather than 3: pins a caption's `{weeks}` substitution
+    a span of 20 units rather than 3: pins a caption's `{periods}` substitution
     to the coordinates' own span, not to `len(x) - 1`."""
     x = (0.0, 10.0, 20.0)
     titles = {"total": "Total", "a": "A", "b": "B"}
@@ -396,10 +399,10 @@ def _wide_span_fixture() -> GraphReport:
         "b": (40.0, 44.0, 48.4),
     }
     breakouts = {"total": (Breakout(key="split", label="by split", op="+", children=("a", "b")),)}
-    return DriverTree(series, titles, breakouts, _FMT, x, caption="realized {weeks}-week change")
+    return DriverTree(series, titles, breakouts, _FMT, x, caption="realized {periods}-week change")
 
 
-def test_a_captions_weeks_placeholder_describes_the_actual_span_not_the_observation_count():
+def test_a_captions_periods_placeholder_describes_the_actual_span_not_the_observation_count():
     html = _wide_span_fixture().as_raw_html()
     assert "realized 20-week change" in html
     assert "realized 2-week change" not in html
@@ -417,10 +420,10 @@ def _fractional_span_fixture() -> GraphReport:
         "b": (40.0, 44.0, 48.4),
     }
     breakouts = {"total": (Breakout(key="split", label="by split", op="+", children=("a", "b")),)}
-    return DriverTree(series, titles, breakouts, _FMT, x, caption="realized {weeks}-week change")
+    return DriverTree(series, titles, breakouts, _FMT, x, caption="realized {periods}-week change")
 
 
-def test_a_captions_weeks_placeholder_formats_a_fractional_span_without_a_trailing_zero():
+def test_a_captions_periods_placeholder_formats_a_fractional_span_without_a_trailing_zero():
     html = _fractional_span_fixture().as_raw_html()
     assert "realized 2.5-week change" in html
 
@@ -430,20 +433,45 @@ def test_a_supplied_caption_renders_verbatim():
     assert "Ask finance before repeating these numbers." in html
 
 
-def test_a_supplied_caption_still_substitutes_weeks():
-    html = _fixture(caption="Covers the last {weeks} weeks only.").as_raw_html()
+def test_a_supplied_caption_still_substitutes_periods():
+    html = _fixture(caption="Covers the last {periods} weeks only.").as_raw_html()
     assert "Covers the last 3 weeks only." in html
 
 
 def test_a_supplied_caption_with_unrelated_braces_does_not_raise():
-    text = "Formula: {a} + {b} is literal text, only {weeks} is substituted."
+    text = "Formula: {a} + {b} is literal text, only {periods} is substituted."
     html = _fixture(caption=text).as_raw_html()
     assert "Formula: {a} + {b} is literal text, only 3 is substituted." in html
+
+
+def test_the_old_weeks_placeholder_no_longer_substitutes():
+    # {weeks} was the pre-cutover spelling; the rename to {periods} is a
+    # clean cutover with no back-compat alias, so {weeks} must now survive
+    # verbatim in the rendered caption instead of being replaced.
+    html = _fixture(caption="Covers the last {weeks} weeks only.").as_raw_html()
+    assert "Covers the last {weeks} weeks only." in html
 
 
 def test_caption_must_be_a_str_or_none():
     with pytest.raises(SpecError, match="caption must be a str or None"):
         _fixture(caption=123)  # ty: ignore[invalid-argument-type]
+
+
+def test_period_label_must_be_callable():
+    with pytest.raises(SpecError, match="period_label must be callable"):
+        _fixture(period_label="not callable")  # ty: ignore[invalid-argument-type]
+
+
+def test_a_custom_period_label_labels_both_the_strip_and_every_card_axis():
+    # period_label is the one parameter that makes the report period-neutral:
+    # it must reach both the shared timeline strip's ticks/pins and each
+    # card's own sparkline axis, so the two agree on notation.
+    def month_label(index: float) -> str:
+        return f"M{int(index)}"
+
+    html = _fixture(period_label=month_label).as_raw_html()
+    assert re.search(r">M\d+<", html)
+    assert not re.search(r">W\d+<", html)
 
 
 def test_an_event_reaches_every_affected_card_and_no_others():
@@ -756,7 +784,7 @@ def test_large_magnitude_unequal_spacing_is_refused_not_swallowed():
         DriverTree(series, titles, breakouts, _FMT, x)
 
 
-def test_equal_non_unit_spacing_is_accepted_with_a_correct_weeks_substitution():
+def test_equal_non_unit_spacing_is_accepted_with_a_correct_periods_substitution():
     """Coordinates need not be unit-spaced, only *evenly* spaced."""
     x = (0.0, 7.0, 14.0, 21.0)
     titles = {"p": "P", "a": "A", "b": "B"}
@@ -768,7 +796,7 @@ def test_equal_non_unit_spacing_is_accepted_with_a_correct_weeks_substitution():
     }
     breakouts = {"p": (Breakout(key="k", label="K", op="+", children=("a", "b")),)}
     html = DriverTree(
-        series, titles, breakouts, _FMT, x, caption="realized {weeks}-week change"
+        series, titles, breakouts, _FMT, x, caption="realized {periods}-week change"
     ).as_raw_html()
     assert "realized 21-week change" in html
 

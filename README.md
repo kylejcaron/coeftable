@@ -654,12 +654,12 @@ wraps to fit the card using an estimated character width, growing across
 as many lines as that estimate needs. Runs of whitespace collapse to a
 single space and line breaks are not preserved, and unusually wide text
 can still be clipped on a line, since the wrap is an estimate rather than
-a font measurement. A literal `{weeks}` placeholder is substituted for the
+a font measurement. A literal `{periods}` placeholder is substituted for the
 observed period count, and `caption` defaults to `None`, so nothing
 renders unless you ask for it.
 If you want a note that edge labels are accounting, not causal
 claims, that wording is yours to choose — for example
-`caption="Edge labels are an accounting of the realized {weeks}-week
+`caption="Edge labels are an accounting of the realized {periods}-week
 change, not causal impact."` `events` fan out to every card named in their
 `affects` tuple, both as sparkline markers and as captions, and the
 report's header is a timeline strip indexing them across the whole canvas.
@@ -668,6 +668,17 @@ one, since only you know whether your events are deploys, holidays, or
 experiments. With neither events nor a `strip_title` there is nothing to
 index and no heading to show, so the strip is omitted rather than reserving
 space for a bare axis; supplying either one brings it back.
+
+Tick labels on the strip, each event pin's trailing period text, and every
+card's own sparkline x axis all come from one callable, `period_label`: it
+maps a zero-based period index to display text and defaults to
+`coeftable.graph.timeline.default_period_label` (`W1`, `W2`, ...), which is
+why a report built with no `period_label` argument renders exactly the
+weekly labels used above. Pass your own, e.g.
+`period_label=lambda i: f"M{int(i) + 1}"`, and it reaches the strip's ticks,
+its event pins, and every card's axis together — the one parameter that
+makes a report period-neutral, so monthly, daily, or quarterly data renders
+its own correct labels instead of a hardcoded week count.
 
 **Switchers can nest.** Every level of the tree may carry its own switcher at
 the same time — revenue by drivers or region, and within drivers, active users

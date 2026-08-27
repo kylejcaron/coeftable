@@ -24,6 +24,7 @@ from coeftable.graph.timeline import (
     _projector,
     _tick_positions,
     _tick_stride,
+    default_period_label,
     events_for,
     timeline_strip,
 )
@@ -363,8 +364,8 @@ def test_strip_tick_stride_respects_the_hard_cap_when_label_room_alone_would_not
     # one tick per integer, far past the hard cap.
     low, high, width = 0.0, 1000.0, 100_000
     cap_floor = (high - low) / (_TICK_MAX_COUNT - 1)
-    assert _min_tick_gap(low, high, width) < cap_floor
-    assert _tick_stride(low, high, width) >= cap_floor
+    assert _min_tick_gap(low, high, width, default_period_label) < cap_floor
+    assert _tick_stride(low, high, width, default_period_label) >= cap_floor
 
     strip = timeline_strip((), x_domain=(low, high), width=width, theme=DEFAULT)
     ticks = re.findall(r'<text x="([\d.]+)"[^>]*text-anchor="(\w+)">(W[^<]*)</text>', strip.svg)
@@ -379,13 +380,13 @@ def test_strip_replaces_a_near_endpoint_regular_tick_with_the_endpoint():
     # near-boundary regular tick is replaced by the endpoint instead of
     # appended alongside it.
     low, high, width = 0.0, 11.0, 200
-    stride = _tick_stride(low, high, width)
+    stride = _tick_stride(low, high, width, default_period_label)
     start, end = math.ceil(low), math.floor(high)
     regular_grid = list(range(start, end, stride))
     assert regular_grid  # sanity: this domain does produce a regular grid to replace from
-    assert end - regular_grid[-1] < _min_tick_gap(low, high, width)
+    assert end - regular_grid[-1] < _min_tick_gap(low, high, width, default_period_label)
 
-    ticks = _tick_positions(low, high, width)
+    ticks = _tick_positions(low, high, width, default_period_label)
     assert ticks[-1] == end
     assert regular_grid[-1] not in ticks
 
@@ -466,3 +467,103 @@ def test_a_supplied_title_is_the_only_non_tick_text():
     painted = re.findall(r"<text\b[^>]*>(.*?)</text>", strip.svg)
     non_ticks = [text for text in painted if not re.fullmatch(r"W\d+", text)]
     assert non_ticks == ["Release windows"]
+
+
+def test_default_output_is_unchanged_and_ticks_still_read_w1_w2_and_so_on():
+    # Callers who pass nothing must render exactly what they did before
+    # `period_label` existed.
+    strip_implicit = timeline_strip(_events(), x_domain=(0.0, 11.0), width=400, theme=DEFAULT)
+    strip_explicit = timeline_strip(
+        _events(),
+        x_domain=(0.0, 11.0),
+        width=400,
+        theme=DEFAULT,
+        period_label=default_period_label,
+    )
+    assert strip_implicit.svg == strip_explicit.svg
+
+    ticks = re.findall(r'<text x="[\d.]+"[^>]*text-anchor="\w+">(W\d+)</text>', strip_implicit.svg)
+    assert ticks == [f"W{i + 1}" for i in range(12)]
+
+
+def test_strip_wires_a_custom_period_label_to_ticks_pins_and_spacing():
+    x_domain = (0.0, 200.0)
+    width = 400
+
+    def wide_label(index: float) -> str:
+        return f"Period {int(index) + 1:04d} of the fiscal calendar year"
+
+    event = TimelineEvent(at=50.0, label="launch", color="#c33", affects=("a",))
+
+    default_strip = timeline_strip((event,), x_domain=x_domain, width=width, theme=DEFAULT)
+    custom_strip = timeline_strip(
+        (event,), x_domain=x_domain, width=width, theme=DEFAULT, period_label=wide_label
+    )
+
+    default_tick_count = default_strip.svg.count("<text") - len(
+        _event_label_fragments(default_strip.svg)
+    )
+    custom_tick_count = custom_strip.svg.count("<text") - len(
+        _event_label_fragments(custom_strip.svg)
+    )
+    assert default_tick_count == len(_tick_positions(*x_domain, width, default_period_label))
+    assert custom_tick_count == len(_tick_positions(*x_domain, width, wide_label))
+    # The wide formatter must spread ticks out further, so the same domain
+    # and width render strictly fewer of them.
+    assert custom_tick_count < default_tick_count
+
+    # The event pin carries the custom label too, unclipped here since the
+    # projected x sits centred with ample budget on both sides.
+    (fragment,) = _event_label_fragments(custom_strip.svg)
+    _, _, text = _parse_label_fragment(fragment)
+    assert text == f"launch \u00b7 {wide_label(event.at)}"
+
+    # Isolated proof that the wider label -- not something else -- is what
+    # coarsens the stride: `_min_tick_gap`/`_tick_stride` widen when fed the
+    # custom formatter over the identical domain and width.
+    assert _min_tick_gap(*x_domain, width, wide_label) > _min_tick_gap(
+        *x_domain, width, default_period_label
+    )
+    assert _tick_stride(*x_domain, width, wide_label) > _tick_stride(
+        *x_domain, width, default_period_label
+    )
+
+
+def test_strip_clips_a_pathological_period_label_to_the_declared_width():
+    # A formatter is caller-supplied and may return anything, including
+    # something absurdly long. It must go through the same clipping as
+    # every other label rather than painting past the declared width.
+    width = _MIN_WIDTH + 32
+
+    def absurd_label(index: float) -> str:
+        return "X" * 500
+
+    event = TimelineEvent(at=2.0, label="e", color="#c33", affects=("a",))
+    strip = timeline_strip(
+        (event,),
+        x_domain=(0.0, 5.0),
+        width=width,
+        theme=DEFAULT,
+        period_label=absurd_label,
+    )
+
+    ticks = re.findall(r'<text x="([\d.]+)"[^>]*text-anchor="(\w+)">(X*\u2026?)</text>', strip.svg)
+    assert ticks
+    for x_text, anchor, label in ticks:
+        assert len(label) < 500  # actually clipped, not painted whole
+        span = len(label) * _TICK_FONT_SIZE * _CHAR_WIDTH_RATIO
+        x = float(x_text)
+        low, high = {
+            "start": (x, x + span),
+            "end": (x - span, x),
+            "middle": (x - span / 2, x + span / 2),
+        }[anchor]
+        assert low >= -0.5
+        assert high <= width + 0.5
+
+    (fragment,) = _event_label_fragments(strip.svg)
+    x, anchor, text = _parse_label_fragment(fragment)
+    assert text != f"e \u00b7 {absurd_label(event.at)}"  # confirms clipping actually happened
+    left, right = _label_extent(x, anchor, text)
+    assert left >= -0.5
+    assert right <= width + 0.5
