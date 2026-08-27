@@ -42,7 +42,7 @@ from coeftable.graph.breakout import (
     Breakout,
     breakout_control,
     partition_rules,
-    reject_nested_switchers,
+    reject_switcher_conjunctions,
 )
 from coeftable.graph.honesty import (
     RESIDUAL_FAIL,
@@ -914,9 +914,12 @@ def DriverTree(
     # this must run before any statistics or layout work touches `edges`.
     check_acyclic(topology.node_order, edges)
 
-    # `reject_nested_switchers` runs before any honesty arithmetic, so the
-    # clearest error (naming the two nested switcher parents) surfaces first.
-    reject_nested_switchers(topology.switcher_parents, edges)
+    # `reject_switcher_conjunctions` runs before any honesty arithmetic, so
+    # the clearest error (naming the descendant and its two independent
+    # gating switchers) surfaces first. Nesting is legal and passes
+    # straight through; only a genuine conjunction across two switchers
+    # with no ordering between them is refused.
+    reject_switcher_conjunctions(topology.switcher_parents, edges)
 
     rep = _build_rep_mapping(topology)
     node_role = _compute_node_roles(topology.node_order, node_series, direction)

@@ -7,7 +7,7 @@ from coeftable.graph.breakout import (
     Breakout,
     breakout_control,
     partition_rules,
-    reject_nested_switchers,
+    reject_switcher_conjunctions,
 )
 
 
@@ -294,15 +294,85 @@ def test_shared_position_layout_is_materially_more_compact_than_distinct_positio
     assert shared_width < distinct_width * 0.6
 
 
-def test_nested_switchers_are_rejected_with_a_rule_not_an_internal_message():
-    edges = (("revenue", "users"), ("users", "new"), ("users", "ios"))
-    with pytest.raises(SpecError, match="at most one breakout switcher"):
-        reject_nested_switchers(("revenue", "users"), edges)
+def test_switching_the_outermost_option_away_hides_the_nested_switcher_and_its_alternatives():
+    # `users` (a `drivers` child) is itself a switcher: `funnel` x vs
+    # `country` +. Selecting `region` on the outer switcher must hide
+    # `users` -- the nested switcher's own card -- and every one of its
+    # alternatives' cards, checked from the compiled/rendered rules, not
+    # just the `hide_cards` field.
+    breakouts = _two_way()
+    nested = (
+        Breakout(key="funnel", label="by funnel", op="x", children=("sessions", "conv")),
+        Breakout(key="country", label="by country", op="+", children=("cohort_a", "cohort_b")),
+    )
+    edges = (
+        ("revenue", "users"),
+        ("revenue", "aov"),
+        ("revenue", "us"),
+        ("revenue", "eu"),
+        ("users", "sessions"),
+        ("users", "conv"),
+        ("users", "cohort_a"),
+        ("users", "cohort_b"),
+    )
+    control = breakout_control(breakouts, key="rev_breakout")
+    nested_control = breakout_control(nested, key="users_breakout")
+    nodes = (
+        ("revenue", Card("Revenue", content=(control,), width=140)),
+        ("users", Card("Users", content=(nested_control,), width=140)),
+        ("aov", Card("AOV", width=140)),
+        ("us", Card("US", width=140)),
+        ("eu", Card("EU", width=140)),
+        ("sessions", Card("Sessions", width=140)),
+        ("conv", Card("Conv", width=140)),
+        ("cohort_a", Card("Cohort A", width=140)),
+        ("cohort_b", Card("Cohort B", width=140)),
+    )
+    slots = (
+        Slot("revenue", 0, 0),
+        Slot("users", 1, 0),
+        Slot("aov", 1, 1),
+        Slot("us", 1, 0),
+        Slot("eu", 1, 1),
+        Slot("sessions", 2, 0),
+        Slot("conv", 2, 1),
+        Slot("cohort_a", 2, 0),
+        Slot("cohort_b", 2, 1),
+    )
+    wires = tuple(Wire(f"w{i}", src, dst) for i, (src, dst) in enumerate(edges))
+    rules = partition_rules("revenue", "rev_breakout", breakouts, edges) + partition_rules(
+        "users", "users_breakout", nested, edges
+    )
+    graph = Graph(nodes, Slotted(slots), wires=wires, rules=rules, dom_prefix="brknest")
+
+    card_dom_ids = dict(
+        zip((node_id for node_id, _ in nodes), graph._compiled.card_dom_ids, strict=True)
+    )
+    region_conditions, region_targets = next(
+        (conditions, targets)
+        for conditions, targets in graph._compiled.rules
+        if any('value="region"' in condition for condition in conditions)
+    )
+    orphaned = {
+        card_dom_ids["users"],
+        card_dom_ids["sessions"],
+        card_dom_ids["conv"],
+        card_dom_ids["cohort_a"],
+        card_dom_ids["cohort_b"],
+    }
+    assert orphaned <= set(region_targets)
+
+    output = graph.as_raw_html()
+    style = output[output.rindex("<style>") :]
+    prefix = ".brknest-canvas" + "".join(f":has({condition})" for condition in region_conditions)
+    expected = ",".join(f"{prefix} #{target}" for target in region_targets)
+    assert f"{expected}{{display:none}}" in style
+    assert graph.measure().width > 0  # the relaxed exclusivity proof still accepts this
 
 
 def test_switchers_in_disjoint_branches_are_allowed():
     edges = (("root", "users"), ("root", "aov"), ("users", "new"), ("aov", "price"))
-    reject_nested_switchers(("users", "aov"), edges)  # must not raise
+    reject_switcher_conjunctions(("users", "aov"), edges)  # must not raise
 
 
 def test_a_descendant_gated_by_two_independent_switchers_is_rejected():
@@ -325,7 +395,7 @@ def test_a_descendant_gated_by_two_independent_switchers_is_rejected():
         ("b1", "shared"),
     )
     with pytest.raises(SpecError, match=r"'shared'.*more than one breakout switcher"):
-        reject_nested_switchers(("a", "b"), edges)
+        reject_switcher_conjunctions(("a", "b"), edges)
 
 
 def test_a_descendant_shared_by_two_switchers_with_an_unconditional_path_is_allowed():
@@ -344,7 +414,7 @@ def test_a_descendant_shared_by_two_switchers_with_an_unconditional_path_is_allo
         ("b1", "shared"),
         ("other", "shared"),
     )
-    reject_nested_switchers(("a", "b"), edges)  # must not raise
+    reject_switcher_conjunctions(("a", "b"), edges)  # must not raise
 
 
 def test_a_single_breakout_needs_no_switcher():
@@ -562,7 +632,7 @@ def test_an_option_contributing_multiple_children_to_a_shared_descendant_still_g
         ("b1", "shared"),
     )
     with pytest.raises(SpecError, match=r"'shared'.*more than one breakout switcher"):
-        reject_nested_switchers(("a", "b"), edges)
+        reject_switcher_conjunctions(("a", "b"), edges)
 
 
 def test_two_switchers_whose_every_option_reaches_a_descendant_are_allowed():
@@ -601,7 +671,7 @@ def test_two_switchers_whose_every_option_reaches_a_descendant_are_allowed():
         ("b1", "shared"),
         ("b3", "shared"),
     )
-    reject_nested_switchers(("a", "b"), edges)  # must not raise
+    reject_switcher_conjunctions(("a", "b"), edges)  # must not raise
 
     # The real gate: the full topology, wired up as `DriverTree` would,
     # still builds -- `partition_rules` never hid `shared` here either.

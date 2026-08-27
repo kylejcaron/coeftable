@@ -8,11 +8,15 @@ emit exactly the shape the graph kernel's shared-position proof requires: one
 external keyed select whose option count matches the alternative count, and
 one single-condition rule per option hiding every other option's cards.
 
-`reject_nested_switchers` guards two shapes the kernel proof does not cover:
-a switcher nested inside another switcher's alternative, which would need a
-hidden governing controller plus multi-condition partition rules; and a
-descendant whose only paths run through two or more independent switchers,
-which no single switcher's own liveness proof can see.
+A switcher nested inside another switcher's alternative is legal: the
+ancestor and its descendant are ordered, so the ancestor's own rule already
+hides the nested switcher's parent -- and everything beneath it, including
+its own alternatives -- whenever it excludes that branch, without needing
+the nested switcher's cooperation. `reject_switcher_conjunctions` guards the
+one shape the kernel proof still cannot cover: a descendant whose only
+paths run through two switchers with no such ordering between them -- a
+genuine conjunction across independent selects that no single switcher's
+own liveness proof can see.
 """
 
 from __future__ import annotations
@@ -325,12 +329,35 @@ def _gating_switchers(
     return gates
 
 
+def _drop_ancestor_gates(
+    gates: Mapping[str, frozenset[str]], adjacency: dict[str, tuple[str, ...]]
+) -> dict[str, frozenset[str]]:
+    """Drop a gate whose switcher is an ancestor of another gate's switcher.
+
+    An ancestor and a nested descendant switcher are ordered, not
+    independent: whenever the ancestor's option excludes the branch
+    carrying the descendant switcher, the ancestor's own rule already
+    hides that switcher's parent -- and everything beneath it -- on its
+    own, without needing the descendant's cooperation. Counting the
+    ancestor as a second, independent gate would treat this ordered pair
+    as the same conjunction risk a genuine pair of unrelated switchers
+    poses. Only gates with no such ordering between them describe that
+    real risk.
+    """
+    reachable_from = {parent: _reachable(parent, adjacency) for parent in gates}
+    return {
+        parent: reaching
+        for parent, reaching in gates.items()
+        if not any(other != parent and other in reachable_from[parent] for other in gates)
+    }
+
+
 def _reject_orphanable_descendants(
     parents: Sequence[str],
     edges: Sequence[tuple[str, str]],
     adjacency: dict[str, tuple[str, ...]],
 ) -> None:
-    """Reject a descendant whose only paths depend on two or more switchers.
+    """Reject a descendant whose only paths depend on two independent switchers.
 
     `partition_rules` proves liveness one switcher at a time: a descendant
     still reachable through some other, currently-unpruned path is judged
@@ -356,7 +383,7 @@ def _reject_orphanable_descendants(
     roots = _graph_roots(edges)
     candidates = {node for edge in edges for node in edge} - roots
     for node in sorted(candidates):
-        gates = _gating_switchers(node, closures)
+        gates = _drop_ancestor_gates(_gating_switchers(node, closures), adjacency)
         if len(gates) < 2:
             continue
         pruned = {
@@ -373,27 +400,21 @@ def _reject_orphanable_descendants(
             )
 
 
-def reject_nested_switchers(
+def reject_switcher_conjunctions(
     parents_with_switchers: Sequence[str], edges: Sequence[tuple[str, str]]
 ) -> None:
-    """Reject a breakout switcher shape the kernel proof cannot cover.
+    """Reject a descendant gated by two independent (non-nested) switchers.
 
-    The kernel proof covers one switcher per shared-position group; a
-    switcher nested inside another's alternative would additionally need a
-    hidden governing controller and multi-condition partition rules,
-    neither of which it provides. A descendant governed by two or more
-    independent switchers is rejected too, for the reasons in
-    `_reject_orphanable_descendants`. Switchers in disjoint branches that
-    do not share a descendant are unaffected.
+    Nesting a switcher inside another switcher's alternative is legal and
+    unchecked here: an ancestor and its descendant are ordered, so the
+    ancestor's own rule alone suffices whenever it excludes the branch
+    carrying the descendant switcher. What this still refuses is a
+    descendant whose only paths run through two switchers with no such
+    ordering between them -- a genuine conjunction across independent
+    selects, for the reasons in `_reject_orphanable_descendants`.
+    Switchers in disjoint branches that do not share a descendant are
+    unaffected either way.
     """
     parents = tuple(parents_with_switchers)
     adjacency = _build_adjacency(edges)
-    for outer in parents:
-        reachable = _reachable(outer, adjacency)
-        for inner in parents:
-            if inner != outer and inner in reachable:
-                raise SpecError(
-                    "at most one breakout switcher may appear on any root-to-leaf path; "
-                    f"{outer} and {inner} are nested"
-                )
     _reject_orphanable_descendants(parents, edges, adjacency)

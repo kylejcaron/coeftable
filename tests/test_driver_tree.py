@@ -166,7 +166,20 @@ def _nested_fixture() -> GraphReport:
         "x3": "X3",
         "x4": "X4",
     }
-    series = {name: (10.0, 11.0, 12.0) for name in titles}
+    series = {
+        "root": (100.0, 110.0, 121.0),
+        # `a` = mid + leaf1: exact at every point.
+        "mid": (60.0, 66.0, 72.6),
+        "leaf1": (40.0, 44.0, 48.4),
+        # `b` = mid2 + leaf2: exact at every point.
+        "mid2": (70.0, 77.0, 84.7),
+        "leaf2": (30.0, 33.0, 36.3),
+        # `mid`'s own switcher: `c` = x1 + x2, `d` = x3 + x4, both exact.
+        "x1": (36.0, 39.6, 43.56),
+        "x2": (24.0, 26.4, 29.04),
+        "x3": (42.0, 46.2, 50.82),
+        "x4": (18.0, 19.8, 21.78),
+    }
     breakouts = {
         "root": (
             Breakout(key="a", label="A", op="+", children=("mid", "leaf1")),
@@ -367,9 +380,42 @@ def test_an_event_reaches_every_affected_card_and_no_others():
     assert rule.search(card_html("right")) is None
 
 
-def test_a_nested_switcher_is_refused_with_the_documented_rule():
-    with pytest.raises(SpecError, match="at most one breakout switcher"):
-        _nested_fixture()
+def test_a_nested_switcher_is_accepted_and_the_ancestors_rule_covers_it():
+    report = _nested_fixture()
+    html = report.as_raw_html()
+    assert html.count("<select") == 2
+    assert "<script" not in html
+
+    graph = report.graph
+    node_ids = tuple(node_id for node_id, _ in graph.nodes)
+    card_dom_ids = dict(zip(node_ids, graph._compiled.card_dom_ids, strict=True))
+
+    b_conditions, b_targets = next(
+        (conditions, targets)
+        for conditions, targets in graph._compiled.rules
+        if any('value="b"' in condition for condition in conditions)
+    )
+    # Selecting `b` switches the whole `mid` branch away: `mid`'s own
+    # switcher card and every one of its alternatives must be hidden,
+    # checked from the compiled rules, not just `hide_cards`.
+    switched_away = {card_dom_ids[n] for n in ("mid", "leaf1", "x1", "x2", "x3", "x4")}
+    assert switched_away <= set(b_targets)
+
+    _a_conditions, a_targets = next(
+        (conditions, targets)
+        for conditions, targets in graph._compiled.rules
+        if any('value="a"' in condition for condition in conditions)
+    )
+    # Selecting `a` keeps `mid` (and its nested switcher) visible; only
+    # `b`'s own alternative is hidden.
+    assert switched_away.isdisjoint(a_targets)
+    assert {card_dom_ids["mid2"], card_dom_ids["leaf2"]} <= set(a_targets)
+
+    style_output = html[html.rindex("<style>") :]
+    prefix = ".g0-canvas" + "".join(f":has({condition})" for condition in b_conditions)
+    expected = ",".join(f"{prefix} #{target}" for target in b_targets)
+    assert f"{expected}{{display:none}}" in style_output
+    assert report.measure().width > 0
 
 
 def test_switching_away_from_drivers_hides_users_own_decomposition_too():
@@ -417,6 +463,86 @@ def test_unequal_alternative_sizes_are_refused_before_layout():
         )
     }
     with pytest.raises(SpecError, match="same number of children"):
+        DriverTree(series, titles, breakouts, _FMT, x)
+
+
+def _three_level_nested_fixture() -> GraphReport:
+    """Every level switches: `revenue` -> `users` -> `sessions`, each with
+    its own two-way switcher, all three exact identities."""
+    series = {
+        "revenue": (1000.0, 1100.0, 1210.0),
+        "users": (100.0, 110.0, 121.0),
+        "aov": (10.0, 10.0, 10.0),
+        "na": (600.0, 660.0, 726.0),
+        "intl": (400.0, 440.0, 484.0),
+        "sessions": (50.0, 55.0, 60.5),
+        "conv": (2.0, 2.0, 2.0),
+        "us_u": (60.0, 66.0, 72.6),
+        "eu_u": (40.0, 44.0, 48.4),
+        "web": (30.0, 33.0, 36.3),
+        "app": (20.0, 22.0, 24.2),
+        "paid": (35.0, 38.5, 42.35),
+        "organic": (15.0, 16.5, 18.15),
+    }
+    titles = {name: name.replace("_", " ").title() for name in series}
+    breakouts = {
+        "revenue": (
+            Breakout(key="drivers", label="by drivers", op="x", children=("users", "aov")),
+            Breakout(key="region", label="by region", op="+", children=("na", "intl")),
+        ),
+        "users": (
+            Breakout(key="funnel", label="by funnel", op="x", children=("sessions", "conv")),
+            Breakout(key="country", label="by country", op="+", children=("us_u", "eu_u")),
+        ),
+        "sessions": (
+            Breakout(key="platform", label="by platform", op="+", children=("web", "app")),
+            Breakout(key="channel", label="by channel", op="+", children=("paid", "organic")),
+        ),
+    }
+    return DriverTree(series, titles, breakouts, _FMT, x=(0.0, 1.0, 2.0))
+
+
+def test_a_three_level_nested_driver_tree_builds_with_a_switcher_at_every_level():
+    report = _three_level_nested_fixture()
+    html = report.as_raw_html()
+    assert html.count("<select") == 3
+    assert "<script" not in html
+    measured = report.measure()
+    assert measured.width > 0
+    assert measured.height > 0
+
+
+def test_a_card_gated_by_two_sibling_switchers_is_still_refused():
+    # `a` and `b` are independent (sibling) switchers under `root`, not
+    # nested inside one another; `shared` is reachable only through each
+    # switcher's first option, so no single rule ever accounts for hiding
+    # it. Removing the nesting rejection must not remove this guard.
+    x = (0.0, 1.0, 2.0)
+    titles = {name: name for name in ("root", "a", "b", "a1", "a2", "b1", "b2", "shared")}
+    series = {
+        "root": (100.0, 110.0, 120.0),
+        "a": (50.0, 55.0, 60.0),
+        "b": (50.0, 55.0, 60.0),
+        "a1": (50.0, 55.0, 60.0),
+        "a2": (50.0, 55.0, 60.0),
+        "b1": (50.0, 55.0, 60.0),
+        "b2": (50.0, 55.0, 60.0),
+        "shared": (50.0, 55.0, 60.0),
+    }
+    breakouts = {
+        "root": (Breakout(key="split", label="split", op="+", children=("a", "b")),),
+        "a": (
+            Breakout(key="opt1", label="opt1", op="+", children=("a1",)),
+            Breakout(key="opt2", label="opt2", op="+", children=("a2",)),
+        ),
+        "b": (
+            Breakout(key="opt1", label="opt1", op="+", children=("b1",)),
+            Breakout(key="opt2", label="opt2", op="+", children=("b2",)),
+        ),
+        "a1": (Breakout(key="k", label="k", op="+", children=("shared",)),),
+        "b1": (Breakout(key="k", label="k", op="+", children=("shared",)),),
+    }
+    with pytest.raises(SpecError, match=r"'shared'.*more than one breakout switcher"):
         DriverTree(series, titles, breakouts, _FMT, x)
 
 
