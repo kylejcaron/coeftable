@@ -77,7 +77,6 @@ class Atom:
             raise SpecError("Atom.option_checked requires ControlRef.key")
         if self.option is None:
             raise SpecError("Atom.option_checked requires option")
-        _non_empty_str(self.option, name="Atom.option")
 
 
 @dataclass(frozen=True, slots=True)
@@ -561,6 +560,7 @@ def _graph_measure(
     gap: int,
     layer_gap: int,
     padding: int,
+    chrome: CardChrome,
 ) -> _GraphLayout:
     """Measure rebound cards once and resolve their slotted border boxes."""
     measured = {card_id: card.measure() for card_id, card in nodes}
@@ -653,17 +653,28 @@ def _graph_measure(
                 f"L {x1:g},{y1 - 3:g}"
             )
         else:
+            # Split the inter-layer band into thirds: sweep, tangent run,
+            # straight arrival — my1 == my2 under halves made the final
+            # control degenerate and elbowed the arrowhead.
+            band = dst_top - src_layer_bottom
+            a_my1 = src_layer_bottom + band / 3
+            a_my2 = dst_top - band / 3
             path = (
                 f"M {x0:g},{y0:g} L {x0:g},{src_layer_bottom:g} "
-                f"C {x0:g},{my1:g} {x1:g},{my1:g} {x1:g},{my2:g} "
+                f"C {x0:g},{a_my1:g} {x1:g},{a_my1:g} {x1:g},{a_my2:g} "
                 f"L {x1:g},{y1 - 3:g}"
             )
         if wire.label is None:
-            spread = 0
+            label_anchor_x = x1
         else:
             k, n = label_index[wire_index]
             spread = (k - (n - 1) / 2) * 72
-        wire_geometry.append((wire.id, (path, (x1 + spread, y1 - 13))))
+            half_text = len(wire.label) * chrome.caption_size * chrome.data_char_width_ratio / 2
+            label_anchor_x = max(
+                half_text,
+                min(footprint.width - half_text, x1 + spread),
+            )
+        wire_geometry.append((wire.id, (path, (label_anchor_x, y1 - 13))))
     return _GraphLayout(footprint, tuple(anchor_offsets), tuple(wire_geometry))
 
 
@@ -709,6 +720,13 @@ class Graph:
             raise SpecError("Graph.layer_gap must be at least 18 when wires are present")
         if any(wire.label is not None for wire in wires) and self.layer_gap < 28:
             raise SpecError("Graph.layer_gap must be at least 28 when wire labels are present")
+        if (
+            any(wire.label is not None and wire.src in collapsible for wire in wires)
+            and self.layer_gap < 42
+        ):
+            raise SpecError(
+                "Graph.layer_gap must be at least 42 when labeled wires have collapsible sources"
+            )
         cards, rebound_nodes = _graph_rebound_nodes(nodes, theme=self.theme, chrome=self.chrome)
         card_options = {node_id: card.control_options() for node_id, card in rebound_nodes}
         visibility, visibility_wires = _graph_visibility(
@@ -758,6 +776,7 @@ class Graph:
                 collapsible=collapsible,
                 gap=self.gap,
                 layer_gap=self.layer_gap,
+                chrome=self.chrome,
                 padding=self.chrome.padding,
             ),
         )

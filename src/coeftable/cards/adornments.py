@@ -161,7 +161,7 @@ class KeyValuePopover:
 class SelectControl:
     """A native select. Options are (value, label); selection is by value.
 
-    `key` is a semantic handle for future state rules; state binds to
+    `key` is a semantic handle for graph state rules; state binds to
     (key, option value), never to labels, positions, or DOM ids. The
     renderer never emits `key`.
     """

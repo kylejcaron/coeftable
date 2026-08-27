@@ -58,10 +58,6 @@ from coeftable.theme import DEFAULT, Direction
             lambda: Atom(ControlRef("card", key="select"), "option_checked"),
             "Atom.option_checked requires option",
         ),
-        (
-            lambda: Atom(ControlRef("card", key="select"), "option_checked", option=""),
-            "Atom.option must be a non-empty str",
-        ),
         (lambda: StateRule((), hide_cards=("card",)), "StateRule.when_all must not be empty"),
         (
             lambda: StateRule((cast(Atom, 7),), hide_cards=("card",)),
@@ -199,6 +195,7 @@ def test_valid_leaf_values_and_optional_wire_labels():
     assert ControlRef("card") == ControlRef("card", key=None)
     assert Atom(ControlRef("card"), "checked")
     assert Atom(ControlRef("card", key="mode"), "option_checked", option="compact")
+    assert Atom(ControlRef("card", key="mode"), "option_checked", option="")
     assert StateRule((Atom(ControlRef("card"), "checked"),), hide_cards=("other",))
     assert Wire("w", "a", "b")
     assert Wire("w", "a", "b", label="estimate", label_role="favorable")
@@ -311,6 +308,27 @@ def test_graph_rejects_collapsible_nubs_in_too_small_layer_gap():
             wires=(Wire("w", "a", "b", label="+1", label_role="favorable"),),
             layer_gap=20,
         )
+
+
+def test_graph_requires_extra_label_clearance_above_collapsible_sources():
+    nodes = (("source", Card("source")), ("target", Card("target")))
+    slots = (Slot("source", 0, 0), Slot("target", 1, 0))
+    wire = Wire("wire", "source", "target", label="edge")
+    with pytest.raises(
+        SpecError,
+        match=re.escape(
+            "Graph.layer_gap must be at least 42 when labeled wires have collapsible sources"
+        ),
+    ):
+        Graph(nodes, Slotted(slots), wires=(wire,), collapsible=("source",), layer_gap=41)
+    accepted = Graph(
+        nodes,
+        Slotted(slots),
+        wires=(wire,),
+        collapsible=("source",),
+        layer_gap=42,
+    )
+    assert accepted.measure().height > 0
 
 
 def test_graph_measure_sums_different_column_widths_and_layer_heights():
@@ -1338,6 +1356,31 @@ def test_graph_compiler_merges_injected_closure_and_escapes_options():
     )
 
 
+def test_graph_compiler_accepts_empty_option_values():
+    controller = Card(
+        "controller",
+        content=(
+            SelectControl(
+                "Mode",
+                (("", "Default"),),
+                selected="",
+                key="mode",
+            ),
+        ),
+    )
+    graph = Graph(
+        (("controller", controller), ("hidden", Card("hidden"))),
+        Slotted((Slot("controller", 0, 0), Slot("hidden", 1, 0))),
+        rules=(
+            StateRule(
+                (Atom(ControlRef("controller", "mode"), "option_checked", ""),),
+                hide_cards=("hidden",),
+            ),
+        ),
+    )
+    assert graph._compiled.rules == ((('#g0-ctl-0-0 option[value=""]:checked',), ("g0-card-1",)),)
+
+
 def test_graph_renderer_escapes_style_terminators_in_option_values():
     option = "</style><script>"
     graph = Graph(
@@ -1444,11 +1487,12 @@ def test_graph_renderer_uses_cached_anchor_and_vertical_route_geometry():
     x1 = target_left + target_in[0]
     y1 = target_top + target_in[1]
     src_layer_bottom = source_top + source_height
-    my1 = src_layer_bottom + graph.layer_gap / 2
-    my2 = target_top - graph.layer_gap / 2
+    band = target_top - src_layer_bottom
+    a_my1 = src_layer_bottom + band / 3
+    a_my2 = target_top - band / 3
     expected_path = (
         f"M {x0:g},{y0:g} L {x0:g},{src_layer_bottom:g} "
-        f"C {x0:g},{my1:g} {x1:g},{my1:g} {x1:g},{my2:g} "
+        f"C {x0:g},{a_my1:g} {x1:g},{a_my1:g} {x1:g},{a_my2:g} "
         f"L {x1:g},{y1 - 3:g}"
     )
     expected_geometry = (("wire", (expected_path, (x1, y1 - 13))),)
@@ -1549,6 +1593,7 @@ def test_graph_measure_adjacent_route_exits_source_layer_before_bending():
     target_in = anchors["target"][0]
     x0, y0 = source_left + source_out[0], source_top + source_out[1]
     x1, y1 = target_left + target_in[0], target_top + target_in[1]
+    src_layer_bottom = sibling_top + sibling_height
     values = tuple(
         float(value)
         for value in re.findall(r"-?\d+(?:\.\d+)?", dict(graph._layout.wire_geometry)["wire"][0])
@@ -1568,12 +1613,15 @@ def test_graph_measure_adjacent_route_exits_source_layer_before_bending():
         end_x,
         end_y,
     ) = values
-    src_layer_bottom = sibling_top + sibling_height
-    my1 = src_layer_bottom + graph.layer_gap / 2
-    my2 = target_top - graph.layer_gap / 2
+    band = target_top - src_layer_bottom
+    a_my1 = src_layer_bottom + band / 3
+    a_my2 = target_top - band / 3
     assert (path_x0, path_y0, lead_x, lead_y) == (x0, y0, x0, src_layer_bottom)
-    assert (control_x0, control_y1, control_x1, control_y2) == (x0, my1, x1, my1)
-    assert (cubic_end_x, cubic_end_y) == (x1, my2)
+    assert (control_x0, control_y1, control_x1, control_y2) == pytest.approx(
+        (x0, a_my1, x1, a_my1),
+        abs=1e-3,
+    )
+    assert (cubic_end_x, cubic_end_y) == pytest.approx((x1, a_my2), abs=1e-3)
     assert (end_x, end_y) == (x1, y1 - 3)
 
     def cubic(start, control_a, control_b, end, t):
@@ -1618,11 +1666,12 @@ def test_graph_measure_adjacent_route_exits_source_layer_before_bending():
 
 
 def test_graph_measure_skip_corridor_stays_on_canvas_in_single_column():
+    chrome = dataclasses.replace(CardChrome(), padding=2)
     graph = Graph(
         nodes=(
-            ("source", Card("Source")),
-            ("middle", Card("Middle")),
-            ("target", Card("Target")),
+            ("source", Card("Source", chrome=chrome)),
+            ("middle", Card("Middle", chrome=chrome)),
+            ("target", Card("Target", chrome=chrome)),
         ),
         layout=Slotted(
             (
@@ -1632,10 +1681,31 @@ def test_graph_measure_skip_corridor_stays_on_canvas_in_single_column():
             )
         ),
         wires=(Wire("wire", "source", "target"),),
+        chrome=chrome,
     )
     path = dict(graph._layout.wire_geometry)["wire"][0]
     xs = tuple(float(value) for value in re.findall(r"-?\d+(?:\.\d+)?", path)[::2])
+    assert len(xs) == 10
     assert all(0 <= x <= graph.measure().width for x in xs)
+    assert 1 in xs
+
+
+def test_graph_measure_clamps_spread_label_anchors_to_canvas_bounds():
+    nodes = (
+        *((f"source-{index}", Card(f"Source {index}", width=80)) for index in range(5)),
+        ("target", Card("Target", width=80)),
+    )
+    slots = (
+        *(Slot(f"source-{index}", 0, index) for index in range(5)),
+        Slot("target", 1, 0),
+    )
+    wires = tuple(
+        Wire(f"wire-{index}", f"source-{index}", "target", label="label") for index in range(5)
+    )
+    graph = Graph(nodes, Slotted(slots), wires=wires)
+    half_text = len("label") * graph.chrome.caption_size * graph.chrome.data_char_width_ratio / 2
+    anchors = tuple(dict(graph._layout.wire_geometry)[wire.id][1][0] for wire in wires)
+    assert all(half_text <= x <= graph.measure().width - half_text for x in anchors)
 
 
 def test_graph_measure_skip_layer_route_samples_stay_outside_intervening_card():
@@ -1786,12 +1856,13 @@ def test_graph_measure_routes_to_synthetic_in_anchor(monkeypatch):
     x0, y0 = source_left + source_out[0], source_top + source_out[1]
     x1, y1 = target_left + 10, target_top + 5
     src_layer_bottom = source_top + source_height
-    my1 = src_layer_bottom + graph.layer_gap / 2
-    my2 = target_top - graph.layer_gap / 2
+    band = target_top - src_layer_bottom
+    a_my1 = src_layer_bottom + band / 3
+    a_my2 = target_top - band / 3
     path, label_anchor = dict(graph._layout.wire_geometry)["wire"]
     expected_path = (
         f"M {x0:g},{y0:g} L {x0:g},{src_layer_bottom:g} "
-        f"C {x0:g},{my1:g} {x1:g},{my1:g} {x1:g},{my2:g} "
+        f"C {x0:g},{a_my1:g} {x1:g},{a_my1:g} {x1:g},{a_my2:g} "
         f"L {x1:g},{y1 - 3:g}"
     )
     assert path == expected_path
@@ -2363,10 +2434,16 @@ def test_metric_tree_driver_fixture_has_exact_layout_wires_labels_nubs_and_deter
         x1, y1 = dst_left + in_x, dst_top + in_y
         src_layer = slot_by_id[wire.src].layer
         src_layer_bottom = src_top + layer_heights[src_layer]
-        my1 = src_layer_bottom + graph.layer_gap / 2
-        my2 = dst_top - graph.layer_gap / 2
+        if slot_by_id[wire.dst].layer - src_layer == 1:
+            band = dst_top - src_layer_bottom
+            my1 = src_layer_bottom + band / 3
+            my2 = dst_top - band / 3
+        else:
+            my1 = src_layer_bottom + graph.layer_gap / 2
+            my2 = dst_top - graph.layer_gap / 2
         assert coordinates == pytest.approx(
-            (x0, y0, x0, src_layer_bottom, x0, my1, x1, my1, x1, my2, x1, y1 - 3)
+            (x0, y0, x0, src_layer_bottom, x0, my1, x1, my1, x1, my2, x1, y1 - 3),
+            abs=1e-3,
         )
     # Construction-level determinism: a FRESH fixture build yields identical HTML.
     assert html == _driver_tree_fixture().as_raw_html()
