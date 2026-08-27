@@ -448,6 +448,29 @@ def test_unequal_spacing_is_refused_naming_the_offending_gaps():
         DriverTree(series, titles, breakouts, _FMT, x)
 
 
+def test_binary_rounded_uniform_spacing_is_accepted():
+    """`(0.1, 0.2, 0.3)` is mathematically uniform, but `0.3 - 0.2` and
+    `0.2 - 0.1` differ in their last bits under binary rounding -- an exact
+    equality check would wrongly refuse it. The tolerance must accept it."""
+    x = (0.1, 0.2, 0.3)
+    titles = {"p": "P", "a": "A", "b": "B"}
+    series = {"p": (10.0, 11.0, 12.0), "a": (5.0, 5.5, 6.0), "b": (5.0, 5.5, 6.0)}
+    breakouts = {"p": (Breakout(key="k", label="K", op="+", children=("a", "b")),)}
+    DriverTree(series, titles, breakouts, _FMT, x)
+
+
+def test_small_magnitude_unequal_spacing_is_still_refused():
+    """The tolerance is relative to the gap magnitude, not a blanket floor:
+    a real ~50% spacing irregularity among small gaps must still be
+    refused, not waved through as rounding noise."""
+    x = (0.1, 0.2, 0.35)
+    titles = {"p": "P", "a": "A", "b": "B"}
+    series = {"p": (10.0, 11.0, 12.0), "a": (5.0, 5.5, 6.0), "b": (5.0, 5.5, 6.0)}
+    breakouts = {"p": (Breakout(key="k", label="K", op="+", children=("a", "b")),)}
+    with pytest.raises(SpecError, match="evenly spaced"):
+        DriverTree(series, titles, breakouts, _FMT, x)
+
+
 def test_equal_non_unit_spacing_is_accepted_with_a_correct_disclaimer():
     """Coordinates need not be unit-spaced, only *evenly* spaced."""
     x = (0.0, 7.0, 14.0, 21.0)
@@ -575,8 +598,8 @@ def _near_cancel_mismatch_series():
         "users": (100.0, 150.0, 200.0),
         "aov": (10.0, 7.5, 5.0000000005),
     }
-    # product = (1000, 1125, 1000.000000003); gap = mean(|revenue-product|/revenue)
-    #   = (0/1000 + 45/1080 + 158/1158) / 3 ~= 0.0594 (~6%, between 0.5% and 20%)
+    # product = (1000, 1125, 1000.0000001); gap = mean(|revenue-product|/revenue)
+    #   = (0/1000 + 45/1080 + 157.9999999/1158) / 3 ~= 0.0594 (~6%, between 0.5% and 20%)
     breakouts = {
         "revenue": (
             Breakout(key="drivers", label="by drivers", op="x", children=("users", "aov")),
@@ -606,6 +629,84 @@ def test_a_near_cancelling_approximate_decomposition_sums_to_the_parent_and_flag
 
     html = DriverTree(series, titles, breakouts, _FMT, x).as_raw_html()
     assert re.search(r"drivers gap 6%", html)
+
+
+def test_a_small_endpoint_agreement_does_not_override_a_disagreeing_path():
+    """Regression: an endpoint-only identity check could say 'the identity
+    holds' (endpoints ~0.4% apart, under `RESIDUAL_WARN`) even though the
+    parent's path disagrees with the children's product badly enough
+    in between (~2% mean gap) to trip the identity-gap badge. Scaling and
+    the badge must agree: a mismatch big enough for the badge must also
+    fall back to `parent_delta / total_sum`, not the implied-identity share.
+    """
+    topology = _Topology(
+        parents=("revenue",),
+        breakout_map={
+            "revenue": (
+                Breakout(key="drivers", label="by drivers", op="x", children=("users", "aov")),
+            )
+        },
+    )
+    node_series: dict[str, tuple[float, ...]] = {
+        "revenue": (100.2, 105.0, 120.758),
+        "users": (10.0, 11.0, 11.0),
+        "aov": (10.0, 9.0, 11.0),
+    }
+
+    contributions = _compute_contributions(topology, node_series, {})
+    total = contributions[("revenue", "users")] + contributions[("revenue", "aov")]
+    parent_delta = (120.758 - 100.2) / 100.2 * 100.0
+    total_sum = math.log(11.0 / 10.0) + math.log(11.0 / 10.0)
+    identity_delta = 100.0 * math.expm1(total_sum)
+
+    # Fallback (sums to the observed parent_delta), not the implied-identity
+    # share (~21%) an endpoint-only check would have accepted.
+    assert total == pytest.approx(parent_delta)
+    assert total != pytest.approx(identity_delta)
+
+    titles = {"revenue": "Revenue", "users": "Users", "aov": "AOV"}
+    breakouts = {"revenue": topology.breakout_map["revenue"]}
+    html = DriverTree(node_series, titles, breakouts, _FMT, (0.0, 1.0, 2.0)).as_raw_html()
+    assert re.search(r"drivers gap 2%", html)
+
+
+def test_small_offsetting_endpoint_noise_does_not_trigger_an_unbadged_extreme_fallback():
+    """Regression: an endpoint-only identity check could disagree by more
+    than `RESIDUAL_WARN` at the two endpoints alone (opposite-signed ~0.4%
+    noise at each) while the parent tracks the children's product closely
+    at every point (mean gap ~0.27%, under the badge threshold) -- and,
+    combined with a near-cancelling combined log ratio, the un-patched
+    fallback (`parent_delta / total_sum`) produced shares in the billions
+    with no badge to warn the reader. No badge must mean no extreme escape
+    hatch: scaling must agree with the badge and stay bounded.
+    """
+    topology = _Topology(
+        parents=("revenue",),
+        breakout_map={
+            "revenue": (
+                Breakout(key="drivers", label="by drivers", op="x", children=("users", "aov")),
+            )
+        },
+    )
+    node_series: dict[str, tuple[float, ...]] = {
+        "revenue": (1004.0, 1125.0, 996.0000000996),
+        "users": (100.0, 150.0, 200.0),
+        "aov": (10.0, 7.5, 5.0000000005),
+    }
+
+    contributions = _compute_contributions(topology, node_series, {})
+    users_share = contributions[("revenue", "users")]
+    aov_share = contributions[("revenue", "aov")]
+
+    # The un-patched endpoint check would have picked the near-cancelling
+    # fallback and produced shares around +/-5.5 billion.
+    assert abs(users_share) < 1000.0
+    assert abs(aov_share) < 1000.0
+
+    titles = {"revenue": "Revenue", "users": "Users", "aov": "AOV"}
+    breakouts = {"revenue": topology.breakout_map["revenue"]}
+    html = DriverTree(node_series, titles, breakouts, _FMT, (0.0, 1.0, 2.0)).as_raw_html()
+    assert not re.search(r"drivers gap", html)
 
 
 def _zero_residual_fixture() -> GraphReport:
@@ -775,11 +876,13 @@ def test_a_collapsed_representative_self_edge_is_refused_not_a_recursion_error()
 
 
 def _cycle_with_downstream_leaf_fixture() -> GraphReport:
-    """`q` switches between `a` and its rep `a2`. `a` decomposes into `d`
-    (which collapses back onto `a` via `a2`, closing a two-node cycle
-    `a <-> d`) and a sibling `e` that is a plain downstream leaf -- never
-    itself reachable from the cycle. Kahn's algorithm alone cannot tell
-    `e` apart from the cycle it merely sits behind."""
+    """`q` switches between default `a` and alternative `a2`, which collapses
+    onto `a`'s representative position. `a` decomposes into `d` and a
+    sibling `e`; `d` decomposes into `a2`, which resolves back onto `a`,
+    closing a two-node cycle `a <-> d`. `e` is a plain downstream leaf: it
+    is reachable *from* the cycle (via `a`'s own split) but never reaches
+    back *into* it. Kahn's algorithm alone cannot tell `e` apart from the
+    cycle it merely sits behind."""
     x = (0.0, 1.0, 2.0)
     titles = {"q": "Q", "a": "A", "a2": "A2", "d": "D", "e": "E"}
     series = {

@@ -199,10 +199,15 @@ def _prepare_x(x: Sequence[float]) -> tuple[tuple[float, ...], tuple[float, floa
     model, so unequal gaps would silently mis-scale that model rather than
     generalizing it. Irregular spacing is therefore rejected, naming the
     offending index and the two differing gaps, rather than accepted and
-    mislabeled. The disclaimer's period count is the coordinates' own span
-    (`x[-1] - x[0]`), which -- once spacing is uniform -- is exactly
-    `(len(x) - 1)` periods times the shared gap, so it stays correct by
-    construction instead of needing a separate `len(x) - 1` computation.
+    mislabeled. Gaps are compared with a small relative tolerance rather
+    than bit-for-bit, so mathematically uniform coordinates whose gaps
+    differ only in the last bits of binary rounding (e.g. `0.1, 0.2, 0.3`)
+    are still accepted; a gap that differs by more than that tolerance is
+    real irregularity, not rounding. The disclaimer's period count is the
+    coordinates' own span (`x[-1] - x[0]`), which -- once spacing is
+    uniform -- is exactly `(len(x) - 1)` periods times the shared gap, so
+    it stays correct by construction instead of needing a separate
+    `len(x) - 1` computation.
     """
     raw = _canonical(x, name="DriverTree.x")
     x_values = tuple(_finite(value, name="DriverTree.x") for value in raw)
@@ -217,7 +222,7 @@ def _prepare_x(x: Sequence[float]) -> tuple[tuple[float, ...], tuple[float, floa
                 f"x[{index}]={current!r} is not greater than x[{index - 1}]={previous!r}"
             )
         this_gap = current - previous
-        if this_gap != gap:
+        if not math.isclose(this_gap, gap, rel_tol=1e-9):
             raise SpecError(
                 "DriverTree.x must be evenly spaced: "
                 f"x[{index}] - x[{index - 1}]={this_gap!r} differs from the first gap "
@@ -475,23 +480,6 @@ def _multiplicative_identity_delta(total_sum: float) -> float:
         ) from exc
 
 
-def _multiplicative_identity_holds(parent_series: tuple[float, ...], total_sum: float) -> bool:
-    """Whether the parent's own change is consistent with the exact identity.
-
-    Checked within the same relative tolerance `identity_gap` uses
-    everywhere else (`RESIDUAL_WARN`). The identity predicts the parent's
-    last value as `parent[0] * exp(total_sum)`; comparing that prediction
-    to the parent's *actual* last value -- the same "predicted vs.
-    observed, relative to observed" shape `identity_gap` already uses per
-    period -- answers whether the near-cancellation limit below is
-    describing a real exact decomposition or merely a coincidental
-    near-zero total.
-    """
-    implied_final = parent_series[0] * (1.0 + _multiplicative_identity_delta(total_sum) / 100.0)
-    gap = abs(parent_series[-1] - implied_final) / abs(parent_series[-1])
-    return gap <= RESIDUAL_WARN
-
-
 # `parent_delta / total_sum` spreads the parent's own observed percentage
 # change across children in proportion to each child's share of the
 # combined log change -- correct, and self-consistent (the shares always
@@ -517,9 +505,9 @@ def _multiplicative_identity_holds(parent_series: tuple[float, ...], total_sum: 
 #    case the honest scale is still `parent_delta / total_sum`, however
 #    large a number it produces, because it is the only value under which
 #    the shares keep summing to what the parent actually did; the
-#    decomposition's own identity gap (checked independently, and
-#    reported on the parent as a badge) is what tells the reader not to
-#    trust the individual factors' split.
+#    decomposition's own identity gap -- the very same value that decides
+#    `identity_holds` below and is reported on the parent as a badge --
+#    is what tells the reader not to trust the individual factors' split.
 def _multiplicative_scale(parent_delta: float, total_sum: float, identity_holds: bool) -> float:
     """Percentage-point scale applied to each child's log ratio (C3)."""
     if total_sum == 0.0:
@@ -552,13 +540,22 @@ def _compute_contributions(
                         (child_series[-1] - child_series[0]) / parent_series[0] * 100.0
                     )
             else:
+                children_series = [node_series[child] for child in breakout.children]
                 totals = {
                     child: log_ratio(node_series[child][-1], node_series[child][0])
                     for child in breakout.children
                 }
                 total_sum = math.fsum(totals.values())
-                holds = _multiplicative_identity_holds(parent_series, total_sum)
-                scale = _multiplicative_scale(parent_delta, total_sum, holds)
+                # Consistency rule: implied-identity scaling and the gap badge
+                # (`_apply_breakout_honesty`) are keyed off the *same*
+                # `identity_gap` value, not two different discrepancy
+                # measures. Implied-identity scaling is picked only when that
+                # gap is small enough that no badge renders, so any mismatch
+                # large enough to trigger the `parent_delta / total_sum`
+                # fallback always surfaces the gap indicator too.
+                gap = identity_gap(parent_series, children_series, "x")
+                identity_holds = gap <= RESIDUAL_WARN
+                scale = _multiplicative_scale(parent_delta, total_sum, identity_holds)
                 for child in breakout.children:
                     contribution_by_edge[(parent, child)] = totals[child] * scale
             resid = residuals.get((parent, breakout.key))
@@ -888,11 +885,12 @@ def DriverTree(
     label -- and defaults to a plain, unsigned number since a level is
     dollars, users, or a ratio, never a contribution share.
 
-    ``x`` must be strictly increasing (no duplicate or descending
-    coordinates): the root card's disclaimer describes the realized change
-    over ``x[-1] - x[0]`` "weeks", derived from the coordinates' own span
-    rather than the observation count, so irregularly spaced ``x`` is still
-    described honestly instead of being mislabeled as unit-spaced.
+    ``x`` must be strictly increasing and evenly spaced (no duplicate,
+    descending, or irregular coordinates): the root card's disclaimer
+    describes the realized change over ``x[-1] - x[0]`` "weeks", and every
+    credibility statistic downstream treats each adjacent pair as one equal
+    noise-model period, so unevenly spaced ``x`` would silently mis-scale
+    those statistics rather than generalizing them, and is rejected instead.
 
     Every decomposition is checked against ``coeftable.graph.honesty``'s
     identity-gap thresholds: additive shortfalls above ``RESIDUAL_WARN`` get
@@ -929,11 +927,12 @@ def DriverTree(
     wires = _build_wires(topology, outcome.residuals, contribution_by_edge, node_role, fmt)
     final_slots = _compute_layout(topology, rep, outcome.residuals)
 
-    # Residual nodes joined the topology already, in `_register_residuals` --
-    # their ownership edges are synthesized only here, so the edges used for
-    # switcher descendant traversal must be built only now, or a nested
-    # descendant's own residual leaks as a visible orphan once its owner is
-    # switched away.
+    # Residual nodes joined the topology already, in `_register_residuals`.
+    # `_build_wires` and `_compute_layout` above each already constructed
+    # their own parent-to-residual edges (for rendering and for layout,
+    # respectively); this builds a third copy scoped just to switcher
+    # descendant traversal, so a nested descendant's own residual does not
+    # leak as a visible orphan once its owner is switched away.
     switcher_edges = edges + _residual_edges(outcome.residuals)
     rules, select_controls = _build_switcher_state(topology, outcome.residuals, switcher_edges)
 
