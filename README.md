@@ -669,14 +669,19 @@ several switchers that do not subsume one another, so that some combination of
 selections leaves it on the page with every route to it closed.
 
 Nesting satisfies this on its own: an outer choice that removes a branch is
-decided by the outer rule alone, and everything below goes with it. The refused
-shape is a card reachable through more than one switcher's alternatives — for
-instance through a nested branch and also through a different alternative of the
-switcher above it. Keep the outer branch that preserves the nested switcher, then
-pick an inner option that does not reach the card, and both routes close at once.
-Since each switcher's rules are emitted independently, no single one can see
-that. Such a tree is rejected at construction with a `SpecError` naming the card
-and every switcher implicated in it.
+decided by the outer rule alone, and everything below goes with it. Being
+reachable through more than one switcher is not by itself a problem either — if
+every option of each switcher reaches the card, or if any route to it is
+unconditional, it always keeps a parent and the tree is accepted.
+
+One shape is refused: a card where *every* route can be independently closed and
+none survives unconditionally. The clearest example is a card reachable through a
+nested branch and also through a different alternative of the switcher above it.
+Keep the outer branch that preserves the nested switcher, then pick an inner
+option that does not reach the card, and both of its routes close at once. Since
+each switcher's rules are emitted independently, no single one can see that. Such
+a tree is rejected at construction with a `SpecError` naming the card and every
+switcher implicated in it.
 
 `DriverTree` returns a `GraphReport`: the underlying `Graph` plus a
 measured, exact-width timeline strip stacked above it. `report.measure()`,
