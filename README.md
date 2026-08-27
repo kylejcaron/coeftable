@@ -662,18 +662,21 @@ selection intact, because a native `<select>` keeps its value while hidden.
 **Limitations.** All alternatives of one switcher must have the same number of
 children, since they share the same positions.
 
-And every card must have a parent under every combination of choices. Nesting
-satisfies this on its own: an outer choice that removes a whole branch is decided
-by the outer rule alone, and the cards below it go with it. What is refused is a
-card that would be left *stranded* — one whose routes into the tree run through
-two different switchers such that some pair of selections closes all of them.
+And every card must keep a visible parent under every combination of choices. A
+card that disappears together with its own alternative is fine — that is the
+point of a switcher. What is refused is a card whose visibility depends on
+several switchers that do not subsume one another, so that some combination of
+selections leaves it on the page with every route to it closed.
 
-The concrete case is a card reachable both through a nested branch and through a
-different alternative of the switcher above it. Keep the outer branch that
-preserves the nested switcher, then choose an inner option that does not reach
-that card, and both of its routes are gone at once. Since each switcher's rules
-are emitted independently, neither one alone can see that. Such a tree is
-rejected at construction with a `SpecError` naming the card and both switchers.
+Nesting satisfies this on its own: an outer choice that removes a branch is
+decided by the outer rule alone, and everything below goes with it. The refused
+shape is a card reachable through more than one switcher's alternatives — for
+instance through a nested branch and also through a different alternative of the
+switcher above it. Keep the outer branch that preserves the nested switcher, then
+pick an inner option that does not reach the card, and both routes close at once.
+Since each switcher's rules are emitted independently, no single one can see
+that. Such a tree is rejected at construction with a `SpecError` naming the card
+and every switcher implicated in it.
 
 `DriverTree` returns a `GraphReport`: the underlying `Graph` plus a
 measured, exact-width timeline strip stacked above it. `report.measure()`,
