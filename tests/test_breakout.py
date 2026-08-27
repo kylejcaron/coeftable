@@ -332,3 +332,57 @@ def test_alternatives_must_be_equally_sized():
     )
     with pytest.raises(SpecError, match="same number of children"):
         partition_rules("p", "k", uneven, ())
+
+
+def test_a_descendant_stays_visible_through_an_always_visible_branch_outside_the_switcher():
+    # `root` has children `rev` and `other`; `rev` switches between
+    # `(users, aov)` and `(us, eu)`; both `users` and `other` point at
+    # `shared`. Selecting the region alternative must not hide `shared`:
+    # `other` is always visible (outside the breakout entirely) and still
+    # points at it, even though the selected alternative's own closure
+    # (`us`, `eu`) never reaches it -- liveness has to be judged against
+    # every path that survives the option, not just the selected one.
+    breakouts = _two_way()
+    edges = (
+        ("root", "rev"),
+        ("root", "other"),
+        ("rev", "users"),
+        ("rev", "aov"),
+        ("rev", "us"),
+        ("rev", "eu"),
+        ("users", "shared"),
+        ("other", "shared"),
+    )
+    rules = partition_rules("rev", "rev_breakout", breakouts, edges)
+    drivers, region = rules
+
+    assert "shared" not in region.hide_cards
+    assert set(region.hide_cards) == {"users", "aov"}
+    assert set(drivers.hide_cards) == {"us", "eu"}
+
+    # The real gate: the graph layer's shared-position proof still accepts
+    # this topology, diamond and all.
+    control = breakout_control(breakouts, key="rev_breakout")
+    nodes = (
+        ("root", Card("Root", width=140)),
+        ("rev", Card("Rev", content=(control,), width=140)),
+        ("other", Card("Other", width=140)),
+        ("users", Card("Users", width=140)),
+        ("aov", Card("AOV", width=140)),
+        ("us", Card("US", width=140)),
+        ("eu", Card("EU", width=140)),
+        ("shared", Card("Shared", width=140)),
+    )
+    slots = (
+        Slot("root", 0, 0),
+        Slot("rev", 1, 0),
+        Slot("other", 1, 1),
+        Slot("users", 2, 0),
+        Slot("us", 2, 0),
+        Slot("aov", 2, 1),
+        Slot("eu", 2, 1),
+        Slot("shared", 3, 0),
+    )
+    wires = tuple(Wire(f"w{i}", src, dst) for i, (src, dst) in enumerate(edges))
+    graph = Graph(nodes, Slotted(slots), wires=wires, rules=rules, dom_prefix="brk5")
+    assert graph.measure().width > 0

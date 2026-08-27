@@ -15,7 +15,7 @@ hidden governing controller plus multi-condition partition rules.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal, cast
 
@@ -87,19 +87,30 @@ def breakout_control(
 
 
 def partition_rules(
-    parent: str, key: str, breakouts: Sequence[Breakout], edges: Sequence[tuple[str, str]]
+    parent: str,
+    key: str,
+    breakouts: Sequence[Breakout],
+    edges: Sequence[tuple[str, str]],
+    *,
+    residual_children: Mapping[str, str] | None = None,
 ) -> tuple[StateRule, ...]:
     """Build one rule per breakout, hiding every other breakout's cards.
 
     Alternatives must be pairwise disjoint and equally sized: shared
     positions are proven per (layer, slot), so an overlapping or uneven
     alternative would leave a position unoccupied or doubly claimed. Hiding
-    an alternative also hides everything beneath it: a child that is itself
-    declared elsewhere in `edges` as having its own deeper decomposition
-    does not survive as an orphan once its parent alternative is switched
-    away -- unless that descendant is also reachable from the selected
-    alternative (a diamond), in which case it stays visible through that
-    live path.
+    an alternative also hides everything beneath it -- including a node
+    declared elsewhere in `edges` as its own deeper decomposition -- unless
+    that node stays reachable from one of the graph's roots along some path
+    that survives this option: a diamond through the selected alternative,
+    an unrelated always-visible branch, or another switcher's own default
+    path all count as a live path and keep the node visible.
+
+    `residual_children` maps a breakout's own key to an injected residual
+    node hanging directly off `parent` (never a declared child of any
+    breakout, so its ownership must be named explicitly); a nested
+    descendant's own residual needs no such entry -- it is discovered like
+    any other node, through `edges`.
     """
     breakouts = tuple(breakouts)
     seen: set[str] = set()
@@ -112,13 +123,28 @@ def partition_rules(
     if len(sizes) > 1:
         raise SpecError("breakout alternatives must have the same number of children")
     adjacency = _build_adjacency(edges)
+    roots = _graph_roots(edges)
+    resolved_residuals = residual_children or {}
     return tuple(
         StateRule(
             (Atom(ControlRef(parent, key), "option_checked", breakout.key),),
-            hide_cards=_hidden_subtree(breakouts, index, adjacency),
+            hide_cards=_hidden_subtree(
+                parent, breakouts, index, adjacency, roots, resolved_residuals
+            ),
         )
         for index, breakout in enumerate(breakouts)
     )
+
+
+def _graph_roots(edges: Sequence[tuple[str, str]]) -> frozenset[str]:
+    """Nodes with no incoming edge in `edges`: the graph's own entry points."""
+    nodes: set[str] = set()
+    dsts: set[str] = set()
+    for src, dst in edges:
+        nodes.add(src)
+        nodes.add(dst)
+        dsts.add(dst)
+    return frozenset(nodes - dsts)
 
 
 def _build_adjacency(edges: Sequence[tuple[str, str]]) -> dict[str, tuple[str, ...]]:
@@ -153,24 +179,50 @@ def _descendant_closure(
 
 
 def _hidden_subtree(
+    parent: str,
     breakouts: tuple[Breakout, ...],
     selected_index: int,
     adjacency: dict[str, tuple[str, ...]],
+    roots: frozenset[str],
+    residual_children: Mapping[str, str],
 ) -> tuple[str, ...]:
-    """Descendants exclusive to unselected alternatives.
+    """Descendants with no live path left once this option hides its siblings.
 
-    A node reachable from an unselected alternative is only hidden if it has
-    no live path from the selected alternative -- a node shared between
-    alternatives (a diamond) keeps its visible path through the selection
-    and must never be hidden.
+    A node stays visible if it is still reachable from some graph root once
+    only *this* switcher's unselected direct targets are pruned from
+    `parent` -- judging liveness against every surviving path, not just the
+    selected alternative's own closure, is what lets a diamond or an
+    unrelated always-visible branch keep a shared descendant on screen.
     """
-    visible = _descendant_closure(breakouts[selected_index].children, adjacency)
+    unselected_direct: set[str] = set()
+    for other_index, other in enumerate(breakouts):
+        if other_index == selected_index:
+            continue
+        unselected_direct.update(other.children)
+        resid_id = residual_children.get(other.key)
+        if resid_id is not None:
+            unselected_direct.add(resid_id)
+
+    pruned_adjacency = {
+        node: tuple(
+            target for target in targets if not (node == parent and target in unselected_direct)
+        )
+        for node, targets in adjacency.items()
+    }
+    visible = set(roots)
+    for root in roots:
+        visible |= _reachable(root, pruned_adjacency)
+
     hidden: list[str] = []
     seen: set[str] = set()
     for other_index, other in enumerate(breakouts):
         if other_index == selected_index:
             continue
-        for node in _descendant_closure(other.children, adjacency):
+        closure = _descendant_closure(other.children, adjacency)
+        resid_id = residual_children.get(other.key)
+        if resid_id is not None:
+            closure.add(resid_id)
+        for node in closure:
             if node in visible or node in seen:
                 continue
             seen.add(node)
