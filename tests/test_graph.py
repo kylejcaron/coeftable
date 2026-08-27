@@ -1229,6 +1229,121 @@ def test_shared_slot_rejects_stray_rule_intersecting_group():
         )
 
 
+def test_shared_slot_group_pair_governed_by_one_select():
+    control = SelectControl(
+        "Mode",
+        (("drivers", "By drivers"), ("region", "By region")),
+        selected="drivers",
+        key="rev",
+    )
+    nodes = (
+        ("revenue", Card("Revenue", content=[control], width=150)),
+        ("users", Card("Users", width=150)),
+        ("aov", Card("AOV", width=150)),
+        ("us", Card("US", width=150)),
+        ("eu", Card("EU", width=150)),
+    )
+    slots = (
+        Slot("revenue", 0, 0),
+        Slot("users", 1, 0),
+        Slot("aov", 1, 1),  # drivers alternative
+        Slot("us", 1, 0),
+        Slot("eu", 1, 1),  # region alternative, same positions
+    )
+    wires = tuple(
+        Wire(f"w{i}", "revenue", dst) for i, dst in enumerate(("users", "aov", "us", "eu"))
+    )
+    rules = (
+        StateRule(
+            (Atom(ControlRef("revenue", "rev"), "option_checked", "drivers"),),
+            hide_cards=("us", "eu"),
+        ),
+        StateRule(
+            (Atom(ControlRef("revenue", "rev"), "option_checked", "region"),),
+            hide_cards=("users", "aov"),
+        ),
+    )
+    graph = Graph(nodes, Slotted(slots), wires=wires, rules=rules)
+    measured = graph.measure()
+    assert measured.width > 0
+
+    wide_slots = (
+        Slot("revenue", 0, 0),
+        Slot("users", 1, 0),
+        Slot("aov", 1, 1),
+        Slot("us", 1, 2),
+        Slot("eu", 1, 3),
+    )
+    wide_graph = Graph(nodes, Slotted(wide_slots), wires=wires)
+    assert measured.width < wide_graph.measure().width
+
+
+def test_shared_slot_governing_rule_may_hide_unshared_descendant():
+    # A governing option's rule may also hide a deeper, unshared descendant
+    # of the alternative it retires; the shared-position subset test that
+    # used to forbid this is gone.
+    rules = (
+        StateRule(
+            (Atom(ControlRef("controller", "mode"), "option_checked", "left"),),
+            hide_cards=("right",),
+        ),
+        StateRule(
+            (Atom(ControlRef("controller", "mode"), "option_checked", "right"),),
+            hide_cards=("left", "grandchild"),
+        ),
+    )
+    graph = Graph(
+        (
+            ("controller", _shared_slot_controller()),
+            ("left", Card("left")),
+            ("right", Card("right")),
+            ("grandchild", Card("grandchild")),
+        ),
+        Slotted(
+            (
+                Slot("controller", 0, 0),
+                Slot("left", 1, 0),
+                Slot("right", 1, 0),
+                Slot("grandchild", 2, 0),
+            )
+        ),
+        wires=(Wire("w", "left", "grandchild"),),
+        rules=rules,
+    )
+    assert graph.measure().width > 0
+
+
+def test_shared_slot_select_touching_group_without_partitioning_raises():
+    # One option retires a member of the shared group; the other option
+    # hides something else entirely, leaving both group members visible.
+    rules = (
+        StateRule(
+            (Atom(ControlRef("controller", "mode"), "option_checked", "left"),),
+            hide_cards=("right",),
+        ),
+        StateRule(
+            (Atom(ControlRef("controller", "mode"), "option_checked", "right"),),
+            hide_cards=("other",),
+        ),
+    )
+    with pytest.raises(SpecError, match="shared slots require one governing external"):
+        _shared_slot_graph(
+            rules,
+            nodes=(
+                ("controller", _shared_slot_controller()),
+                ("left", Card("left")),
+                ("right", Card("right")),
+                ("other", Card("other")),
+            ),
+            slots=(
+                Slot("controller", 0, 0),
+                Slot("left", 1, 0),
+                Slot("right", 1, 0),
+                Slot("other", 2, 0),
+            ),
+        )
+
+
 def _state_diamond(*, collapsible=("a", "b"), prefix="g", theme=DEFAULT) -> Graph:
     nodes = tuple((card_id, Card(card_id)) for card_id in ("r", "a", "b", "c"))
     layout = Slotted(

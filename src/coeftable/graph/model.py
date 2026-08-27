@@ -224,16 +224,14 @@ def _graph_shared_slot_groups(slots: tuple[Slot, ...]) -> tuple[frozenset[str], 
 
 
 def _graph_partition_rules(
-    group: frozenset[str],
     *,
     card_id: str,
     key: str,
     options: tuple[str, ...],
     rules: tuple[StateRule, ...],
 ) -> tuple[StateRule, ...] | None:
-    """Return exact one-rule-per-option partition rules, if present."""
+    """Return the select's one-rule-per-option partition, if every option has one."""
     governing: list[StateRule] = []
-    selected: set[str] = set()
     for option in options:
         matches = [
             rule
@@ -245,48 +243,69 @@ def _graph_partition_rules(
         ]
         if len(matches) != 1:
             return None
-        rule = matches[0]
-        hidden = set(rule.hide_cards)
-        if not hidden <= group or len(group - hidden) != 1:
-            return None
-        governing.append(rule)
-        selected.update(group - hidden)
-    if selected != group:
-        return None
+        governing.append(matches[0])
     return tuple(governing)
 
 
+def _graph_select_governed_groups(
+    governing: tuple[StateRule, ...],
+    groups: tuple[frozenset[str], ...],
+) -> tuple[frozenset[str], ...]:
+    """Return the shared groups a select's partition rules exactly cover.
+
+    A candidate group is any group one of the rules touches. Every candidate
+    must end with exactly one visible member per option, covering the whole
+    group across options; a select that touches a shared position without
+    partitioning it this way is a bug, not a reason to keep looking for
+    another governor.
+    """
+    hidden_by_option = tuple(frozenset(rule.hide_cards) for rule in governing)
+    hidden_union: frozenset[str] = frozenset().union(*hidden_by_option)
+    candidates = tuple(group for group in groups if group & hidden_union)
+    for group in candidates:
+        visible: frozenset[str] = frozenset()
+        for hidden in hidden_by_option:
+            remaining = group - hidden
+            if len(remaining) != 1:
+                raise SpecError("shared slots require one governing external SelectControl")
+            visible |= remaining
+        if visible != group:
+            raise SpecError("shared slots require one governing external SelectControl")
+    return candidates
+
+
 def _graph_resolve_shared_slot_controller(
-    group: frozenset[str],
+    groups: tuple[frozenset[str], ...],
     *,
     cards: Mapping[str, Card],
     rules: tuple[StateRule, ...],
     blockers: Mapping[str, frozenset[frozenset[str]]],
-) -> tuple[str, tuple[StateRule, ...]]:
-    """Resolve the sole external controller and enforce its visibility."""
-    candidates: list[tuple[str, tuple[StateRule, ...]]] = []
+) -> dict[frozenset[str], tuple[str, tuple[StateRule, ...]]]:
+    """Resolve the sole external, unhidden controller governing each group."""
+    governors: dict[frozenset[str], list[tuple[str, tuple[StateRule, ...]]]] = {
+        group: [] for group in groups
+    }
     for card_id, card in cards.items():
         for key, options in card.control_options().items():
-            if len(options) != len(group):
-                continue
             governing = _graph_partition_rules(
-                group,
-                card_id=card_id,
-                key=key,
-                options=options,
-                rules=rules,
+                card_id=card_id, key=key, options=options, rules=rules
             )
-            if governing is not None:
-                candidates.append((card_id, governing))
+            if governing is None:
+                continue
+            for group in _graph_select_governed_groups(governing, groups):
+                governors[group].append((card_id, governing))
 
-    if any(card_id in group for card_id, _ in candidates):
-        raise SpecError("shared-slot controller must be external to its group")
-    if len(candidates) != 1:
-        raise SpecError("shared slots require one governing external SelectControl")
-    controller, governing = candidates[0]
-    if blockers[controller] or any(controller in rule.hide_cards for rule in rules):
-        raise SpecError("shared-slot controller must never be hidden")
-    return controller, governing
+    resolved: dict[frozenset[str], tuple[str, tuple[StateRule, ...]]] = {}
+    for group, candidates in governors.items():
+        if any(card_id in group for card_id, _ in candidates):
+            raise SpecError("shared-slot controller must be external to its group")
+        if len(candidates) != 1:
+            raise SpecError("shared slots require one governing external SelectControl")
+        controller, governing = candidates[0]
+        if blockers[controller] or any(controller in rule.hide_cards for rule in rules):
+            raise SpecError("shared-slot controller must never be hidden")
+        resolved[group] = (controller, governing)
+    return resolved
 
 
 def _graph_reject_stray_shared_slot_rules(
@@ -302,17 +321,18 @@ def _graph_reject_stray_shared_slot_rules(
 
 
 def _graph_shared_slot_proof(
-    group: frozenset[str],
+    groups: tuple[frozenset[str], ...],
     *,
     cards: Mapping[str, Card],
     rules: tuple[StateRule, ...],
     blockers: Mapping[str, frozenset[frozenset[str]]],
 ) -> None:
-    """Require one external select to prove exclusivity for a shared slot."""
-    _, governing = _graph_resolve_shared_slot_controller(
-        group, cards=cards, rules=rules, blockers=blockers
+    """Require one external select to prove exclusivity for every shared position."""
+    resolved = _graph_resolve_shared_slot_controller(
+        groups, cards=cards, rules=rules, blockers=blockers
     )
-    _graph_reject_stray_shared_slot_rules(group, rules=rules, governing=governing)
+    for group, (_, governing) in resolved.items():
+        _graph_reject_stray_shared_slot_rules(group, rules=rules, governing=governing)
 
 
 def _graph_validate_settings(graph: Graph) -> None:
@@ -795,8 +815,9 @@ class Graph:
         visibility_edges = tuple((wire.src, wire.dst) for wire in visibility_wires)
         check_acyclic(node_ids, visibility_edges)
         blockers = blocker_families(node_ids, visibility_edges, collapsible)
-        for group in _graph_shared_slot_groups(slots):
-            _graph_shared_slot_proof(group, cards=cards, rules=rules, blockers=blockers)
+        _graph_shared_slot_proof(
+            _graph_shared_slot_groups(slots), cards=cards, rules=rules, blockers=blockers
+        )
         _graph_validate_rule_controllers(rules, collapsible=collapsible, blockers=blockers)
         object.__setattr__(self, "nodes", tuple(rebound_nodes))
         object.__setattr__(self, "wires", wires)
