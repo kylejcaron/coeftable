@@ -12,6 +12,7 @@ from dataclasses import replace
 
 import pytest
 
+from coeftable.cards.adornments import Callout
 from coeftable.cards.chrome import DEFAULT_CHROME, CardChrome
 from coeftable.cards.regions import Metric, Trend
 from coeftable.errors import SpecError
@@ -1304,3 +1305,32 @@ def test_an_event_may_target_an_injected_residual():
         events=(TimelineEvent(at=1.0, label="ok", color="#c33", affects=("resid_spend_channel",)),)
     )
     assert report.measure().width > 0
+
+
+def test_the_disclaimer_names_the_contribution_reference_point():
+    # Without this, an edge label reading "+12.1%" is naturally misread as the
+    # child's own growth, when it is the child's share of the PARENT's change.
+    # Compare against the unwrapped text: each rendered line is its own element,
+    # so a phrase spanning a line break never appears contiguously in the HTML.
+    html = _fixture().as_raw_html()
+    flat = " ".join(re.sub(r"<[^>]+>", " ", html).split())
+    flat = flat.replace("&#x27;", "'").replace("&amp;", "&")
+    assert "measured against its parent's starting value, not its own" in flat
+    assert "siblings sum to the parent's change" in flat
+
+
+def test_a_trade_off_warning_hides_with_the_alternative_it_describes():
+    # The warning names two specific siblings, so it must not live on the
+    # parent card: that card survives every switch and would keep warning
+    # about cards the reader can no longer see.
+    report = _tradeoff_fixture()
+    html = report.as_raw_html()
+    hosts = {
+        node_id
+        for node_id, card in report.graph.nodes
+        if any(isinstance(a, Callout) and "trade-off" in a.text for a in card.content)
+    }
+    assert hosts, "expected a trade-off callout somewhere"
+    parents = {"combo"}  # the switcher parent in _tradeoff_fixture
+    assert not (hosts & parents), f"callout must not sit on a switcher parent: {hosts & parents}"
+    assert "trade-off" in html

@@ -86,7 +86,9 @@ _ROOT_CARD_WIDTH = 560
 _DISCLAIMER = (
     "Edge labels are an accounting of the realized {weeks}-week change under "
     "the chosen decomposition \u2014 they are not causal impact and not "
-    "levers. For causal claims, attach an experiment / causal graph."
+    "levers. Each is measured against its parent's starting value, not its "
+    "own, so siblings sum to the parent's change. For causal claims, attach "
+    "an experiment / causal graph."
 )
 
 
@@ -470,7 +472,14 @@ def _apply_breakout_honesty(
     pairs = tradeoff_pairs(non_muted)
     if pairs:
         text = "\u26a0 trade-off: " + "; ".join(f"{a} \u2194 {b} (r={r:.2f})" for a, b, r in pairs)
-        outcome.tradeoff_callouts.setdefault(parent, []).append(text)
+        # Host the warning on a participating child, never on the parent. The
+        # parent card is visible under every option, so a warning about one
+        # alternative's siblings would survive a switch and keep naming cards
+        # the reader can no longer see. A child hides and shows with its own
+        # alternative, so the warning appears exactly when its subject does.
+        id_by_title = {titles[child]: child for child in breakout.children}
+        host = id_by_title.get(pairs[0][0], breakout.children[0])
+        outcome.tradeoff_callouts.setdefault(host, []).append(text)
 
 
 def _apply_honesty(
