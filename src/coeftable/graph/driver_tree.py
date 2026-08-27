@@ -933,10 +933,10 @@ def _build_card(
         # row. There is no fixed line cap to pick here -- sizing it to however
         # many lines the text's own greedy wrap actually needs (computed with
         # the same budget `measure_card` will use for this card's width) means
-        # every word gets its own row and the card grows to fit, rather than
-        # cramming an arbitrary tail onto the last line. The wrap is still an
-        # estimated character budget, not a font measurement, so unusually
-        # wide characters can still overflow a line and get clipped there.
+        # every planned line gets its own row and the card grows to fit,
+        # rather than cramming an arbitrary tail onto the last line. The wrap
+        # is still an estimated character budget, not a font measurement, so
+        # unusually wide characters can still overflow a line and get clipped.
         usable = _ROOT_CARD_WIDTH - 2 * (chrome.padding + chrome.border_width)
         budget = _budget(usable, chrome.caption_size, chrome.char_width_ratio)
         needed_lines = len(
