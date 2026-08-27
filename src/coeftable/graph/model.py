@@ -336,7 +336,14 @@ def _graph_resolve_shared_slot_controller(
     dict[frozenset[str], tuple[str, tuple[StateRule, ...]]],
     dict[frozenset[str], frozenset[StateRule]],
 ]:
-    """Resolve the sole external, unhidden controller governing each group."""
+    """Resolve the sole external controller governing each shared group.
+
+    The controller must sit outside the group it governs, but it need not stay
+    visible: an ancestor rule may hide it, provided that same rule also hides
+    every member of every group it governs. That obligation is enforced
+    separately; this function only resolves who governs what, and collects the
+    ancestor rules that legitimately touch each group.
+    """
     governors: dict[frozenset[str], list[tuple[str, tuple[StateRule, ...]]]] = {
         group: [] for group in groups
     }
