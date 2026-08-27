@@ -16,15 +16,23 @@ from coeftable.cards.adornments import (
     SelectControl,
     TextBlock,
 )
+from coeftable.cards.chrome import DEFAULT_CHROME, CardChrome
 from coeftable.cards.fragments import render_adornment
+from coeftable.cards.measure import Anchor, MeasuredCard
+from coeftable.cards.template import CardTemplate
 
 __all__ = [
+    "DEFAULT_CHROME",
     "Adornment",
+    "Anchor",
     "Badge",
     "CaptionRow",
+    "CardChrome",
+    "CardTemplate",
     "InlineSvg",
     "KeyValuePopover",
     "Legend",
+    "MeasuredCard",
     "MetricValue",
     "RuleStrip",
     "SelectControl",

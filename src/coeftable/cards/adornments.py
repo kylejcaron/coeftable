@@ -2,7 +2,9 @@
 
 The renderer (`coeftable.cards.fragments`) knows exactly these nine types
 and never branches on report type. Construction is the runtime contract
-boundary: every invalid value raises `SpecError` here, never later.
+boundary for intrinsic field validity: every invalid value raises `SpecError`
+here. Layout-dependent fit, including overflow and minimum widths, raises
+`SpecError` during measurement instead.
 """
 
 from __future__ import annotations
@@ -69,15 +71,19 @@ def _require_entry_tuples(
 
 @dataclass(frozen=True, slots=True)
 class TextBlock:
-    """A run of card text at one typographic variant."""
+    """A run of card text at one typographic variant, wrapping to max_lines."""
 
     text: str
     variant: Variant = "body"
+    max_lines: int = 1
 
     def __post_init__(self) -> None:
         """Validate fields."""
         _require_str(self.text, name="TextBlock.text")
         _require_member(self.variant, _VARIANTS, name="TextBlock.variant")
+        _require_int(self.max_lines, name="TextBlock.max_lines")
+        if self.max_lines < 1:
+            raise SpecError("TextBlock.max_lines must be >= 1")
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,8 +96,10 @@ class MetricValue:
 
     def __post_init__(self) -> None:
         """Validate fields."""
-        _require_str(self.value, name="MetricValue.value")
+        _require_nonempty_str(self.value, name="MetricValue.value")
         _require_optional_str(self.detail, name="MetricValue.detail")
+        if self.detail == "":
+            raise SpecError("MetricValue.detail must not be empty")
         _require_member(self.role, _ROLES, name="MetricValue.role")
 
 
