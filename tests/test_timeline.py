@@ -8,9 +8,11 @@ from coeftable.graph.timeline import (
     _DASH_ARRAY,
     _INSET,
     _LABEL_FONT_SIZE,
+    _LABEL_HALO,
     _MIN_HEIGHT,
     _MIN_WIDTH,
     TimelineEvent,
+    _clip_label,
     _projector,
     events_for,
     timeline_strip,
@@ -165,6 +167,44 @@ def test_strip_truncates_a_label_that_cannot_fit_even_edge_anchored():
     left, right = _label_extent(x, anchor, text)
     assert left >= 0
     assert right <= width
+
+
+def test_strip_anchors_a_both_edge_overflowing_label_to_its_larger_budget():
+    # A label long enough to overflow past both edges once centred must
+    # anchor toward whichever side has more room, not whichever side the
+    # overflow check happens to test first. Placed near the right edge, the
+    # leftward ("end") budget dwarfs the rightward ("start") budget, so
+    # anchoring "end" preserves far more of the label.
+    width = 200
+    x_domain = (0.0, 10.0)
+    event = TimelineEvent(
+        at=9.9,
+        label="a release name so long it cannot fit anchored to either edge alone",
+        color="#c33",
+        affects=("a",),
+    )
+    project = _projector(x_domain, width, _INSET)
+    x = project(event.at)
+    full_label = f"{event.label} \u00b7 W{int(event.at) + 1}"
+    half = len(full_label) * _LABEL_FONT_SIZE * _CHAR_WIDTH_RATIO / 2
+    low, high = _LABEL_HALO, width - _LABEL_HALO
+    start_budget, end_budget = high - x, x - low
+
+    # Confirm the fixture actually exercises the both-edges-overflow branch,
+    # with a materially larger budget on the "end" side.
+    assert x - half < low
+    assert x + half > high
+    assert end_budget > start_budget
+
+    strip = timeline_strip((event,), x_domain=x_domain, width=width, theme=DEFAULT)
+    (fragment,) = _event_label_fragments(strip.svg)
+    _, anchor, text = _parse_label_fragment(fragment)
+
+    assert anchor == "end"
+    assert text == _clip_label(full_label, max(end_budget, 0.0), _LABEL_FONT_SIZE)
+
+    start_anchored_alternative = _clip_label(full_label, max(start_budget, 0.0), _LABEL_FONT_SIZE)
+    assert len(text) > len(start_anchored_alternative)
 
 
 def test_strip_rejects_a_width_at_or_below_the_minimum():

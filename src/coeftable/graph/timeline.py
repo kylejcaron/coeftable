@@ -158,9 +158,17 @@ def _label_anchor_and_text(x: float, label: str, width: int) -> tuple[str, str]:
     """
     half = len(label) * _LABEL_FONT_SIZE * _CHAR_WIDTH_RATIO / 2
     low, high = _LABEL_HALO, width - _LABEL_HALO
-    if x - half < low:
+    overflows_left = x - half < low
+    overflows_right = x + half > high
+    if overflows_left and overflows_right:
+        start_budget, end_budget = high - x, x - low
+        if end_budget >= start_budget:
+            anchor, budget = "end", end_budget
+        else:
+            anchor, budget = "start", start_budget
+    elif overflows_left:
         anchor, budget = "start", high - x
-    elif x + half > high:
+    elif overflows_right:
         anchor, budget = "end", x - low
     else:
         anchor, budget = "middle", 2 * min(x - low, high - x)
