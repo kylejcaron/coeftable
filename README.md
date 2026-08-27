@@ -652,14 +652,21 @@ are accounting, not causal claims. `events` fan out to every card named in
 their `affects` tuple, both as sparkline markers and as captions, and the
 report's header is a timeline strip indexing them across the whole canvas.
 
-**Current limitations.** At most one breakout switcher may appear on any
-root-to-leaf path: a switcher nested inside another switcher's alternative
-subtree is rejected at construction with a `SpecError` naming both parents.
-Switchers in disjoint branches are fine on their own, but a card whose only
-paths run through the alternatives of two different switchers is also
-rejected, because whether it stays visible would depend on both selections at
-once and pure CSS cannot express that conjunction. The error names the card
-and the switchers gating it.
+**Switchers can nest.** Every level of the tree may carry its own switcher at
+the same time — revenue by drivers or region, and within drivers, active users
+by funnel or country, and within that, sessions by platform or channel.
+Switching an outer choice takes away the whole branch beneath it, including any
+nested switcher and its alternatives; switching back restores it with the inner
+selection intact, because a native `<select>` keeps its value while hidden.
+
+**Limitations.** All alternatives of one switcher must have the same number of
+children, since they share the same positions. And a card whose only paths run
+through the alternatives of two *sibling* switchers is rejected: staying visible
+would depend on both selections at once, and each switcher's rules are emitted
+independently, so there is no place to express that combined condition. Nesting
+is unaffected by this — an ancestor and its descendant are ordered, so the
+ancestor's rule alone decides. The error names the card and the switchers
+gating it.
 
 `DriverTree` returns a `GraphReport`: the underlying `Graph` plus a
 measured, exact-width timeline strip stacked above it. `report.measure()`,
