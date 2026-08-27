@@ -310,6 +310,50 @@ def test_graph_rejects_collapsible_nubs_in_too_small_layer_gap():
         )
 
 
+def test_graph_derives_label_clearance_and_baseline_from_chrome():
+    chrome = dataclasses.replace(CardChrome(), caption_size=20)
+    nodes = (
+        ("source", Card("source", chrome=chrome)),
+        ("target", Card("target", chrome=chrome)),
+    )
+    slots = (Slot("source", 0, 0), Slot("target", 1, 0))
+    wire = Wire("wire", "source", "target", label="edge")
+    with pytest.raises(
+        SpecError,
+        match=re.escape("Graph.layer_gap must be at least 46 when wire labels are present"),
+    ):
+        Graph(nodes, Slotted(slots), wires=(wire,), chrome=chrome, layer_gap=45)
+    accepted = Graph(nodes, Slotted(slots), wires=(wire,), chrome=chrome, layer_gap=46)
+    target_left, target_top, _, _ = dict(accepted.measure().boxes)["target"]
+    target_in = dict(accepted._layout.anchors)["target"][0]
+    x1 = target_left + target_in[0]
+    y1 = target_top + target_in[1]
+    assert dict(accepted._layout.wire_geometry)["wire"][1] == (x1, y1 - 22)
+    with pytest.raises(
+        SpecError,
+        match=re.escape(
+            "Graph.layer_gap must be at least 60 when labels share a band with fold nubs"
+        ),
+    ):
+        Graph(
+            nodes,
+            Slotted(slots),
+            wires=(wire,),
+            chrome=chrome,
+            collapsible=("source",),
+            layer_gap=59,
+        )
+    shared_band = Graph(
+        nodes,
+        Slotted(slots),
+        wires=(wire,),
+        chrome=chrome,
+        collapsible=("source",),
+        layer_gap=60,
+    )
+    assert shared_band.measure().height > 0
+
+
 def test_graph_requires_extra_label_clearance_when_labels_share_a_nub_band():
     nodes = (("source", Card("source")), ("target", Card("target")))
     slots = (Slot("source", 0, 0), Slot("target", 1, 0))
@@ -1717,8 +1761,14 @@ def test_graph_measure_clamps_spread_label_anchors_to_canvas_bounds():
     )
     graph = Graph(nodes, Slotted(slots), wires=wires)
     half_text = len("label") * graph.chrome.caption_size * graph.chrome.data_char_width_ratio / 2
-    anchors = tuple(dict(graph._layout.wire_geometry)[wire.id][1][0] for wire in wires)
-    assert all(half_text <= x <= graph.measure().width - half_text for x in anchors)
+    label_anchors = tuple(dict(graph._layout.wire_geometry)[wire.id][1] for wire in wires)
+    assert all(0 <= x <= graph.measure().width for x, _ in label_anchors)
+    assert all(half_text <= x <= graph.measure().width - half_text for x, _ in label_anchors)
+    for index, (x0, y0) in enumerate(label_anchors):
+        for x1, y1 in label_anchors[index + 1 :]:
+            horizontal_overlap = abs(x1 - x0) < 2 * half_text
+            vertical_overlap = abs(y1 - y0) < graph.chrome.caption_size
+            assert not (horizontal_overlap and vertical_overlap)
 
 
 def test_graph_measure_skip_layer_route_samples_stay_outside_intervening_card():

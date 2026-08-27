@@ -612,7 +612,10 @@ def _graph_measure(
             sorted(indices, key=lambda item: (source_x0[item], item))
         )
     }
-    wire_geometry: list[tuple[str, WireGeometry]] = []
+    label_offset = chrome.caption_size + 2
+    label_step = chrome.caption_size + 4
+    label_candidates: dict[int, tuple[float, float, float]] = {}
+    wire_rows: list[tuple[int, str, str, AnchorOffset]] = []
     for wire_index, wire in enumerate(wires):
         src_left, src_top, _src_width, _src_height = boxes_by_id[wire.src]
         dst_left, dst_top, _dst_width, _dst_height = boxes_by_id[wire.dst]
@@ -674,7 +677,33 @@ def _graph_measure(
                 half_text,
                 min(footprint.width - half_text, x1 + spread),
             )
-        wire_geometry.append((wire.id, (path, (label_anchor_x, y1 - 13))))
+            label_candidates[wire_index] = (
+                label_anchor_x,
+                half_text,
+                y1 - label_offset,
+            )
+        wire_rows.append((wire_index, wire.id, path, (label_anchor_x, y1 - label_offset)))
+    label_anchors: dict[int, AnchorOffset] = {}
+    for _destination, indices in labeled_incoming.items():
+        stack_index = 0
+        previous_right: float | None = None
+        for wire_index in sorted(indices, key=lambda item: (source_x0[item], item)):
+            label_anchor_x, half_text, label_anchor_y = label_candidates[wire_index]
+            left = label_anchor_x - half_text
+            right = label_anchor_x + half_text
+            if previous_right is not None and left < previous_right:
+                stack_index += 1
+            else:
+                stack_index = 0
+            label_anchors[wire_index] = (
+                label_anchor_x,
+                label_anchor_y - label_step * stack_index,
+            )
+            previous_right = right
+    wire_geometry = [
+        (wire_id, (path, label_anchors.get(wire_index, fallback)))
+        for wire_index, wire_id, path, fallback in wire_rows
+    ]
     return _GraphLayout(footprint, tuple(anchor_offsets), tuple(wire_geometry))
 
 
@@ -718,17 +747,24 @@ class Graph:
             )
         if wires and self.layer_gap < 18:
             raise SpecError("Graph.layer_gap must be at least 18 when wires are present")
-        if any(wire.label is not None for wire in wires) and self.layer_gap < 28:
-            raise SpecError("Graph.layer_gap must be at least 28 when wire labels are present")
+        label_offset = self.chrome.caption_size + 2
+        labeled_layer_gap = label_offset + self.chrome.caption_size + 4
+        if any(wire.label is not None for wire in wires) and self.layer_gap < labeled_layer_gap:
+            raise SpecError(
+                f"Graph.layer_gap must be at least {labeled_layer_gap} when "
+                "wire labels are present"
+            )
         collapsible_layers = {
             layers_by_id[card_id] for card_id in collapsible if card_id in layers_by_id
         }
         labeled_destination_bands = {
             layers_by_id[wire.dst] - 1 for wire in wires if wire.label is not None
         }
-        if collapsible_layers & labeled_destination_bands and self.layer_gap < 42:
+        shared_band_gap = 18 + label_offset + self.chrome.caption_size
+        if collapsible_layers & labeled_destination_bands and self.layer_gap < shared_band_gap:
             raise SpecError(
-                "Graph.layer_gap must be at least 42 when labels share a band with fold nubs"
+                f"Graph.layer_gap must be at least {shared_band_gap} when "
+                "labels share a band with fold nubs"
             )
         cards, rebound_nodes = _graph_rebound_nodes(nodes, theme=self.theme, chrome=self.chrome)
         card_options = {node_id: card.control_options() for node_id, card in rebound_nodes}
