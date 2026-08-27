@@ -200,13 +200,21 @@ def _prepare_x(x: Sequence[float]) -> tuple[tuple[float, ...], tuple[float, floa
     generalizing it. Irregular spacing is therefore rejected, naming the
     offending index and the two differing gaps, rather than accepted and
     mislabeled. Gaps are compared with a relative tolerance plus an
-    absolute floor scaled to the coordinates' own magnitude, rather than
-    bit-for-bit or relative-only: mathematically uniform coordinates whose
-    gaps differ only in the last bits of binary rounding (e.g. `0.1, 0.2,
-    0.3`) are still accepted, and so is that same uniformity after a large
-    shift of origin, where subtracting two similarly large coordinates
-    loses absolute precision that swamps a purely relative tolerance sized
-    to the (small) gap alone. A gap that differs by more than that
+    absolute floor scaled to the coordinates' own floating-point
+    resolution at that magnitude, rather than bit-for-bit or
+    relative-only: mathematically uniform coordinates whose gaps differ
+    only in the last bits of binary rounding (e.g. `0.1, 0.2, 0.3`) are
+    still accepted, and so is that same uniformity after a large shift of
+    origin, where subtracting two similarly large coordinates loses
+    absolute precision that swamps a purely relative tolerance sized to
+    the (small) gap alone. That absolute floor is a small multiple of
+    `math.ulp(magnitude)` -- the local gap between representable floats
+    at that magnitude -- not a fixed fraction of the magnitude itself:
+    a fraction would grow linearly with the origin and eventually
+    swallow real irregularity (at a magnitude of `1e9`, `1e-9 *
+    magnitude` is about `1`, so gaps of `1` and `2` would compare equal),
+    whereas `math.ulp` tracks only the cancellation error actually
+    incurred by the subtraction. A gap that differs by more than that
     combined tolerance is real irregularity, not rounding. The
     disclaimer's period count is the coordinates' own span
     (`x[-1] - x[0]`), measured directly from the endpoints rather than
@@ -228,7 +236,7 @@ def _prepare_x(x: Sequence[float]) -> tuple[tuple[float, ...], tuple[float, floa
                 f"x[{index}]={current!r} is not greater than x[{index - 1}]={previous!r}"
             )
         this_gap = current - previous
-        if not math.isclose(this_gap, gap, rel_tol=1e-9, abs_tol=1e-9 * magnitude):
+        if not math.isclose(this_gap, gap, rel_tol=1e-9, abs_tol=4 * math.ulp(magnitude)):
             raise SpecError(
                 "DriverTree.x must be evenly spaced: "
                 f"x[{index}] - x[{index - 1}]={this_gap!r} differs from the first gap "

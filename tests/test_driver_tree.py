@@ -590,9 +590,11 @@ def test_binary_rounded_uniform_spacing_is_accepted():
 
 
 def test_small_magnitude_unequal_spacing_is_still_refused():
-    """The tolerance is relative to the gap magnitude, not a blanket floor:
-    a real ~50% spacing irregularity among small gaps must still be
-    refused, not waved through as rounding noise."""
+    """The tolerance combines a relative component sized to the gap
+    magnitude with an absolute floor sized to the coordinates' own
+    floating-point resolution (a small multiple of `math.ulp`), not a
+    blanket floor: a real ~50% spacing irregularity among small gaps
+    must still be refused, not waved through as rounding noise."""
     x = (0.1, 0.2, 0.35)
     titles = {"p": "P", "a": "A", "b": "B"}
     series = {"p": (10.0, 11.0, 12.0), "a": (5.0, 5.5, 6.0), "b": (5.0, 5.5, 6.0)}
@@ -618,6 +620,37 @@ def test_uniform_spacing_shifted_to_a_large_origin_is_still_accepted():
     }
     breakouts = {"p": (Breakout(key="k", label="K", op="+", children=("a", "b")),)}
     DriverTree(series, titles, breakouts, _FMT, x)
+
+
+def test_uniform_spacing_at_a_1e9_origin_is_accepted():
+    """The absolute floor must track `math.ulp(magnitude)`, not a fixed
+    fraction of `magnitude`: at a magnitude around `1e9`, `1e-9 *
+    magnitude` would itself be about `1`, which is far too coarse. A
+    genuinely uniform sequence shifted to this origin must still be
+    accepted."""
+    x = tuple(1_000_000_000.0 + 0.1 * i for i in range(4))
+    titles = {"p": "P", "a": "A", "b": "B"}
+    series = {
+        "p": (10.0, 11.0, 12.0, 13.0),
+        "a": (5.0, 5.5, 6.0, 6.5),
+        "b": (5.0, 5.5, 6.0, 6.5),
+    }
+    breakouts = {"p": (Breakout(key="k", label="K", op="+", children=("a", "b")),)}
+    DriverTree(series, titles, breakouts, _FMT, x)
+
+
+def test_large_magnitude_unequal_spacing_is_refused_not_swallowed():
+    """A fixed-fraction-of-magnitude absolute floor (e.g. `1e-9 *
+    magnitude`) would be about `1` at a magnitude of `1e9`, so gaps of
+    `1` and `2` would wrongly compare equal there. The floor must instead
+    track floating-point resolution at that magnitude, so this real
+    doubling of the gap is still refused."""
+    x = (1_000_000_000.0, 1_000_000_001.0, 1_000_000_003.0)
+    titles = {"p": "P", "a": "A", "b": "B"}
+    series = {"p": (10.0, 11.0, 12.0), "a": (5.0, 5.5, 6.0), "b": (5.0, 5.5, 6.0)}
+    breakouts = {"p": (Breakout(key="k", label="K", op="+", children=("a", "b")),)}
+    with pytest.raises(SpecError, match="evenly spaced"):
+        DriverTree(series, titles, breakouts, _FMT, x)
 
 
 def test_equal_non_unit_spacing_is_accepted_with_a_correct_disclaimer():
