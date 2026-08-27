@@ -261,7 +261,7 @@ def _annotation_fragments(
             raise RuntimeError(f"Cannot render a {mark.axis}-axis annotation for this plot.")
 
         low, high = domain
-        color = html.escape(theme.axis if mark.color is None else mark.color, quote=True)
+        color = _attr(theme.axis if mark.color is None else mark.color)
         if isinstance(mark, ResolvedRule):
             if not low <= mark.at <= high:
                 continue
@@ -849,6 +849,11 @@ def _esc(text: str) -> str:
     return html.escape(text, quote=False)
 
 
+def _attr(value: str) -> str:
+    """Escape a caller-controlled string for safe use in an SVG attribute."""
+    return html.escape(value, quote=True)
+
+
 CLIP_MARGIN = 18
 # Pixel reserve on each side of a forest bar's plotting region when its
 # domain bucket contains clipped values -- the strip a `_fade_cap` bleeds
@@ -883,8 +888,8 @@ def _fade_cap(
     x_attrs = 'x1="1" y1="0" x2="0" y2="0"' if flip else 'x1="0" y1="0" x2="1" y2="0"'
     return (
         f'<defs><linearGradient id="{gid}" {x_attrs}>'
-        f'<stop offset="0" stop-color="{color}" stop-opacity="0.75"/>'
-        f'<stop offset="1" stop-color="{color}" stop-opacity="0"/>'
+        f'<stop offset="0" stop-color="{_attr(color)}" stop-opacity="0.75"/>'
+        f'<stop offset="1" stop-color="{_attr(color)}" stop-opacity="0"/>'
         f"</linearGradient></defs>"
         f'<rect x="{x:.2f}" y="{top:.2f}" width="{fade_width:.2f}" '
         f'height="{bar_height}" fill="url(#{gid})"/>'
@@ -967,20 +972,20 @@ def forest_bar(
         ref_x = project(ref)
         parts.append(
             f'<line x1="{ref_x:.2f}" y1="0" x2="{ref_x:.2f}" y2="{height}" '
-            f'stroke="{theme.axis}" stroke-width="1" stroke-dasharray="2,2"/>'
+            f'stroke="{_attr(theme.axis)}" stroke-width="1" stroke-dasharray="2,2"/>'
         )
 
     parts.append(
         f'<rect x="{x0:.2f}" y="{top:.2f}" width="{max(x1 - x0, 0.75):.2f}" '
-        f'height="{bar_height}" fill="{color}" fill-opacity="0.75" '
-        f'stroke="{color}" stroke-width="0.75"/>'
+        f'height="{bar_height}" fill="{_attr(color)}" fill-opacity="0.75" '
+        f'stroke="{_attr(color)}" stroke-width="0.75"/>'
     )
 
     if estimate is not None and not is_missing(estimate) and low <= estimate <= high:
         tick_x = project(estimate)
         parts.append(
             f'<line x1="{tick_x:.2f}" y1="{top:.2f}" x2="{tick_x:.2f}" '
-            f'y2="{top + bar_height:.2f}" stroke="{theme.surface}" stroke-width="1.5"/>'
+            f'y2="{top + bar_height:.2f}" stroke="{_attr(theme.surface)}" stroke-width="1.5"/>'
         )
 
     if margin:
@@ -995,13 +1000,13 @@ def forest_bar(
             tip = width - inset / 2
             parts.append(
                 f'<polygon points="{tip:.2f},{middle:.2f} {tip - cap:.2f},{middle - cap:.2f} '
-                f'{tip - cap:.2f},{middle + cap:.2f}" fill="{color}"/>'
+                f'{tip - cap:.2f},{middle + cap:.2f}" fill="{_attr(color)}"/>'
             )
         if clipped_low:
             tip = inset / 2
             parts.append(
                 f'<polygon points="{tip:.2f},{middle:.2f} {tip + cap:.2f},{middle - cap:.2f} '
-                f'{tip + cap:.2f},{middle + cap:.2f}" fill="{color}"/>'
+                f'{tip + cap:.2f},{middle + cap:.2f}" fill="{_attr(color)}"/>'
             )
     if not annotations:
         return _svg(width, height, "".join(parts))
@@ -1049,12 +1054,12 @@ def _render_tick_axis(
         tick_x = project(tick)
         parts.append(
             f'<line x1="{tick_x:.2f}" y1="{baseline:.2f}" x2="{tick_x:.2f}" '
-            f'y2="{baseline + 3:.2f}" stroke="{theme.axis}" stroke-width="0.75"/>'
+            f'y2="{baseline + 3:.2f}" stroke="{_attr(theme.axis)}" stroke-width="0.75"/>'
         )
         if text:
             anchor = _tick_anchor(tick_x, text, width)
             parts.append(
-                f'<text x="{tick_x:.2f}" y="{height - 2:.2f}" fill="{theme.axis}" '
+                f'<text x="{tick_x:.2f}" y="{height - 2:.2f}" fill="{_attr(theme.axis)}" '
                 f'font-size="9" text-anchor="{anchor}">{_esc(text)}</text>'
             )
     return parts
@@ -1125,7 +1130,7 @@ def _render_two_tier_axis(
     for x, text in zip(super_centers, super_texts, strict=True):
         if text:
             parts.append(
-                f'<text x="{x:.2f}" y="{super_y:.2f}" fill="{theme.muted}" '
+                f'<text x="{x:.2f}" y="{super_y:.2f}" fill="{_attr(theme.muted)}" '
                 f'font-size="9" text-anchor="{_tick_anchor(x, text, width)}">{_esc(text)}</text>'
             )
     return parts
@@ -1179,13 +1184,13 @@ def forest_axis(
     parts = [
         f'<line x1="{margin + inset}" y1="{baseline:.2f}" '
         f'x2="{width - margin - inset}" y2="{baseline:.2f}" '
-        f'stroke="{theme.axis}" stroke-width="0.75"/>'
+        f'stroke="{_attr(theme.axis)}" stroke-width="0.75"/>'
     ]
     if low <= ref <= high:
         ref_x = project(ref)
         parts.append(
             f'<line x1="{ref_x:.2f}" y1="0" x2="{ref_x:.2f}" y2="{baseline:.2f}" '
-            f'stroke="{theme.axis}" stroke-width="1" stroke-dasharray="2,2"/>'
+            f'stroke="{_attr(theme.axis)}" stroke-width="1" stroke-dasharray="2,2"/>'
         )
     ticks = nice_ticks(low, high, target_ticks)
     texts = _dedupe_consecutive_labels([fmt(t) for t in ticks])
@@ -1231,16 +1236,20 @@ def _render_band_run(
     top = " ".join(f"{project_x(xi):.2f},{project_y(ui):.2f}" for xi, ui in upper_pts)
     bottom = " ".join(f"{project_x(xi):.2f},{project_y(li):.2f}" for xi, li in reversed(lower_pts))
     if spans:
-        ghost.append(f'<polygon points="{top} {bottom}" fill="{color}" fill-opacity="0.06"/>')
+        ghost.append(
+            f'<polygon points="{top} {bottom}" fill="{_attr(color)}" fill-opacity="0.06"/>'
+        )
         clipped = _clip_band_polygon(upper_pts + list(reversed(lower_pts)), low, high)
         if clipped:
             band_pts = " ".join(f"{project_x(px):.2f},{project_y(pv):.2f}" for px, pv in clipped)
             real.append(
                 f'<g clip-path="url(#{clip_id})"><polygon points="{band_pts}" '
-                f'fill="{color}" fill-opacity="0.15"/></g>'
+                f'fill="{_attr(color)}" fill-opacity="0.15"/></g>'
             )
     else:
-        real.append(f'<polygon points="{top} {bottom}" fill="{color}" fill-opacity="0.15"/>')
+        real.append(
+            f'<polygon points="{top} {bottom}" fill="{_attr(color)}" fill-opacity="0.15"/>'
+        )
     return ghost, real, spans
 
 
@@ -1267,19 +1276,21 @@ def _render_line_run(
     pts = " ".join(f"{project_x(xi):.2f},{project_y(yi):.2f}" for xi, yi in run)
     if spans:
         ghost.append(
-            f'<polyline points="{pts}" fill="none" stroke="{color}" '
+            f'<polyline points="{pts}" fill="none" stroke="{_attr(color)}" '
             f'stroke-width="1.5" stroke-opacity="0.35"/>'
         )
         clipped_pieces = "".join(
             '<polyline points="'
             + " ".join(f"{project_x(cx):.2f},{project_y(cy):.2f}" for cx, cy in piece)
-            + f'" fill="none" stroke="{color}" stroke-width="1.5"/>'
+            + f'" fill="none" stroke="{_attr(color)}" stroke-width="1.5"/>'
             for piece in _clip_line_run(run, low, high)
         )
         if clipped_pieces:
             real.append(f'<g clip-path="url(#{clip_id})">{clipped_pieces}</g>')
     else:
-        real.append(f'<polyline points="{pts}" fill="none" stroke="{color}" stroke-width="1.5"/>')
+        real.append(
+            f'<polyline points="{pts}" fill="none" stroke="{_attr(color)}" stroke-width="1.5"/>'
+        )
     return ghost, real, spans
 
 
@@ -1439,7 +1450,7 @@ def sparkline_multi(
         ref_y = project_y(ref)
         parts.append(
             f'<line x1="{inset}" y1="{ref_y:.2f}" x2="{right_edge}" y2="{ref_y:.2f}" '
-            f'stroke="{ref_color}" stroke-width="1" stroke-dasharray="2,2"/>'
+            f'stroke="{_attr(ref_color)}" stroke-width="1" stroke-dasharray="2,2"/>'
         )
 
     for (trace, _, line_runs), spans in zip(per_trace, trace_spans, strict=True):
@@ -1463,7 +1474,7 @@ def sparkline_multi(
             ey_px = project_y(_clamp(ey, low, high))
             label = _clip_label(fmt(ey), max(endpoint_width - 4, 4), 9.0)
             parts.append(
-                f'<text x="{right_edge}" y="{ey_px + 3:.2f}" fill="{trace.color}" '
+                f'<text x="{right_edge}" y="{ey_px + 3:.2f}" fill="{_attr(trace.color)}" '
                 f'font-size="9" text-anchor="end">{_esc(label)}</text>'
             )
 
@@ -1476,7 +1487,7 @@ def sparkline_multi(
                     cap_parts.append(
                         f'<line x1="{start_x - 3.0:.2f}" y1="{edge_y + dy:.2f}" '
                         f'x2="{end_x + 3.0:.2f}" y2="{edge_y + dy:.2f}" '
-                        f'stroke="{trace.color}" stroke-width="0.5" stroke-opacity="0.45"/>'
+                        f'stroke="{_attr(trace.color)}" stroke-width="0.5" stroke-opacity="0.45"/>'
                     )
 
     body = ghost_parts + parts + cap_parts
@@ -1660,11 +1671,11 @@ def _render_legend(
             break
         parts.append(
             f'<rect x="{x:.2f}" y="{y_swatch:.2f}" width="{_LEGEND_SWATCH:.2f}" '
-            f'height="{_LEGEND_SWATCH:.2f}" fill="{color}"/>'
+            f'height="{_LEGEND_SWATCH:.2f}" fill="{_attr(color)}"/>'
         )
         text_x = x + _LEGEND_SWATCH + _LEGEND_SWATCH_GAP
         parts.append(
-            f'<text x="{text_x:.2f}" y="{y_text:.2f}" fill="{theme.text}" '
+            f'<text x="{text_x:.2f}" y="{y_text:.2f}" fill="{_attr(theme.text)}" '
             f'font-size="9" text-anchor="start">{_esc(text)}</text>'
         )
         x += chip_width + _LEGEND_CHIP_GAP
@@ -1758,7 +1769,7 @@ def sparkline_axis(
     baseline = 4.0
     parts = [
         f'<line x1="{inset}" y1="{baseline:.2f}" x2="{plot_width - inset}" y2="{baseline:.2f}" '
-        f'stroke="{theme.axis}" stroke-width="0.75"/>'
+        f'stroke="{_attr(theme.axis)}" stroke-width="0.75"/>'
     ]
     if temporal and isinstance(fmt, DateAxis):
         if not (math.isfinite(low) and math.isfinite(high)) or high < low:

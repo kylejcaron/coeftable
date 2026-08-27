@@ -83,6 +83,164 @@ def test_forest_bar_is_well_formed_svg():
     assert "#55A868" in svg
 
 
+def test_forest_bar_escapes_caller_color_attributes():
+    svg = forest_bar(
+        1.0,
+        0.5,
+        1.5,
+        domain=(0.0, 2.0),
+        ref=0.0,
+        color='red" onclick="alert(1)',
+        theme=DEFAULT,
+    )
+    assert "&quot;" in svg
+    assert '" onclick="' not in svg
+
+
+def test_sparkline_bar_escapes_caller_color_attributes():
+    svg = sparkline_bar(
+        [0.0, 1.0, 2.0],
+        [1.0, 1.2, 0.9],
+        [0.8, 1.0, 0.7],
+        [1.2, 1.4, 1.1],
+        x_domain=(0.0, 2.0),
+        domain=(0.0, 2.0),
+        ref=0.0,
+        color='red" onclick="alert(1)',
+        fmt=Number(decimals=1),
+    )
+    assert "&quot;" in svg
+    assert '" onclick="' not in svg
+
+
+def test_annotation_color_escapes_caller_color_attributes():
+    svg = forest_bar(
+        1.0,
+        0.5,
+        1.5,
+        domain=(0.0, 2.0),
+        ref=0.0,
+        color="#000000",
+        theme=DEFAULT,
+        annotations=(_rule(at=1.0, color='red" onclick="alert(1)'),),
+    )
+    assert "&quot;" in svg
+    assert '" onclick="' not in svg
+
+
+def test_forest_bar_escapes_color_in_clipped_fade_gradient():
+    svg = forest_bar(
+        1.0,
+        0.5,
+        99.0,
+        domain=(0.0, 2.0),
+        ref=0.0,
+        color='red" onclick="alert(1)',
+        theme=DEFAULT,
+        inset=3,
+        margin=8,
+    )
+    assert "&quot;" in svg
+    assert '" onclick="' not in svg
+
+
+def test_forest_bar_escapes_color_in_clipped_triangular_cap():
+    svg = forest_bar(
+        1.0,
+        0.5,
+        99.0,
+        domain=(0.0, 2.0),
+        ref=0.0,
+        color='red" onclick="alert(1)',
+        theme=DEFAULT,
+        inset=3,
+        margin=0,
+    )
+    assert "&quot;" in svg
+    assert '" onclick="' not in svg
+
+
+def test_sparkline_bar_escapes_color_in_clipped_ghost_and_cap():
+    svg = sparkline_bar(
+        [0.0, 1.0, 2.0],
+        [1.0, 3.0, 1.0],
+        [0.8, 2.8, 0.8],
+        [1.2, 3.2, 1.2],
+        x_domain=(0.0, 2.0),
+        domain=(0.0, 2.0),
+        ref=0.0,
+        color='red" onclick="alert(1)',
+        fmt=Number(decimals=1),
+    )
+    assert "&quot;" in svg
+    assert '" onclick="' not in svg
+
+
+def test_sparkline_axis_escapes_color_in_legend_entries():
+    svg = sparkline_axis(
+        x_domain=(0.0, 2.0),
+        fmt=Number(decimals=0),
+        theme=DEFAULT,
+        legend=[("series", 'red" onclick="alert(1)')],
+    )
+    assert "&quot;" in svg
+    assert '" onclick="' not in svg
+
+
+def test_sparkline_axis_escapes_hostile_theme_axis_and_text_colors():
+    hostile = 'red" onclick="alert(1)'
+    svg = sparkline_axis(
+        x_domain=(0.0, 10.0),
+        fmt=Number(decimals=0),
+        theme=Theme(axis=hostile, text=hostile),
+        legend=[("series", "#123456")],
+    )
+    assert "&quot;" in svg
+    assert '" onclick="' not in svg
+
+
+def test_forest_bar_escapes_hostile_theme_on_estimate_tick_and_ref_line():
+    hostile = 'red" onclick="alert(1)'
+    svg = forest_bar(
+        1.0,
+        0.5,
+        1.5,
+        domain=(0.0, 2.0),
+        ref=0.0,
+        color="#000000",
+        theme=Theme(surface=hostile, axis=hostile),
+    )
+    assert "&quot;" in svg
+    assert '" onclick="' not in svg
+
+
+def test_forest_axis_escapes_hostile_theme_axis_color():
+    hostile = 'red" onclick="alert(1)'
+    svg = forest_axis(
+        domain=(0.0, 2.0),
+        ref=0.0,
+        fmt=Number(decimals=0),
+        theme=Theme(axis=hostile),
+    )
+    assert "&quot;" in svg
+    assert '" onclick="' not in svg
+
+
+def test_sparkline_axis_escapes_hostile_theme_muted_in_super_row():
+    hostile = 'red" onclick="alert(1)'
+    low = datetime(2024, 1, 17, tzinfo=UTC).timestamp()
+    high = datetime(2024, 3, 17, tzinfo=UTC).timestamp()
+    svg = sparkline_axis(
+        x_domain=(low, high),
+        fmt=DateAxis(),
+        theme=Theme(muted=hostile),
+        temporal=True,
+        show_endpoint=False,
+    )
+    assert "&quot;" in svg
+    assert '" onclick="' not in svg
+
+
 def test_forest_bar_reference_line_spans_the_passed_height():
     svg = forest_bar(
         1.0, 0.5, 1.5, domain=(0.0, 2.0), ref=0.0, color="#000", theme=DEFAULT, height=48

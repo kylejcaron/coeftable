@@ -20,3 +20,4 @@ src/coeftable/_version.py
 docs/superpowers/
 # local feature worktrees
 /.worktrees/
+.superpowers/
