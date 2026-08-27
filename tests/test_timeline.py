@@ -1,4 +1,5 @@
 import html
+import re
 
 import pytest
 
@@ -11,6 +12,7 @@ from coeftable.graph.timeline import (
     _LABEL_HALO,
     _MIN_HEIGHT,
     _MIN_WIDTH,
+    _TICK_FONT_SIZE,
     TimelineEvent,
     _clip_label,
     _projector,
@@ -246,3 +248,25 @@ def test_dashed_event_keeps_its_dash_through_fan_out_and_render():
 
     strip = timeline_strip((event,), x_domain=(0.0, 11.0), width=400, theme=DEFAULT)
     assert f'stroke-dasharray="{_DASH_ARRAY["dashed"]}"' in strip.svg
+
+
+def test_strip_keeps_multi_digit_boundary_tick_labels_inside_the_declared_width():
+    # "W12" centred on the last tick paints past the right edge, so boundary
+    # tick labels anchor inward the way event labels do. Interior ticks stay
+    # centred, and no centred label may extend beyond the declared box.
+    strip = timeline_strip(
+        (TimelineEvent(at=5.0, label="mid", color="#c33", affects=("a",)),),
+        x_domain=(0.0, 11.0),
+        width=400,
+        theme=DEFAULT,
+    )
+    ticks = re.findall(r'<text x="([\d.]+)"[^>]*text-anchor="(\w+)">(W\d+)</text>', strip.svg)
+    assert len(ticks) == 12
+    assert ticks[-1][1] == "end"
+    assert any(anchor == "middle" for _, anchor, _ in ticks)
+    for x_text, anchor, label in ticks:
+        if anchor != "middle":
+            continue
+        half = len(label) * _TICK_FONT_SIZE * _CHAR_WIDTH_RATIO / 2
+        assert float(x_text) - half >= 0.0
+        assert float(x_text) + half <= 400

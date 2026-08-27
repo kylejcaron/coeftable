@@ -31,6 +31,7 @@ _LABEL_ROWS = (26.0, 44.0)
 _SPINE_MARGIN = 24.0
 _TICK_LEN = 4.0
 _TICK_LABEL_OFFSET = 14.0
+_TICK_FONT_SIZE = 9
 _CIRCLE_R = 3.5
 _LABEL_FONT_SIZE = 10.0
 
@@ -224,9 +225,21 @@ def timeline_strip(
             f'<line x1="{x:.2f}" y1="{spine_y:.2f}" x2="{x:.2f}" '
             f'y2="{spine_y + _TICK_LEN:.2f}" stroke="{_esc(theme.axis)}" stroke-width="0.75"/>'
         )
+        tick_text = f"W{tick + 1}"
+        # Multi-digit boundary labels centred on the first or last tick paint
+        # past the declared width, so anchor them inward the way event labels
+        # already are. Interior ticks stay centred on their own coordinate.
+        tick_half = len(tick_text) * _TICK_FONT_SIZE * _CHAR_WIDTH_RATIO / 2
+        if x - tick_half < 0.0:
+            tick_anchor = "start"
+        elif x + tick_half > width:
+            tick_anchor = "end"
+        else:
+            tick_anchor = "middle"
         parts.append(
             f'<text x="{x:.2f}" y="{spine_y + _TICK_LABEL_OFFSET:.2f}" '
-            f'fill="{_esc(theme.axis)}" font-size="9" text-anchor="middle">W{tick + 1}</text>'
+            f'fill="{_esc(theme.axis)}" font-size="{_TICK_FONT_SIZE}" '
+            f'text-anchor="{tick_anchor}">{tick_text}</text>'
         )
 
     for index, event in enumerate(events):
