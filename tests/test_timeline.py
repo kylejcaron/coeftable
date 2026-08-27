@@ -344,3 +344,27 @@ def test_strip_keeps_svg_size_bounded_for_a_very_large_domain():
     # the whole strip small regardless of how large the domain is.
     strip = timeline_strip((), x_domain=(0.0, 20000.0), width=400, theme=DEFAULT)
     assert len(strip.svg.encode()) < 5_000
+
+
+def test_strip_sizes_tick_spacing_from_the_widest_endpoint_label():
+    # A negative domain renders its widest label at the LOW end ("W-19999")
+    # while the high end is just "W1". Sizing from the high end alone would
+    # overlap badly, so both integer endpoints are measured.
+    strip = timeline_strip(
+        (TimelineEvent(at=-10000.0, label="e", color="#c33", affects=("a",)),),
+        x_domain=(-20000.0, 0.0),
+        width=400,
+        theme=DEFAULT,
+    )
+    ticks = [
+        (float(x), anchor, label)
+        for x, anchor, label in re.findall(
+            r'<text x="([-\d.]+)"[^>]*text-anchor="(\w+)">(W[^<]*)</text>', strip.svg
+        )
+    ]
+    assert len(ticks) >= 2
+    assert any(label.startswith("W-") for _, _, label in ticks)
+    for (x1, anchor, label), (x2, _, _) in itertools.pairwise(ticks):
+        span = len(label) * _TICK_FONT_SIZE * _CHAR_WIDTH_RATIO
+        right = {"start": x1 + span, "end": x1, "middle": x1 + span / 2}[anchor]
+        assert right <= x2 + 0.5

@@ -197,10 +197,12 @@ def _label_anchor_and_text(x: float, label: str, width: int) -> tuple[str, str]:
 def _min_tick_gap(low: float, high: float, width: int) -> float:
     """Minimum domain-unit spacing between adjacent ticks that keeps their labels apart.
 
-    Derived from the pixel width the widest label in the domain needs at
-    `_TICK_FONT_SIZE` -- using the widest label in the domain, since week
-    indices only grow, so it is always the last tick's -- converted to
-    domain units via the strip's pixels-per-unit.
+    Derived from the pixel width of the widest label the domain will render,
+    converted to domain units via the strip's pixels-per-unit. Both integer
+    endpoints are measured rather than assuming the high end is widest: a
+    negative domain renders labels like `W-19999` at the LOW end while the
+    high end is just `W1`, so sizing from the high end alone would overlap
+    badly.
 
     The budget is 1.5x the label width rather than 1x: the first and last
     ticks anchor inward (`text-anchor="start"`/`"end"`) instead of
@@ -212,8 +214,10 @@ def _min_tick_gap(low: float, high: float, width: int) -> float:
     if span <= 0:
         return 0.0
     plot_width = max(width - 2 * _INSET, 1.0)
-    widest_label = f"W{math.floor(high) + 1}"
-    label_width = len(widest_label) * _TICK_FONT_SIZE * _CHAR_WIDTH_RATIO
+    endpoint_labels = (f"W{math.ceil(low) + 1}", f"W{math.floor(high) + 1}")
+    label_width = max(
+        len(label) * _TICK_FONT_SIZE * _CHAR_WIDTH_RATIO for label in endpoint_labels
+    )
     min_gap_px = 1.5 * label_width + _MIN_LABEL_GAP
     return min_gap_px * span / plot_width
 
