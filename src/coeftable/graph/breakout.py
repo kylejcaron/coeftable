@@ -74,8 +74,14 @@ class Breakout:
 
 
 def _option_label(breakout: Breakout) -> str:
-    kind = "\u00d7 decomposition" if breakout.op == "x" else "+ slice"
-    return f"{breakout.label} ({kind})"
+    """Label plus a bare operator glyph -- the fullest text a select can afford.
+
+    A parenthetical like "(x decomposition)" reads well but doubles the
+    width a select needs; the glyph alone keeps the operator visible (the
+    reason it was there) at roughly 60% of that width.
+    """
+    glyph = "\u00d7" if breakout.op == "x" else "+"
+    return f"{breakout.label} {glyph}"
 
 
 def breakout_control(
@@ -251,79 +257,71 @@ def _hidden_subtree(
     return tuple(hidden)
 
 
-def _child_closures(
-    parents: Sequence[str], adjacency: dict[str, tuple[str, ...]]
-) -> dict[str, dict[str, frozenset[str]]]:
-    """Map each real switcher parent to `{direct child: that child's closure}`.
+def _real_option_children(
+    breakout_map: Mapping[str, Sequence[Breakout]],
+) -> dict[str, tuple[tuple[str, ...], ...]]:
+    """Map each real switcher parent to its real per-option child tuples.
 
-    A parent with fewer than two direct children is not a real fork --
-    `breakout_control` requires at least two options -- so it cannot gate
-    anything and is left out entirely.
+    A parent with fewer than two breakouts is not a real switcher --
+    `breakout_control` requires at least two alternatives -- so it cannot
+    gate anything and is left out entirely.
     """
-    closures: dict[str, dict[str, frozenset[str]]] = {}
-    for parent in parents:
-        children = adjacency.get(parent, ())
-        if len(children) < 2:
+    groups: dict[str, tuple[tuple[str, ...], ...]] = {}
+    for parent, breakouts in breakout_map.items():
+        breakouts = tuple(breakouts)
+        if len(breakouts) < 2:
             continue
-        closures[parent] = {
-            child: frozenset({child}) | _reachable(child, adjacency) for child in children
+        groups[parent] = tuple(breakout.children for breakout in breakouts)
+    return groups
+
+
+def _child_closures(
+    option_children: Mapping[str, tuple[tuple[str, ...], ...]],
+    adjacency: dict[str, tuple[str, ...]],
+) -> dict[str, dict[str, frozenset[str]]]:
+    """Map each real switcher parent to `{direct child: that child's closure}`."""
+    return {
+        parent: {
+            child: frozenset({child}) | _reachable(child, adjacency)
+            for group in groups
+            for child in group
         }
-    return closures
+        for parent, groups in option_children.items()
+    }
 
 
-def _grouping_spares(order: Sequence[str], reaching: frozenset[str]) -> bool:
-    """Whether some equal-sized contiguous split leaves every group a reaching child.
-
-    The real option boundaries never reach this far -- only the switcher's
-    flattened, order-preserving direct-children list does -- but every
-    breakout requires at least two alternatives of equal size, so the true
-    grouping is necessarily one of the equal-sized contiguous splits of
-    `order` (children are wired to their parent option by option, each
-    option's own children in order). If even one such split leaves every
-    group with at least one reaching child, the true grouping might be
-    that split, in which case every selectable option keeps `node` alive
-    through it and no selection could ever exclude it.
-    """
-    total = len(order)
-    return any(
-        total % size == 0
-        and all(
-            any(child in reaching for child in order[start : start + size])
-            for start in range(0, total, size)
-        )
-        for size in range(1, total // 2 + 1)
-    )
-
-
-def _reaching_children(node: str, per_child: Mapping[str, frozenset[str]]) -> frozenset[str]:
-    """Return `node`'s reaching direct children, unless some grouping spares it.
+def _reaching_children(
+    node: str, per_child: Mapping[str, frozenset[str]], groups: Sequence[Sequence[str]]
+) -> frozenset[str]:
+    """Return `node`'s reaching direct children, unless every real option reaches it.
 
     A parent whose children unanimously reach `node` -- or unanimously miss
     it -- cannot gate it: every option would carry the same verdict, so no
-    selection changes anything (this is the `size == 1` split
-    `_grouping_spares` finds trivially, since every singleton group either
-    is or isn't the sole reaching child). Beyond that, `node` is only
-    provably excludable by *some* selection when every equal-sized
-    contiguous grouping of the children -- every candidate for the real
-    option boundaries -- has at least one group with no reaching child at
-    all: only then is picking that group's option guaranteed to exclude
-    `node`, regardless of which grouping the switcher actually uses. A
-    reaching child in every candidate group proves the opposite: `node`
-    would survive any real selection, so the switcher is no gate.
+    selection changes anything. Beyond that, `node` is only provably
+    excludable by *some* selection when at least one real option -- a
+    `Breakout`'s own declared children, the actual boundary, never a
+    guess at where it might fall -- has no reaching child at all: only
+    then is picking that option guaranteed to exclude `node`. A reaching
+    child in every real option proves the opposite: `node` would survive
+    any selection, so the switcher is no gate.
     """
     reaching = frozenset(child for child, closure in per_child.items() if node in closure)
-    if not reaching or _grouping_spares(tuple(per_child), reaching):
+    if not reaching:
+        return frozenset()
+    if all(any(child in reaching for child in group) for group in groups):
         return frozenset()
     return reaching
 
 
 def _gating_switchers(
-    node: str, closures: Mapping[str, Mapping[str, frozenset[str]]]
+    node: str,
+    closures: Mapping[str, Mapping[str, frozenset[str]]],
+    option_children: Mapping[str, tuple[tuple[str, ...], ...]],
 ) -> dict[str, frozenset[str]]:
     """Map every switcher that gates `node` to its reaching direct children."""
     gates: dict[str, frozenset[str]] = {}
     for parent, per_child in closures.items():
-        reaching = _reaching_children(node, per_child)
+        reaching = _reaching_children(node, per_child, option_children[parent])
         if reaching:
             gates[parent] = reaching
     return gates
@@ -353,7 +351,7 @@ def _drop_ancestor_gates(
 
 
 def _reject_orphanable_descendants(
-    parents: Sequence[str],
+    breakout_map: Mapping[str, Sequence[Breakout]],
     edges: Sequence[tuple[str, str]],
     adjacency: dict[str, tuple[str, ...]],
 ) -> None:
@@ -366,24 +364,25 @@ def _reject_orphanable_descendants(
     switcher's alternative happens to be selected, every contributing
     switcher's rule independently declines to hide the descendant, yet the
     combination that excludes all of them at once leaves it with nothing
-    pointing at it. Each contributing switcher is identified at the option
-    level, by every one of its direct children that reaches the
-    descendant -- but only once no equal-sized grouping of those children
-    could leave every option with a reaching child, since such a grouping
-    would mean some option always keeps the descendant alive regardless of
-    the selection. Pruning all of the identified children together (not
-    just one) is what correctly simulates the exclusion, however many
-    children the excluding option contributes. Finding the descendant
-    still unreachable from every root after pruning proves the orphaning
+    pointing at it. Each contributing switcher is identified at the
+    option level, by every one of its direct children that reaches the
+    descendant -- but only once some real option (one `Breakout`'s own
+    declared children) has no reaching child at all, since an option with
+    a reaching child always keeps the descendant alive regardless of the
+    selection. Pruning all of the identified children together (not just
+    one) is what correctly simulates the exclusion, however many children
+    the excluding option contributes. Finding the descendant still
+    unreachable from every root after pruning proves the orphaning
     combination is real and selectable.
     """
-    closures = _child_closures(parents, adjacency)
-    if len(closures) < 2:
+    option_children = _real_option_children(breakout_map)
+    if len(option_children) < 2:
         return
+    closures = _child_closures(option_children, adjacency)
     roots = _graph_roots(edges)
     candidates = {node for edge in edges for node in edge} - roots
     for node in sorted(candidates):
-        gates = _drop_ancestor_gates(_gating_switchers(node, closures), adjacency)
+        gates = _drop_ancestor_gates(_gating_switchers(node, closures, option_children), adjacency)
         if len(gates) < 2:
             continue
         pruned = {
@@ -401,9 +400,15 @@ def _reject_orphanable_descendants(
 
 
 def reject_switcher_conjunctions(
-    parents_with_switchers: Sequence[str], edges: Sequence[tuple[str, str]]
+    breakout_map: Mapping[str, Sequence[Breakout]], edges: Sequence[tuple[str, str]]
 ) -> None:
     """Reject a descendant gated by two independent (non-nested) switchers.
+
+    `breakout_map` maps every switcher's parent node to its own declared
+    `Breakout` alternatives -- the real option boundaries, read directly
+    from the spec rather than guessed from the parent's flattened
+    children. A parent with fewer than two breakouts is not a real
+    switcher and is ignored.
 
     Nesting a switcher inside another switcher's alternative is legal and
     unchecked here: an ancestor and its descendant are ordered, so the
@@ -415,6 +420,5 @@ def reject_switcher_conjunctions(
     Switchers in disjoint branches that do not share a descendant are
     unaffected either way.
     """
-    parents = tuple(parents_with_switchers)
     adjacency = _build_adjacency(edges)
-    _reject_orphanable_descendants(parents, edges, adjacency)
+    _reject_orphanable_descendants(breakout_map, edges, adjacency)

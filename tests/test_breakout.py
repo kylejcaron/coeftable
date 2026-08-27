@@ -22,8 +22,8 @@ def test_control_offers_one_option_per_breakout_with_the_operator_in_the_label()
     control = breakout_control(_two_way(), key="rev_breakout")
     assert control.selected == "drivers"
     assert control.options == (
-        ("drivers", "by drivers (\u00d7 decomposition)"),
-        ("region", "by region (+ slice)"),
+        ("drivers", "by drivers \u00d7"),
+        ("region", "by region +"),
     )
     assert control.key == "rev_breakout"
 
@@ -371,8 +371,25 @@ def test_switching_the_outermost_option_away_hides_the_nested_switcher_and_its_a
 
 
 def test_switchers_in_disjoint_branches_are_allowed():
-    edges = (("root", "users"), ("root", "aov"), ("users", "new"), ("aov", "price"))
-    reject_switcher_conjunctions(("users", "aov"), edges)  # must not raise
+    users_breakouts = (
+        Breakout(key="new", label="New", op="+", children=("new",)),
+        Breakout(key="old", label="Old", op="+", children=("old",)),
+    )
+    aov_breakouts = (
+        Breakout(key="price", label="Price", op="+", children=("price",)),
+        Breakout(key="volume", label="Volume", op="+", children=("volume",)),
+    )
+    edges = (
+        ("root", "users"),
+        ("root", "aov"),
+        ("users", "new"),
+        ("users", "old"),
+        ("aov", "price"),
+        ("aov", "volume"),
+    )
+    reject_switcher_conjunctions(
+        {"users": users_breakouts, "aov": aov_breakouts}, edges
+    )  # must not raise
 
 
 def test_a_descendant_gated_by_two_independent_switchers_is_rejected():
@@ -384,6 +401,14 @@ def test_a_descendant_gated_by_two_independent_switchers_is_rejected():
     # `shared` safe -- but selecting `a2` and `b2` together leaves nothing
     # pointing at it. That combination is real and selectable, so the
     # topology must be refused up front rather than silently orphaning it.
+    a_breakouts = (
+        Breakout(key="a1", label="A1", op="+", children=("a1",)),
+        Breakout(key="a2", label="A2", op="+", children=("a2",)),
+    )
+    b_breakouts = (
+        Breakout(key="b1", label="B1", op="+", children=("b1",)),
+        Breakout(key="b2", label="B2", op="+", children=("b2",)),
+    )
     edges = (
         ("root", "a"),
         ("root", "b"),
@@ -395,13 +420,21 @@ def test_a_descendant_gated_by_two_independent_switchers_is_rejected():
         ("b1", "shared"),
     )
     with pytest.raises(SpecError, match=r"'shared'.*more than one breakout switcher"):
-        reject_switcher_conjunctions(("a", "b"), edges)
+        reject_switcher_conjunctions({"a": a_breakouts, "b": b_breakouts}, edges)
 
 
 def test_a_descendant_shared_by_two_switchers_with_an_unconditional_path_is_allowed():
     # Same two switchers and shared descendant as above, but `other` sits
     # outside both switchers entirely and always points at `shared`. No
     # combination of options can orphan it, so this must not raise.
+    a_breakouts = (
+        Breakout(key="a1", label="A1", op="+", children=("a1",)),
+        Breakout(key="a2", label="A2", op="+", children=("a2",)),
+    )
+    b_breakouts = (
+        Breakout(key="b1", label="B1", op="+", children=("b1",)),
+        Breakout(key="b2", label="B2", op="+", children=("b2",)),
+    )
     edges = (
         ("root", "a"),
         ("root", "b"),
@@ -414,7 +447,7 @@ def test_a_descendant_shared_by_two_switchers_with_an_unconditional_path_is_allo
         ("b1", "shared"),
         ("other", "shared"),
     )
-    reject_switcher_conjunctions(("a", "b"), edges)  # must not raise
+    reject_switcher_conjunctions({"a": a_breakouts, "b": b_breakouts}, edges)  # must not raise
 
 
 def test_a_single_breakout_needs_no_switcher():
@@ -618,6 +651,14 @@ def test_an_option_contributing_multiple_children_to_a_shared_descendant_still_g
     # `shared` just as surely as a single-child option would. Combined with
     # `b` (single-child gating, as in the simpler case above), selecting
     # `a`'s second option and `b`'s second option together orphans `shared`.
+    a_breakouts = (
+        Breakout(key="a_first", label="A first", op="+", children=("a1", "a2")),
+        Breakout(key="a_second", label="A second", op="+", children=("a3", "a4")),
+    )
+    b_breakouts = (
+        Breakout(key="b1", label="B1", op="+", children=("b1",)),
+        Breakout(key="b2", label="B2", op="+", children=("b2",)),
+    )
     edges = (
         ("root", "a"),
         ("root", "b"),
@@ -632,7 +673,44 @@ def test_an_option_contributing_multiple_children_to_a_shared_descendant_still_g
         ("b1", "shared"),
     )
     with pytest.raises(SpecError, match=r"'shared'.*more than one breakout switcher"):
-        reject_switcher_conjunctions(("a", "b"), edges)
+        reject_switcher_conjunctions({"a": a_breakouts, "b": b_breakouts}, edges)
+
+
+def test_real_option_boundaries_reject_orphaning_across_one_child_options():
+    # `a`'s real boundaries are four one-child options (`a1`..`a4`); only
+    # `a1` and `a3` reach `shared`. A gate that guesses at option
+    # boundaries instead of reading the real `Breakout` declarations could
+    # hypothesize a contiguous two-child split -- `(a1, a2)` and `(a3,
+    # a4)` -- where both halves contain a reaching child, and wrongly
+    # conclude `a` is no threat. The real boundaries are one child each,
+    # so selecting `a2` truly excludes `shared` via `a`. Combined with an
+    # independent switcher `b` (single-child gating, as in the simpler
+    # cases above), selecting `a2` and `b2` together orphans `shared`.
+    a_breakouts = (
+        Breakout(key="a1", label="A1", op="+", children=("a1",)),
+        Breakout(key="a2", label="A2", op="+", children=("a2",)),
+        Breakout(key="a3", label="A3", op="+", children=("a3",)),
+        Breakout(key="a4", label="A4", op="+", children=("a4",)),
+    )
+    b_breakouts = (
+        Breakout(key="b1", label="B1", op="+", children=("b1",)),
+        Breakout(key="b2", label="B2", op="+", children=("b2",)),
+    )
+    edges = (
+        ("root", "a"),
+        ("root", "b"),
+        ("a", "a1"),
+        ("a", "a2"),
+        ("a", "a3"),
+        ("a", "a4"),
+        ("b", "b1"),
+        ("b", "b2"),
+        ("a1", "shared"),
+        ("a3", "shared"),
+        ("b1", "shared"),
+    )
+    with pytest.raises(SpecError, match=r"'shared'.*more than one breakout switcher"):
+        reject_switcher_conjunctions({"a": a_breakouts, "b": b_breakouts}, edges)
 
 
 def test_two_switchers_whose_every_option_reaches_a_descendant_are_allowed():
@@ -671,7 +749,7 @@ def test_two_switchers_whose_every_option_reaches_a_descendant_are_allowed():
         ("b1", "shared"),
         ("b3", "shared"),
     )
-    reject_switcher_conjunctions(("a", "b"), edges)  # must not raise
+    reject_switcher_conjunctions({"a": a_breakouts, "b": b_breakouts}, edges)  # must not raise
 
     # The real gate: the full topology, wired up as `DriverTree` would,
     # still builds -- `partition_rules` never hid `shared` here either.
