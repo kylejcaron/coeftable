@@ -20,7 +20,7 @@ TRADEOFF_R = -0.5
 
 # Below this magnitude a positive double is subnormal and has lost most of
 # its precision; a quotient landing here is not trustworthy even though it
-# is a finite, positive float (see `_log_ratio`).
+# is a finite, positive float (see `log_ratio`).
 _MIN_NORMAL_RATIO = sys.float_info.min
 
 
@@ -35,7 +35,7 @@ def _levels(series: Sequence[float], *, name: str) -> tuple[float, ...]:
     return values
 
 
-def _log_ratio(numerator: float, denominator: float) -> float:
+def log_ratio(numerator: float, denominator: float) -> float:
     """Log of numerator/denominator, preferring the direct quotient.
 
     Subtracting two independently rounded logarithms introduces float noise
@@ -48,7 +48,7 @@ def _log_ratio(numerator: float, denominator: float) -> float:
     underflow fallback to stay finite; a subnormal quotient (e.g. the
     smallest subnormal divided by 1.5, which rounds right back to itself)
     needs the same fallback because it has too few significant bits left to
-    trust - dividing the logs instead stays accurate.
+    trust - subtracting the logs instead stays accurate.
     """
     ratio = numerator / denominator
     if ratio >= _MIN_NORMAL_RATIO and math.isfinite(ratio):
@@ -59,7 +59,7 @@ def _log_ratio(numerator: float, denominator: float) -> float:
 def weekly_log_changes(series: Sequence[float]) -> tuple[float, ...]:
     """Successive log ratios, the scale on which multiplicative noise is additive."""
     values = _levels(series, name="series")
-    return tuple(_log_ratio(values[index + 1], values[index]) for index in range(len(values) - 1))
+    return tuple(log_ratio(values[index + 1], values[index]) for index in range(len(values) - 1))
 
 
 def level_noise(series: Sequence[float]) -> float:
@@ -127,7 +127,7 @@ def endpoint_interval(series: Sequence[float]) -> tuple[float, float, float]:
     values = _levels(series, name="series")
     changes = weekly_log_changes(values)
     band = 2.0 * statistics.stdev(changes)
-    total = _log_ratio(values[-1], values[0])
+    total = log_ratio(values[-1], values[0])
     return (
         _percent(total),
         _percent(total - band),
@@ -243,7 +243,7 @@ def _is_effectively_constant(values: Sequence[float]) -> bool:
     """Report whether a change series has no real variation, only rounding noise.
 
     An exact `len(set(values)) == 1` check is wrong here: even with the
-    overflow-safe quotient in `_log_ratio`, floating-point division and
+    overflow-safe quotient in `log_ratio`, floating-point division and
     logarithms are not perfectly associative, so a genuinely constant-ratio
     series can still produce a handful of changes that differ by ~1e-16.
     Comparing the spread of the changes to a tolerance combining a relative

@@ -50,6 +50,7 @@ from coeftable.graph.honesty import (
     endpoint_interval,
     identity_gap,
     implied_series,
+    log_ratio,
     ribbon_bounds,
     ribbon_domain,
     tradeoff_pairs,
@@ -108,14 +109,6 @@ def _finite(value: object, *, name: str) -> float:
 
 def _operator_badge_text(op: str) -> str:
     return "\u00d7 decomposition" if op == "x" else "+ slice"
-
-
-def _log_ratio(numerator: float, denominator: float) -> float:
-    """Log of numerator/denominator; see honesty._log_ratio for the rationale."""
-    ratio = numerator / denominator
-    if ratio > 0.0 and math.isfinite(ratio):
-        return math.log(ratio)
-    return math.log(numerator) - math.log(denominator)
 
 
 @dataclass(frozen=True, slots=True)
@@ -394,7 +387,7 @@ def _compute_contributions(
                     )
             else:
                 totals = {
-                    child: _log_ratio(node_series[child][-1], node_series[child][0])
+                    child: log_ratio(node_series[child][-1], node_series[child][0])
                     for child in breakout.children
                 }
                 total_sum = math.fsum(totals.values())

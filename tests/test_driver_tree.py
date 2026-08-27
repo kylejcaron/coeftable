@@ -6,6 +6,7 @@ percentages, and correlations are worked out by hand (or verified against
 whatever the implementation happens to emit.
 """
 
+import math
 import re
 
 import pytest
@@ -16,7 +17,8 @@ from coeftable.errors import SpecError
 from coeftable.format import Percent
 from coeftable.graph import DriverTree, GraphReport
 from coeftable.graph.breakout import Breakout
-from coeftable.graph.driver_tree import _CARD_WIDTH
+from coeftable.graph.driver_tree import _CARD_WIDTH, _compute_contributions, _Topology
+from coeftable.graph.honesty import log_ratio
 from coeftable.graph.timeline import TimelineEvent
 from coeftable.svg import _projector
 
@@ -374,3 +376,36 @@ def test_unequal_alternative_sizes_are_refused_before_layout():
 def test_gap_badge_text_matches_hand_computed_percentage():
     html = _mult_gap_fixture().as_raw_html()
     assert re.search(r"factors gap 9%", html)
+
+
+def test_multiplicative_contribution_uses_the_shared_log_ratio_for_a_subnormal_quotient():
+    """The multiplicative attribution path must reuse `honesty.log_ratio`, not a
+    private copy: a subnormal quotient (the smallest subnormal divided by 1.5,
+    which rounds right back to itself) needs the log-subtraction fallback, and
+    a stale direct-quotient copy would silently drop the ~log(1.5) it loses.
+    """
+    smallest_subnormal = 5e-324
+    node_series: dict[str, tuple[float, ...]] = {
+        "parent": (10.0, 12.0, 15.0),
+        "a": (1.5, 1.5, smallest_subnormal),
+        "b": (2.0, 3.0, 4.0),
+    }
+    breakout = Breakout(key="k", label="L", op="x", children=("a", "b"))
+    topology = _Topology(parents=("parent",), breakout_map={"parent": (breakout,)})
+
+    contributions = _compute_contributions(topology, node_series, {})
+
+    total_a = log_ratio(node_series["a"][-1], node_series["a"][0])
+    total_b = log_ratio(node_series["b"][-1], node_series["b"][0])
+    total_sum = math.fsum((total_a, total_b))
+    parent_delta = 50.0  # hand-computed: (15 - 10) / 10 * 100
+    expected_a = parent_delta * (total_a / total_sum)
+
+    # The pre-fix copy took the direct quotient whenever it was merely
+    # positive and finite, missing the subnormal case entirely.
+    stale_ratio = node_series["a"][-1] / node_series["a"][0]
+    stale_total_a = math.log(stale_ratio)
+    stale_expected_a = parent_delta * (stale_total_a / math.fsum((stale_total_a, total_b)))
+
+    assert contributions[("parent", "a")] == pytest.approx(expected_a)
+    assert abs(contributions[("parent", "a")] - stale_expected_a) > 1e-8
