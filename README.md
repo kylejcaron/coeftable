@@ -650,10 +650,13 @@ that trade off against each other week to week) surface a callout hosted on
 one of the participating children, so it stays visible only alongside that
 alternative rather than the parent, which stays visible under every switch.
 The root card renders no text of its own; pass `caption=` to add one. It
-renders verbatim, however long it is — it wraps across as many lines as it
-needs and the card grows to fit, so nothing is ever cut off — with a literal
-`{weeks}` placeholder substituted for the observed period count, and
-defaults to `None`, so nothing renders unless you ask for it.
+wraps to fit the card using an estimated character width, growing across
+as many lines as that estimate needs. Runs of whitespace collapse to a
+single space and line breaks are not preserved, and unusually wide text
+can still be clipped on a line, since the wrap is an estimate rather than
+a font measurement. A literal `{weeks}` placeholder is substituted for the
+observed period count, and `caption` defaults to `None`, so nothing
+renders unless you ask for it.
 If you want a note that edge labels are accounting, not causal
 claims, that wording is yours to choose — for example
 `caption="Edge labels are an accounting of the realized {weeks}-week

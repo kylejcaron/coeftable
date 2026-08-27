@@ -923,12 +923,13 @@ def _build_card(
         caption_text = _render_caption(caption, weeks=_format_period_count(weeks))
         # `TextBlock.max_lines` is where `text_line_plan` starts cramming the
         # unrendered remainder onto the last line instead of giving it its own
-        # row. The caption is the caller's own text, promised to render
-        # verbatim, so there is no fixed cap to pick -- sizing it to however
+        # row. There is no fixed line cap to pick here -- sizing it to however
         # many lines the text's own greedy wrap actually needs (computed with
         # the same budget `measure_card` will use for this card's width) means
-        # every word gets a row and the card simply grows to fit, with no line
-        # ever truncated.
+        # every word gets its own row and the card grows to fit, rather than
+        # cramming an arbitrary tail onto the last line. The wrap is still an
+        # estimated character budget, not a font measurement, so unusually
+        # wide characters can still overflow a line and get clipped there.
         usable = _ROOT_CARD_WIDTH - 2 * (chrome.padding + chrome.border_width)
         budget = _budget(usable, chrome.caption_size, chrome.char_width_ratio)
         needed_lines = len(
@@ -1004,11 +1005,14 @@ def DriverTree(
 
     ``caption`` is optional text placed on the root card. It defaults to
     ``None``, so nothing renders unless a caller supplies one -- this
-    module ships no built-in wording of its own. A supplied string renders
-    verbatim. A ``{weeks}`` placeholder in it is substituted with the
-    observed period count (by plain substring replacement, never
-    `str.format`, so any other brace in the string is left untouched
-    rather than risking a format error).
+    module ships no built-in wording of its own. A supplied string is
+    wrapped to fit the card using an estimated character width: runs of
+    whitespace collapse to a single space, line breaks are not preserved,
+    and unusually wide text can still be clipped on a line, since the wrap
+    is an estimate rather than a font measurement. A ``{weeks}`` placeholder
+    in it is substituted with the observed period count (by plain substring
+    replacement, never `str.format`, so any other brace in the string is
+    left untouched rather than risking a format error).
 
     Every decomposition is checked against ``coeftable.graph.honesty``'s
     identity-gap thresholds: additive shortfalls above ``RESIDUAL_WARN`` get

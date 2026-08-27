@@ -13,7 +13,8 @@ from dataclasses import replace
 import pytest
 
 from coeftable.cards.adornments import Callout, TextBlock
-from coeftable.cards.chrome import DEFAULT_CHROME, CardChrome
+from coeftable.cards.chrome import DEFAULT_CHROME, CardChrome, line_height
+from coeftable.cards.measure import _budget, text_line_plan
 from coeftable.cards.regions import Metric, Trend
 from coeftable.errors import SpecError
 from coeftable.format import Number, Percent
@@ -1400,19 +1401,45 @@ def test_an_event_may_target_an_injected_residual():
     assert report.measure().width > 0
 
 
-def test_a_wrapped_multiline_caption_still_reconstructs_correctly():
-    # A caption long enough to wrap renders one HTML element per line;
-    # compare against the unwrapped text to confirm a phrase spanning a
-    # line break still appears contiguously once flattened with spaces.
-    caption = (
-        "Edge labels are measured against a parent's starting value, not "
-        "its own, so siblings sum to about the parent's change."
-    )
-    html = _fixture(caption=caption).as_raw_html()
-    flat = " ".join(re.sub(r"<[^>]+>", " ", html).split())
-    flat = flat.replace("&#x27;", "'").replace("&amp;", "&")
-    assert "measured against a parent's starting value, not its own" in flat
-    assert "siblings sum to about the parent's change" in flat
+def test_a_long_caption_grows_the_card_by_exactly_its_extra_rows():
+    # A substring check over the flattened DOM is not sufficient here: the
+    # full caption string is present in the markup even when a row has been
+    # visually clipped by CSS (`overflow:hidden` + `text-overflow:ellipsis`),
+    # and a caption short enough to wrap onto only a couple of lines could
+    # never have caught either the whitespace-collapsing or the wide-glyph
+    # clipping this guarantee has to live with. This instead pins the
+    # *resolved* row count -- past the old eight-line neighborhood -- and
+    # the measured pixel height, which a substring search cannot fake.
+    usable = _ROOT_CARD_WIDTH - 2 * (DEFAULT_CHROME.padding + DEFAULT_CHROME.border_width)
+    budget = _budget(usable, DEFAULT_CHROME.caption_size, DEFAULT_CHROME.char_width_ratio)
+    sentence = "Edge labels are measured against the parent's starting value, not its own."
+    long_caption = " ".join([sentence] * 12)
+
+    def _rows(caption: str) -> int:
+        return len(text_line_plan(caption, budget=budget, max_lines=len(caption) + 1))
+
+    def _resolved(caption: str) -> tuple[int, int]:
+        """The card's actual resolved (row count, expanded height in px)."""
+        card = dict(_fixture(caption=caption).graph.nodes)["revenue"]
+        block = next(
+            r for r in card.content if isinstance(r, TextBlock) and r.variant == "caption"
+        )
+        return block.max_lines, card.measure().expanded_height
+
+    short_rows, long_rows = _rows(sentence), _rows(long_caption)
+    assert short_rows == 1
+    assert long_rows > 8  # genuinely needs more than eight rows, not just a couple
+
+    short_resolved, long_resolved = _resolved(sentence), _resolved(long_caption)
+    assert short_resolved == (short_rows, 227)
+    assert long_resolved == (long_rows, 392)
+
+    line_h = line_height(DEFAULT_CHROME.caption_size, DEFAULT_CHROME)
+    # Every extra row is a whole new line at the caption's own line height --
+    # no gap in between, since it continues the same TextBlock -- so the
+    # card's growth must match the extra row count exactly, not just "grow
+    # some": that's what "the card grows to fit" actually promises.
+    assert long_resolved[1] - short_resolved[1] == (long_rows - short_rows) * line_h
 
 
 def test_a_trade_off_warning_hides_with_the_alternative_it_describes():
