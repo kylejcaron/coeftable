@@ -129,6 +129,55 @@ def test_switching_away_from_an_alternative_hides_its_deeper_descendants():
     assert graph.measure().width > 0  # the shared-position proof still accepts this graph
 
 
+def test_a_descendant_shared_between_alternatives_stays_visible_under_both():
+    # `total` is reachable from both `users` (drivers) and `us` (region): a
+    # diamond. Switching to either alternative must not hide it, even though
+    # each alternative's own exclusive descendant (`new`) still hides as
+    # expected.
+    breakouts = _two_way()
+    edges = (
+        ("revenue", "users"),
+        ("revenue", "aov"),
+        ("revenue", "us"),
+        ("revenue", "eu"),
+        ("users", "new"),
+        ("users", "total"),
+        ("us", "total"),
+    )
+    control = breakout_control(breakouts, key="rev_breakout")
+    nodes = (
+        ("revenue", Card("Revenue", content=(control,), width=140)),
+        ("users", Card("Users", width=140)),
+        ("aov", Card("AOV", width=140)),
+        ("us", Card("US", width=140)),
+        ("eu", Card("EU", width=140)),
+        ("new", Card("New", width=140)),
+        ("total", Card("Total", width=140)),
+    )
+    slots = (
+        Slot("revenue", 0, 0),
+        Slot("users", 1, 0),
+        Slot("aov", 1, 1),
+        Slot("us", 1, 0),
+        Slot("eu", 1, 1),
+        Slot("new", 2, 0),
+        Slot("total", 2, 1),
+    )
+    wires = tuple(Wire(f"w{i}", src, dst) for i, (src, dst) in enumerate(edges))
+    rules = partition_rules("revenue", "rev_breakout", breakouts, edges)
+    drivers, region = rules
+
+    # The diamond descendant never appears in either option's hide list.
+    assert "total" not in drivers.hide_cards
+    assert "total" not in region.hide_cards
+    # Each alternative's exclusive descendants still hide as before.
+    assert set(drivers.hide_cards) == {"us", "eu"}
+    assert set(region.hide_cards) == {"users", "aov", "new"}
+
+    graph = Graph(nodes, Slotted(slots), wires=wires, rules=rules, dom_prefix="brk4")
+    assert graph.measure().width > 0  # the shared-position proof still accepts this graph
+
+
 def test_hiding_a_card_hides_its_wires_without_being_asked():
     # Per-wire DOM identity means a converging edge is never collaterally
     # hidden - the defect the hand-rolled explorations had.

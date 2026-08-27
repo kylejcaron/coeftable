@@ -97,7 +97,9 @@ def partition_rules(
     an alternative also hides everything beneath it: a child that is itself
     declared elsewhere in `edges` as having its own deeper decomposition
     does not survive as an orphan once its parent alternative is switched
-    away.
+    away -- unless that descendant is also reachable from the selected
+    alternative (a diamond), in which case it stays visible through that
+    live path.
     """
     breakouts = tuple(breakouts)
     seen: set[str] = set()
@@ -140,22 +142,39 @@ def _reachable(start: str, adjacency: dict[str, tuple[str, ...]]) -> set[str]:
     return seen
 
 
+def _descendant_closure(
+    children: Sequence[str], adjacency: dict[str, tuple[str, ...]]
+) -> set[str]:
+    """`children` plus everything transitively reachable from them."""
+    closure: set[str] = set(children)
+    for child in children:
+        closure |= _reachable(child, adjacency)
+    return closure
+
+
 def _hidden_subtree(
     breakouts: tuple[Breakout, ...],
     selected_index: int,
     adjacency: dict[str, tuple[str, ...]],
 ) -> tuple[str, ...]:
-    """Every other breakout's children plus their transitive descendants."""
+    """Descendants exclusive to unselected alternatives.
+
+    A node reachable from an unselected alternative is only hidden if it has
+    no live path from the selected alternative -- a node shared between
+    alternatives (a diamond) keeps its visible path through the selection
+    and must never be hidden.
+    """
+    visible = _descendant_closure(breakouts[selected_index].children, adjacency)
     hidden: list[str] = []
     seen: set[str] = set()
     for other_index, other in enumerate(breakouts):
         if other_index == selected_index:
             continue
-        for child in other.children:
-            for node in (child, *_reachable(child, adjacency)):
-                if node not in seen:
-                    seen.add(node)
-                    hidden.append(node)
+        for node in _descendant_closure(other.children, adjacency):
+            if node in visible or node in seen:
+                continue
+            seen.add(node)
+            hidden.append(node)
     return tuple(hidden)
 
 
