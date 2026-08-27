@@ -652,10 +652,14 @@ are accounting, not causal claims. `events` fan out to every card named in
 their `affects` tuple, both as sparkline markers and as captions, and the
 report's header is a timeline strip indexing them across the whole canvas.
 
-**Current limitation:** at most one breakout switcher may appear on any
-root-to-leaf path. A switcher nested inside another switcher's alternative
-subtree is rejected at construction with a `SpecError` naming both parents;
-switchers in disjoint branches of the same tree are unaffected.
+**Current limitations.** At most one breakout switcher may appear on any
+root-to-leaf path: a switcher nested inside another switcher's alternative
+subtree is rejected at construction with a `SpecError` naming both parents.
+Switchers in disjoint branches are fine on their own, but a card whose only
+paths run through the alternatives of two different switchers is also
+rejected, because whether it stays visible would depend on both selections at
+once and pure CSS cannot express that conjunction. The error names the card
+and the switchers gating it.
 
 `DriverTree` returns a `GraphReport`: the underlying `Graph` plus a
 measured, exact-width timeline strip stacked above it. `report.measure()`,
