@@ -41,6 +41,8 @@ class CardChrome:
     swatch_gap: int = 4
     chip_gap: int = 10
     value_detail_gap: int = 4
+    callout_accent: int = 3
+    callout_inset: int = 6
 
     def __post_init__(self) -> None:
         """Validate all geometry fields."""

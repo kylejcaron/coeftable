@@ -12,6 +12,7 @@ import pytest
 import coeftable.cards
 from coeftable.cards.adornments import (
     Badge,
+    Callout,
     CaptionRow,
     InlineSvg,
     KeyValuePopover,
@@ -21,6 +22,7 @@ from coeftable.cards.adornments import (
     SelectControl,
     TextBlock,
 )
+from coeftable.cards.card import Card
 from coeftable.cards.chrome import DEFAULT_CHROME, CardChrome, line_height
 from coeftable.cards.fragments import _esc, render_adornment
 from coeftable.cards.measure import measure_card, resolve_rows, text_line_plan
@@ -576,6 +578,7 @@ def test_non_svg_fragments_use_inline_styles_only():
 EXPECTED_CARD_EXPORTS = {
     "Adornment",
     "Badge",
+    "Callout",
     "CaptionRow",
     "InlineSvg",
     "KeyValuePopover",
@@ -617,7 +620,7 @@ ALLOWED_CARDS_IMPORT_ROOTS = {
 
 
 def test_cards_export_surface_is_exactly_the_promised_set():
-    assert len(coeftable.cards.__all__) == 30
+    assert len(coeftable.cards.__all__) == 31
 
     assert set(coeftable.cards.__all__) == EXPECTED_CARD_EXPORTS
     for name in EXPECTED_CARD_EXPORTS:
@@ -1340,3 +1343,41 @@ def test_rendered_html_attributes_are_well_formed():
     for html_out in outputs:
         assert html_out.count('"') % 2 == 0
         assert len(re.findall(r'style="[^"]*"', html_out)) == html_out.count("style=")
+
+
+def test_callout_wraps_to_multiple_measured_rows():
+    card = Card(
+        "Revenue",
+        content=(
+            Callout(
+                "trade-off: Users vs AOV (r=-0.73); Users vs Price (r=-0.61)",
+                role="unfavorable",
+                max_lines=3,
+            ),
+        ),
+        width=200,
+    )
+    measured = card.measure()
+    html_out = card.as_raw_html()
+    # Wrapping produced more than one row, and every row is measured.
+    assert html_out.count("border-left") >= 2
+    assert measured.expanded_height > 0
+
+
+def test_callout_carries_its_role_colour():
+    html_out = render_adornment(Callout("watch out", role="unfavorable"), theme=DEFAULT)
+    assert DEFAULT.color("unfavorable") in html_out
+
+
+def test_callout_rejects_invalid_fields():
+    with pytest.raises(SpecError, match=r"Callout\.max_lines must be >= 1"):
+        Callout("x", max_lines=0)
+    with pytest.raises(SpecError, match=r"Callout\.text"):
+        Callout(7)  # ty: ignore[invalid-argument-type]
+
+
+def test_callout_too_narrow_for_its_accent_is_rejected():
+    # The accent bar and inset consume width; a card too narrow must fail
+    # loudly at construction rather than silently clipping to nothing.
+    with pytest.raises(SpecError):
+        Card("t", content=(Callout("a much longer warning"),), width=40)

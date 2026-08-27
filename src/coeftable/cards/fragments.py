@@ -18,6 +18,7 @@ from typing import assert_never
 from coeftable.cards.adornments import (
     Adornment,
     Badge,
+    Callout,
     CaptionRow,
     InlineSvg,
     KeyValuePopover,
@@ -173,6 +174,13 @@ def render_adornment(
                 f"line-height:{line_height(chrome.chip_size, chrome)}px;"
                 f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%">'
                 f"{_esc(text)}</span>"
+            )
+        case Callout(text=text, role=role):
+            style = _row(chrome.body_size, theme.color(role), chrome)
+            return (
+                f'<div style="{style};border-left:{chrome.callout_accent}px solid '
+                f'{_esc(theme.color(role))};padding-left:{chrome.callout_inset}px">'
+                f"{_esc(text)}</div>"
             )
         case CaptionRow(text=text, color=color, dash=dash):
             marker = (

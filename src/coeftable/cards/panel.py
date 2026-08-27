@@ -9,6 +9,7 @@ from typing import cast
 from coeftable.cards.adornments import (
     Adornment,
     Badge,
+    Callout,
     CaptionRow,
     InlineSvg,
     KeyValuePopover,
@@ -32,6 +33,7 @@ _ADORNMENT_TYPES = (
     KeyValuePopover,
     SelectControl,
     Badge,
+    Callout,
     CaptionRow,
     Legend,
     RuleStrip,
