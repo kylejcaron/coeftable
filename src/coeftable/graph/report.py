@@ -4,16 +4,31 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from math import ceil
 from typing import cast
 
-from coeftable.cards import Adornment, CardChrome, InlineSvg, KeyValuePopover, render_adornment
+from coeftable.cards import (
+    Adornment,
+    CardChrome,
+    InlineSvg,
+    KeyValuePopover,
+    MetricValue,
+    render_adornment,
+)
 
 # `resolve_rows` and `RenderRow` carry no leading underscore in
 # `coeftable.cards.measure` (unlike `_canonical` below); they are
 # package-level, not user-facing, so importing them across this same
 # distribution's package boundary reuses the one card-geometry model
 # instead of inventing a second one for report sections.
-from coeftable.cards.measure import RenderRow, resolve_rows
+#
+# `_est` and `_minimum_inline_width` do carry a leading underscore, but they
+# are the one place chrome-specific legibility math lives per adornment
+# kind. Re-deriving that math here — instead of importing it — is exactly
+# how a section's required width and `resolve_rows`'s own minimum-width
+# check would drift apart, so the private names are reused rather than
+# mirrored.
+from coeftable.cards.measure import RenderRow, _est, _minimum_inline_width, resolve_rows
 from coeftable.errors import SpecError
 from coeftable.graph.model import Graph
 from coeftable.theme import Theme
@@ -34,16 +49,32 @@ def _canonical(value: object, *, name: str) -> tuple[object, ...]:
         raise SpecError(f"{name} must be a sequence") from error
 
 
-def _section_natural_width(adornments: tuple[Adornment, ...]) -> int:
-    """Return the width a section's fixed-size content requires, if any.
+def _adornment_natural_width(adornment: Adornment, *, chrome: CardChrome) -> int:
+    """Return the exact pixel width a non-wrapping adornment requires.
 
-    Only `InlineSvg` declares a hard pixel width; every other adornment
-    wraps to whatever usable width it is given.
+    `InlineSvg` and `MetricValue` never wrap, so their content dictates a
+    hard floor on section width. Every other adornment wraps to whatever
+    width it is given, but several still enforce their own minimum legible
+    width via `_minimum_inline_width`, measure.py's single source of truth
+    for that floor.
     """
+    if isinstance(adornment, InlineSvg):
+        return adornment.width
+    if isinstance(adornment, MetricValue):
+        ratio = chrome.data_char_width_ratio
+        width = _est(adornment.value, chrome.value_size, ratio)
+        if adornment.detail is not None:
+            width += chrome.value_detail_gap + _est(adornment.detail, chrome.ci_size, ratio)
+        return ceil(width)
+    minimum = _minimum_inline_width(adornment, chrome)
+    return 0 if minimum is None else ceil(minimum)
+
+
+def _section_natural_width(adornments: tuple[Adornment, ...], *, chrome: CardChrome) -> int:
+    """Return the width a section's non-wrapping or minimum-width content requires."""
     width = 0
     for adornment in adornments:
-        if isinstance(adornment, InlineSvg):
-            width = max(width, adornment.width)
+        width = max(width, _adornment_natural_width(adornment, chrome=chrome))
     return width
 
 
@@ -111,10 +142,11 @@ class GraphReport:
     def _compute(self) -> MeasuredReport:
         """Derive the composite's exact outer geometry from its parts."""
         graph_measured = self.graph.measure()
+        chrome = self.graph.chrome
         width = max(
             graph_measured.width,
-            _section_natural_width(self.header),
-            _section_natural_width(self.footer),
+            _section_natural_width(self.header, chrome=chrome),
+            _section_natural_width(self.footer, chrome=chrome),
         )
         header_rows, footer_rows = self._rows(width=width)
         header_height = _section_height(header_rows)

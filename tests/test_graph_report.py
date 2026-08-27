@@ -1,6 +1,6 @@
 import pytest
 
-from coeftable.cards import Callout, Card, InlineSvg, TextBlock
+from coeftable.cards import Callout, Card, InlineSvg, Legend, MetricValue, TextBlock
 from coeftable.errors import SpecError
 from coeftable.graph import Graph, GraphReport, Slot, Slotted
 
@@ -25,6 +25,28 @@ def test_report_width_is_the_widest_part():
     wide = InlineSvg('<svg width="900" height="20"></svg>', 900, 20)
     report = GraphReport(graph, header=(wide,))
     assert report.measure().width == 900
+
+
+def test_report_widens_for_a_metric_value_footer_wider_than_the_graph():
+    # MetricValue never wraps or clips; a value+detail pair wider than the
+    # graph must widen the report instead of raising from resolve_rows.
+    graph = _graph()
+    assert graph.measure().width == 152
+    metric = MetricValue("1,234,567.89", detail="[1.0, 2.0]")
+    report = GraphReport(graph, footer=(metric,))
+    assert report.measure().width == 222
+    assert report.measure().width > graph.measure().width
+
+
+def test_report_widens_for_a_header_wider_than_the_graph_via_minimum_width():
+    # Legend chips are clipped, not wrapped; each entry still enforces a
+    # minimum legible width, and enough entries exceed the graph's width.
+    graph = _graph()
+    assert graph.measure().width == 152
+    legend = Legend(tuple((f"series-{i}", "#336699") for i in range(6)))
+    report = GraphReport(graph, header=(legend,))
+    assert report.measure().width == 212
+    assert report.measure().width > graph.measure().width
 
 
 def test_report_with_no_furniture_matches_the_bare_graph():
