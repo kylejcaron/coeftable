@@ -150,11 +150,17 @@ def _label_anchor_and_text(x: float, label: str, width: int) -> tuple[str, str]:
 
     Centring every label on its projected coordinate clips events near
     either domain edge -- the strip's viewport doesn't grow to fit text, so
-    a boundary event's centred label runs straight off the canvas. Anchor
-    at the start when centring would spill past the left edge, at the end
-    when it would spill past the right, and truncate with an ellipsis as a
-    last resort when even a single-edge anchor can't fit. The pin, its
-    stem, and its dot stay on `x` regardless -- only the text anchor moves.
+    a boundary event's centred label runs straight off the canvas.
+
+    When centring spills past exactly one edge, anchor away from it: at the
+    start for a left spill, at the end for a right spill. When it spills
+    past BOTH edges the label is wider than the strip, so neither side can
+    show it whole; anchor to whichever side has more room, since anchoring
+    to the cramped side would truncate to almost nothing. Truncate with an
+    ellipsis as a last resort when the chosen side still cannot fit it.
+
+    The pin, its stem, and its dot stay on `x` regardless -- only the text
+    anchor moves.
     """
     half = len(label) * _LABEL_FONT_SIZE * _CHAR_WIDTH_RATIO / 2
     low, high = _LABEL_HALO, width - _LABEL_HALO
