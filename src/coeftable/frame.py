@@ -9,7 +9,7 @@ from typing import Any
 
 import narwhals as nw
 
-from coeftable.grid import assemble_rows, build_grid
+from coeftable.grid import AssembledRows, Grid, assemble_rows, build_grid
 from coeftable.spec import (
     Cell,
     CoefTable,
@@ -184,7 +184,7 @@ def _prepare_columns(
 
 
 def _build_display_columns(
-    table: CoefTable, grid: Any
+    table: CoefTable, grid: Grid
 ) -> tuple[list[str], dict[str, str], dict[str, list[str]], list[str]]:
     display_columns: list[str] = []
     labels: dict[str, str] = {}
@@ -204,7 +204,7 @@ def _build_display_columns(
 
 def _compute_cells(
     table: CoefTable,
-    grid: Any,
+    grid: Grid,
     prepared: list[Prepared],
     display_columns: list[str],
 ) -> dict[str, list[str]]:
@@ -235,7 +235,7 @@ def _compute_cells(
 
 
 def _build_footer_data(
-    table: CoefTable, grid: Any, prepared: list[Prepared]
+    table: CoefTable, grid: Grid, prepared: list[Prepared]
 ) -> tuple[dict[str, Column], dict[str, Prepared], dict[str, list[list[Any]]], set[str]]:
     # Interleave axis rows wherever a column's domain closes.
     column_by_label: dict[str, Column] = {}
@@ -266,7 +266,7 @@ def _render_footer(
     *,
     column_by_label: dict[str, Column],
     prepared_by_label: dict[str, Prepared],
-    grid: Any,
+    grid: Grid,
     theme: Any,
 ) -> dict[str, str]:
     out: dict[str, str] = {}
@@ -282,7 +282,7 @@ def _render_footer(
 
 
 def _build_output_frame(
-    table: CoefTable, frame: nw.DataFrame, assembled: Any, display_columns: list[str]
+    table: CoefTable, frame: nw.DataFrame, assembled: AssembledRows, display_columns: list[str]
 ) -> Any:
     data: dict[str, list[Any]] = {}
     if table.groups:

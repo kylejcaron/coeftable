@@ -353,6 +353,51 @@ def tradeoff_pairs(
     return tuple(found)
 
 
+def endpoint_identity_gap(
+    parent_series: Sequence[float], children_series: Sequence[Sequence[float]], op: str
+) -> float:
+    """Relative discrepancy between the parent and its implied children.
+
+    Computed at the first and last observation only, the larger of the two.
+
+    `identity_gap` averages that discrepancy over every observation, so a
+    decomposition that tracks its parent closely for most of the window but
+    diverges badly only at the endpoint still reports a small mean gap. The
+    edge labels this gates are themselves computed from the endpoints alone
+    (`log_ratio(child[-1], child[0])`), so whether to trust them has to be
+    judged at the endpoints too, not smoothed away by an in-between average.
+    """
+    implied = implied_series(children_series, op)
+    return max(
+        abs(parent_series[0] - implied[0]) / abs(parent_series[0]),
+        abs(parent_series[-1] - implied[-1]) / abs(parent_series[-1]),
+    )
+
+
+def combined_identity_gap(
+    parent_series: Sequence[float], children_series: Sequence[Sequence[float]], op: str
+) -> float:
+    """Take the larger of a decomposition's whole-series and endpoint identity gaps.
+
+    Either one exceeding `RESIDUAL_WARN` means the labels -- which describe the
+    endpoint change specifically -- do not reconcile with the parent. Every
+    consumer keys off this same combined value rather than picking its own
+    measure: implied-identity scaling, a clean unbadged card, and operator
+    inference all require *both* the whole-series mean and the endpoints alone
+    to agree with the parent.
+
+    This applies to both operators. An additive slice's contributions are
+    endpoint deltas just as a factorization's are endpoint log shares, so a
+    shortfall confined to the last observation dilutes below the mean threshold
+    in exactly the same way -- injecting no residual and refusing nothing,
+    while the numbers on the page fail to add up to the parent's own move.
+    """
+    return max(
+        identity_gap(parent_series, children_series, op),
+        endpoint_identity_gap(parent_series, children_series, op),
+    )
+
+
 def infer_op(parent: Sequence[float], children: Sequence[Sequence[float]]) -> str:
     """Derive whether `children` combine into `parent` additively or multiplicatively.
 
@@ -374,7 +419,7 @@ def infer_op(parent: Sequence[float], children: Sequence[Sequence[float]]) -> st
     scored: dict[str, float] = {}
     for candidate in ("+", "x"):
         try:
-            scored[candidate] = identity_gap(parent, children, candidate)
+            scored[candidate] = combined_identity_gap(parent, children, candidate)
         except SpecError:
             # Undefined for this data (a non-positive series under "x"), which
             # eliminates the candidate rather than ranking it last.

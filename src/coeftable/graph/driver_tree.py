@@ -58,8 +58,8 @@ from coeftable.graph.breakout import (
 from coeftable.graph.honesty import (
     RESIDUAL_FAIL,
     RESIDUAL_WARN,
+    combined_identity_gap,
     endpoint_interval,
-    identity_gap,
     implied_series,
     infer_op,
     log_ratio,
@@ -500,51 +500,6 @@ def _reserve_residual_id(
     resid_ids[resid_id] = pair
 
 
-def _endpoint_identity_gap(
-    parent_series: Sequence[float], children_series: Sequence[Sequence[float]], op: str
-) -> float:
-    """Relative discrepancy between the parent and its implied children.
-
-    Computed at the first and last observation only, the larger of the two.
-
-    `identity_gap` averages that discrepancy over every observation, so a
-    decomposition that tracks its parent closely for most of the window but
-    diverges badly only at the endpoint still reports a small mean gap. The
-    edge labels this gates are themselves computed from the endpoints alone
-    (`log_ratio(child[-1], child[0])`), so whether to trust them has to be
-    judged at the endpoints too, not smoothed away by an in-between average.
-    """
-    implied = implied_series(children_series, op)
-    return max(
-        abs(parent_series[0] - implied[0]) / abs(parent_series[0]),
-        abs(parent_series[-1] - implied[-1]) / abs(parent_series[-1]),
-    )
-
-
-# Final rule (C3 + A3): a breakout's identity gap is the *larger* of the mean
-# relative discrepancy across the whole series (`identity_gap`) and the
-# discrepancy at the endpoints alone (`_endpoint_identity_gap`). Either one
-# exceeding `RESIDUAL_WARN` means the labels -- which describe the endpoint
-# change specifically -- do not reconcile with the parent, so both scaling
-# (`_compute_contributions`) and the badge (`_apply_breakout_honesty`) key off
-# this same combined value: implied-identity scaling, and a clean unbadged
-# card, require *both* the whole-series mean and the endpoints alone to agree
-# with the parent.
-#
-# This applies to both operators. An additive slice's contributions are
-# endpoint deltas just as a factorization's are endpoint log-shares, so a
-# shortfall confined to the last observation dilutes below the mean threshold
-# in exactly the same way -- injecting no residual and refusing nothing, while
-# the numbers on the page fail to add up to the parent's own move.
-def _combined_identity_gap(
-    parent_series: Sequence[float], children_series: Sequence[Sequence[float]], op: str
-) -> float:
-    return max(
-        identity_gap(parent_series, children_series, op),
-        _endpoint_identity_gap(parent_series, children_series, op),
-    )
-
-
 def _apply_breakout_honesty(
     parent: str,
     breakout: Breakout,
@@ -558,7 +513,7 @@ def _apply_breakout_honesty(
     """Check one breakout's identity gap and trade-offs (cluster A3 + A4)."""
     parent_series = node_series[parent]
     children_series = [node_series[child] for child in breakout.children]
-    gap = _combined_identity_gap(parent_series, children_series, _resolved_op(breakout))
+    gap = combined_identity_gap(parent_series, children_series, _resolved_op(breakout))
     if gap > RESIDUAL_FAIL:
         coverage = (1.0 - gap) * 100.0
         raise SpecError(
@@ -715,7 +670,12 @@ def _compute_contributions(
     contribution_by_edge: dict[tuple[str, str], float] = {}
     for parent in topology.parents:
         parent_series = node_series[parent]
-        parent_delta = endpoint_interval(parent_series)[0]
+        # `parent_delta` is derived on the log scale and so needs a strictly
+        # positive parent, but only the multiplicative branch consumes it. It
+        # is computed there rather than here so a signed parent whose breakouts
+        # are all additive -- churn split by reason, say, where every level is
+        # negative -- is not pushed through a positivity check its own
+        # decomposition never needed.
         for breakout in topology.breakout_map[parent]:
             if breakout.op == "+":
                 for child in breakout.children:
@@ -724,6 +684,7 @@ def _compute_contributions(
                         (child_series[-1] - child_series[0]) / parent_series[0] * 100.0
                     )
             else:
+                parent_delta = endpoint_interval(parent_series)[0]
                 children_series = [node_series[child] for child in breakout.children]
                 totals = {
                     child: log_ratio(node_series[child][-1], node_series[child][0])
@@ -732,13 +693,13 @@ def _compute_contributions(
                 total_sum = math.fsum(totals.values())
                 # Consistency rule: implied-identity scaling and the gap badge
                 # (`_apply_breakout_honesty`) are keyed off the *same*
-                # `_combined_identity_gap` value (see its own final-rule
+                # `combined_identity_gap` value (see its own final-rule
                 # comment), not two different discrepancy measures.
                 # Implied-identity scaling is picked only when that combined
                 # gap is small enough that no badge renders, so any mismatch
                 # large enough to trigger the `parent_delta / total_sum`
                 # fallback always surfaces the gap indicator too.
-                gap = _combined_identity_gap(parent_series, children_series, "x")
+                gap = combined_identity_gap(parent_series, children_series, "x")
                 identity_holds = gap <= RESIDUAL_WARN
                 scale = _multiplicative_scale(parent_delta, total_sum, identity_holds)
                 for child in breakout.children:
@@ -935,18 +896,20 @@ def _build_switcher_state(
 
 
 def _observed_domain(values: Sequence[float]) -> tuple[float, float]:
-    """Pad a residual trend's own extent; no ribbon exists to derive it from.
+    """Pad a signed series's own extent; no ribbon exists to derive it from.
 
-    An injected residual is signed -- zero where children exactly explain the
-    parent, negative where they over-explain it -- so `ribbon_bounds`'s
-    multiplicative noise model (which works in log space and requires
-    strictly positive input) is not defined for it. Mirror `ribbon_domain`'s
-    own flat-series guard instead: a flat residual has zero span, so fall
-    back to the level's own magnitude, then to 1.0 for a flat-at-zero
-    residual. That fallback pad can still underflow against a
-    subnormal-magnitude residual, so an endpoint the padding fails to move is
-    nudged apart with `math.nextafter` -- the returned domain is never
-    degenerate.
+    Serves any series without a multiplicative noise model: an injected
+    residual, which is signed by nature -- zero where children exactly
+    explain the parent, negative where they over-explain it -- and equally a
+    declared child that goes negative, such as a churn term. `ribbon_bounds`
+    works in log space and requires strictly positive input, so it is not
+    defined for either.
+
+    Mirrors `ribbon_domain`'s own flat-series guard: a flat series has zero
+    span, so fall back to the level's own magnitude, then to 1.0 when that is
+    zero too. That fallback pad can still underflow at subnormal magnitude,
+    so an endpoint the padding fails to move is nudged apart with
+    `math.nextafter` -- the returned domain is never degenerate.
     """
     lo_value = _finite(min(values), name="residual domain")
     hi_value = _finite(max(values), name="residual domain")
@@ -982,7 +945,11 @@ def _own_change_subtitle(values: Sequence[float], fmt: Format) -> str | None:
     latest = values[-1]
     if not math.isfinite(latest):
         return None
-    return fmt((latest - base) / base * 100.0)
+    # Routed through `_label` rather than `fmt` directly so this shares the
+    # explicit-sign rule the wire contributions use. Otherwise an unsigned
+    # formatter renders `+6.0` on the wire and `6.0` on the card -- two
+    # different conventions on the two numbers the README contrasts.
+    return _label(fmt, (latest - base) / base * 100.0)
 
 
 def _build_card(

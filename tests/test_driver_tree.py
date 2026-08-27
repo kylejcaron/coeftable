@@ -1787,3 +1787,48 @@ def test_a_card_whose_base_is_not_positive_states_no_own_change():
     cards = {card.title: card for _, card in report.graph.nodes}
     assert cards["Churned"].subtitle is None
     assert cards["Retained"].subtitle is not None
+
+
+def test_a_signed_parent_decomposed_additively_is_accepted():
+    # Extends growth accounting one level: churn split by reason, where every
+    # level in the subtree is negative. The parent's log-scale delta is only
+    # needed by the multiplicative branch, so an all-additive decomposition of
+    # a signed parent must not be pushed through a positivity check its own
+    # arithmetic never required.
+    weeks = 12
+    churned = [-3000.0 * (1.01**i) for i in range(weeks)]
+    voluntary = [value * 0.6 for value in churned]
+    involuntary = [value * 0.4 for value in churned]
+
+    report = DriverTree(
+        {"c": churned, "v": voluntary, "i": involuntary},
+        {"c": "Churned", "v": "Voluntary", "i": "Involuntary"},
+        {"c": (Breakout(key="k", label="by reason", op="+", children=("v", "i")),)},
+        _FMT,
+        list(range(weeks)),
+    )
+    assert len(report.graph.wires) == 2
+    # No log-scale interval exists anywhere here, so nothing claims a direction.
+    assert all("ns" in (wire.label or "") for wire in report.graph.wires)
+
+
+def test_the_two_percentages_share_one_sign_convention():
+    # A card's own change and a wire's contribution are contrasted in the
+    # documentation, so they must not disagree about how a positive number
+    # looks. The wire labels force an explicit "+"; with an unsigned formatter
+    # the subtitle would silently drop it.
+    weeks = 12
+    users = [50_000.0 * (1.017**i) for i in range(weeks)]
+    aov = [41.8 * (1.004**i) for i in range(weeks)]
+    revenue = [u * a for u, a in zip(users, aov, strict=True)]
+
+    report = DriverTree(
+        {"r": revenue, "u": users, "a": aov},
+        {"r": "Revenue", "u": "Users", "a": "AOV"},
+        {"r": (Breakout(key="d", label="by driver", op="x", children=("u", "a")),)},
+        Number(decimals=1),  # unsigned on purpose
+        list(range(weeks)),
+    )
+    subtitles = [card.subtitle for _, card in report.graph.nodes]
+    assert all(text is not None and text.startswith("+") for text in subtitles)
+    assert all((wire.label or "").startswith("+") for wire in report.graph.wires)
