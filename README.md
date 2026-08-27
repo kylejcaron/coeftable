@@ -618,7 +618,15 @@ breakouts = {
 }
 events = (TimelineEvent(at=1.0, label="Launch", color="#4C72B0", affects=("revenue", "users")),)
 
-report = DriverTree(series, titles, breakouts, ct.Percent(decimals=1), x, events=events)
+report = DriverTree(
+    series,
+    titles,
+    breakouts,
+    ct.Percent(decimals=1),
+    x,
+    events=events,
+    level_fmt=ct.Number(decimals=1),
+)
 html = report.as_raw_html()
 ```
 

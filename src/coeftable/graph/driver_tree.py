@@ -64,11 +64,17 @@ from coeftable.theme import DEFAULT, Direction, Role, Theme, role_for
 
 _DIRECTIONS: tuple[Direction, ...] = ("higher_is_better", "lower_is_better", "neutral")
 
-# The card headline shows a raw level (dollars, users, ratios, ...); `fmt` is
-# reserved for edge contribution labels, mirroring `MetricTree.fmt`. A fixed
-# internal default keeps the public signature to exactly the fields the plan
-# specifies rather than adding a second formatter parameter.
+# The card headline (Metric) always uses a fixed internal number format --
+# it is not user-configurable. `fmt` formats edge contribution labels only;
+# `level_fmt` (see `DriverTree`) formats the raw level shown by each card's
+# sparkline trend and its endpoint label. Keeping the two distinct matters:
+# `fmt` is commonly a percentage, and a level is dollars, users, or a ratio.
 _HEADLINE_FORMAT = Number(decimals=1)
+
+# `Trend.fmt`'s own default when a caller passes no `level_fmt`: a plain,
+# unsigned number -- never a percentage, since the value it formats is a
+# raw level, not a contribution share.
+_LEVEL_FORMAT = Number(decimals=1)
 
 _CARD_WIDTH = 300
 
@@ -153,6 +159,7 @@ def _validate_scalars(
     titles: object,
     breakouts: object,
     fmt: object,
+    level_fmt: object,
     direction: object,
     chrome: object,
 ) -> None:
@@ -164,6 +171,8 @@ def _validate_scalars(
         raise SpecError("DriverTree.breakouts must be a mapping")
     if not callable(fmt):
         raise SpecError("DriverTree.fmt must be callable")
+    if not callable(level_fmt):
+        raise SpecError("DriverTree.level_fmt must be callable")
     if direction not in _DIRECTIONS:
         raise SpecError("DriverTree.direction must be valid")
     if not isinstance(chrome, CardChrome):
@@ -586,10 +595,12 @@ def _build_card(
     x_domain: tuple[float, float],
     direction: Direction,
     fmt: Format,
+    level_fmt: Format,
     weeks: int,
     select_controls: dict[str, SelectControl],
     outcome: _HonestyOutcome,
     residual_by_id: dict[str, _Residual],
+    chrome: CardChrome,
 ) -> tuple[str, Card]:
     values = node_series[node_id]
     role = node_role[node_id]
@@ -612,7 +623,7 @@ def _build_card(
         domain=domain,
         lower=lower_ribbon,
         upper=upper_ribbon,
-        fmt=fmt,
+        fmt=level_fmt,
         direction=direction,
         role=role,
         annotations=annotations,
@@ -636,7 +647,9 @@ def _build_card(
     else:
         title, subtitle = titles[node_id], None
         width = _ROOT_CARD_WIDTH if node_id in topology.roots else _CARD_WIDTH
-    return node_id, Card(title, content=tuple(content), subtitle=subtitle, width=width)
+    return node_id, Card(
+        title, content=tuple(content), subtitle=subtitle, width=width, chrome=chrome
+    )
 
 
 def _derive_layer_gap(wires: list[Wire], chrome: CardChrome) -> int:
@@ -662,6 +675,7 @@ def DriverTree(
     theme: Theme = DEFAULT,
     chrome: CardChrome = DEFAULT_CHROME,
     dom_prefix: str = "g0",
+    level_fmt: Format = _LEVEL_FORMAT,
 ) -> GraphReport:
     """Build a complete driver-tree report from level series and breakouts.
 
@@ -674,6 +688,12 @@ def DriverTree(
     visible at a time -- proven by the kernel's shared-slot rules, not by
     hiding logic this module invents.
 
+    ``fmt`` formats edge contribution labels (commonly a percentage share
+    of the parent's change). ``level_fmt`` formats each card's own raw
+    level -- the value plotted by its sparkline trend and its endpoint
+    label -- and defaults to a plain, unsigned number since a level is
+    dollars, users, or a ratio, never a contribution share.
+
     Every decomposition is checked against ``coeftable.graph.honesty``'s
     identity-gap thresholds: additive shortfalls above ``RESIDUAL_WARN`` get
     an injected ``"Unattributed"`` residual card, multiplicative shortfalls
@@ -683,7 +703,7 @@ def DriverTree(
     raw contribution sign, so a confident-looking number backed by noisy
     data still renders muted with a ``" · ns"`` marker.
     """
-    _validate_scalars(series, titles, breakouts, fmt, direction, chrome)
+    _validate_scalars(series, titles, breakouts, fmt, level_fmt, direction, chrome)
     x_values, x_domain, weeks = _prepare_x(x)
 
     breakout_map = _build_breakout_map(breakouts)
@@ -722,10 +742,12 @@ def DriverTree(
             x_domain=x_domain,
             direction=direction,
             fmt=fmt,
+            level_fmt=level_fmt,
             weeks=weeks,
             select_controls=select_controls,
             outcome=outcome,
             residual_by_id=residual_by_id,
+            chrome=chrome,
         )
         for node_id in topology.node_order
     ]

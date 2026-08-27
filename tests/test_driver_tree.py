@@ -8,13 +8,14 @@ whatever the implementation happens to emit.
 
 import math
 import re
+from dataclasses import replace
 
 import pytest
 
-from coeftable.cards.chrome import DEFAULT_CHROME
+from coeftable.cards.chrome import DEFAULT_CHROME, CardChrome
 from coeftable.cards.regions import Trend
 from coeftable.errors import SpecError
-from coeftable.format import Percent
+from coeftable.format import Number, Percent
 from coeftable.graph import DriverTree, GraphReport
 from coeftable.graph.breakout import Breakout
 from coeftable.graph.driver_tree import _CARD_WIDTH, _compute_contributions, _Topology
@@ -25,7 +26,7 @@ from coeftable.svg import _projector
 _FMT = Percent(decimals=1)
 
 
-def _fixture() -> GraphReport:
+def _fixture(*, chrome: CardChrome = DEFAULT_CHROME) -> GraphReport:
     """A two-way revenue switcher (drivers x vs. region +), both exact."""
     x = (0.0, 1.0, 2.0, 3.0)
     titles = {"revenue": "Revenue", "users": "Users", "aov": "AOV", "us": "US", "eu": "EU"}
@@ -46,7 +47,7 @@ def _fixture() -> GraphReport:
     events = (
         TimelineEvent(at=1.0, label="Launch", color="#4C72B0", affects=("revenue", "users")),
     )
-    return DriverTree(series, titles, breakouts, _FMT, x, events=events)
+    return DriverTree(series, titles, breakouts, _FMT, x, events=events, chrome=chrome)
 
 
 def _noisy_fixture() -> GraphReport:
@@ -586,3 +587,38 @@ def test_a_switcher_with_an_injected_residual_builds_and_merges_the_hide_rule():
     hidden = drivers_rules[0].hide_cards
     assert "paid" in hidden and "organic" in hidden
     assert "resid_revenue_channel" in hidden
+
+
+def test_a_level_trends_endpoint_label_is_not_percent_formatted():
+    """Regression: `fmt` (a percentage) used to double as `Trend.fmt`, so a
+    level's own sparkline endpoint rendered as a percentage of itself."""
+    html = _fixture().as_raw_html()
+    assert "+1,219.0%" not in html  # the old bug: contribution fmt on a level
+    # The Trend endpoint now shares the headline Metric's own plain format.
+    assert html.count("1,219.0") >= 2
+
+
+def test_a_custom_level_fmt_formats_only_the_trend_not_the_headline():
+    report = DriverTree(
+        {"root": (2.0, 4.0, 6.0), "child": (2.0, 4.0, 6.0)},
+        {"root": "Root", "child": "Child"},
+        {"root": (Breakout(key="k", label="k", op="+", children=("child",)),)},
+        _FMT,
+        (0.0, 1.0, 2.0),
+        level_fmt=Number(decimals=3, prefix="$"),
+    )
+    trend = _trend_for(report, "root")
+    assert trend.fmt(6.0) == "$6.000"
+    html = report.as_raw_html()
+    assert "$6.000" in html  # the Trend endpoint takes level_fmt
+    assert "6.0" in html  # the headline Metric keeps its own fixed format
+
+
+def test_a_custom_chrome_is_threaded_through_every_card():
+    """Regression: cards used to always build with `DEFAULT_CHROME` while the
+    `Graph` got the caller's, so any non-default chrome raised a mismatch."""
+    chrome = replace(DEFAULT_CHROME, title_size=20)
+    report = _fixture(chrome=chrome)
+    for _node_id, card in report.graph.nodes:
+        assert card.chrome == chrome
+    assert "font-size:20px" in report.as_raw_html()
