@@ -26,7 +26,10 @@ _MIN_NORMAL_RATIO = sys.float_info.min
 
 def _levels(series: Sequence[float], *, name: str) -> tuple[float, ...]:
     """Snapshot a level series, rejecting values that make log ratios undefined."""
-    values = tuple(float(value) for value in series)
+    try:
+        values = tuple(float(value) for value in series)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise SpecError(f"{name} values must be finite numbers") from exc
     if len(values) < 3:
         raise SpecError(f"{name} must have at least 3 observations")
     for value in values:
@@ -48,12 +51,24 @@ def log_ratio(numerator: float, denominator: float) -> float:
     underflow fallback to stay finite; a subnormal quotient (e.g. the
     smallest subnormal divided by 1.5, which rounds right back to itself)
     needs the same fallback because it has too few significant bits left to
-    trust - subtracting the logs instead stays accurate.
+    trust - subtracting the logs instead stays accurate. Any input that
+    can't yield a finite ratio at all - division by zero, an integer pair
+    too large for a machine float, a value outside log()'s domain, a NaN -
+    raises SpecError instead of a raw arithmetic exception or a silent NaN.
     """
-    ratio = numerator / denominator
+    try:
+        ratio = numerator / denominator
+    except (TypeError, ZeroDivisionError, OverflowError) as exc:
+        raise SpecError("log ratio requires two finite, positive numbers") from exc
     if ratio >= _MIN_NORMAL_RATIO and math.isfinite(ratio):
         return math.log(ratio)
-    return math.log(numerator) - math.log(denominator)
+    try:
+        result = math.log(numerator) - math.log(denominator)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise SpecError("log ratio requires two finite, positive numbers") from exc
+    if not math.isfinite(result):
+        raise SpecError("log ratio requires two finite, positive numbers")
+    return result
 
 
 def weekly_log_changes(series: Sequence[float]) -> tuple[float, ...]:
@@ -157,19 +172,33 @@ def ribbon_domain(
     """Pad the ribbon extent by a tenth of the series span.
 
     A flat series has zero span, which would collapse the domain; fall back to
-    the level's own magnitude, then to 1.0 for a flat-at-zero series.
+    the level's own magnitude, then to 1.0 for a flat-at-zero series. Even
+    that fallback pad can underflow to zero against a subnormal-magnitude
+    flat series (or round away entirely against a near-max one), so an
+    endpoint the padding fails to move is nudged apart with
+    `math.nextafter` instead - the returned domain is never degenerate.
     """
-    values = tuple(float(value) for value in series)
-    lower_values = tuple(float(value) for value in lower)
-    upper_values = tuple(float(value) for value in upper)
+    try:
+        values = tuple(float(value) for value in series)
+        lower_values = tuple(float(value) for value in lower)
+        upper_values = tuple(float(value) for value in upper)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise SpecError("ribbon domain values must be finite numbers") from exc
     if not (values and lower_values and upper_values):
         raise SpecError("ribbon domain requires at least one observation")
     for value in (*values, *lower_values, *upper_values):
         if not math.isfinite(value):
             raise SpecError("ribbon domain values must be finite")
     span = (max(values) - min(values)) or abs(max(values)) or 1.0
-    lo = min(lower_values) - 0.1 * span
-    hi = max(upper_values) + 0.1 * span
+    raw_lo = min(lower_values)
+    raw_hi = max(upper_values)
+    pad = 0.1 * span
+    lo = raw_lo - pad
+    hi = raw_hi + pad
+    if lo == raw_lo:
+        lo = math.nextafter(raw_lo, -math.inf)
+    if hi == raw_hi:
+        hi = math.nextafter(raw_hi, math.inf)
     _require_finite((lo, hi), magnitude=span, purpose="a ribbon domain")
     return (lo, hi)
 
@@ -193,7 +222,14 @@ def _combine_column(column: tuple[float, ...], op: str) -> float:
 
 
 def implied_series(children: Sequence[Sequence[float]], op: str) -> tuple[float, ...]:
-    """Combine children pointwise under the decomposition's operator."""
+    """Combine children pointwise under the decomposition's operator.
+
+    Children are normalized to float before combining: leaving an integer
+    column unconverted lets it stay arbitrary-precision through the
+    multiply/sum, so a later `math.isfinite` on an out-of-float-range int
+    result raises `OverflowError` instead of this function returning
+    cleanly or raising `SpecError` like every other overflow here does.
+    """
     if op not in ("+", "x"):
         raise SpecError("decomposition op must be '+' or 'x'")
     if not children:
@@ -202,13 +238,23 @@ def implied_series(children: Sequence[Sequence[float]], op: str) -> tuple[float,
     if len(lengths) != 1:
         # zip(strict=True) would raise ValueError here; report our own error type.
         raise SpecError("decomposition children must all have the same length")
-    columns = zip(*children, strict=True)
+    try:
+        normalized = [tuple(float(value) for value in child) for child in children]
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise SpecError("decomposition children values must be finite numbers") from exc
+    for child in normalized:
+        if not all(math.isfinite(value) for value in child):
+            raise SpecError("decomposition children values must be finite numbers")
+    columns = zip(*normalized, strict=True)
     return tuple(_combine_column(tuple(column), op) for column in columns)
 
 
 def identity_gap(parent: Sequence[float], children: Sequence[Sequence[float]], op: str) -> float:
     """Mean relative discrepancy between a parent and its combined children."""
-    values = tuple(float(value) for value in parent)
+    try:
+        values = tuple(float(value) for value in parent)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise SpecError("decomposition parent values must be finite numbers") from exc
     if not values:
         raise SpecError("decomposition parent must have at least one value")
     implied = implied_series(children, op)

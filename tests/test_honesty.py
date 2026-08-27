@@ -13,6 +13,7 @@ from coeftable.graph.honesty import (
     identity_gap,
     implied_series,
     level_noise,
+    log_ratio,
     ribbon_bounds,
     ribbon_domain,
     tradeoff_pairs,
@@ -250,6 +251,54 @@ def test_ribbon_bounds_refuses_a_multiplied_bound_that_would_be_infinite():
         ribbon_bounds(series)
 
 
+def test_implied_series_normalizes_large_integer_children_before_combining():
+    # 10**200 * 10**200 stays an exact, arbitrary-precision Python int if
+    # left unconverted, so a later math.isfinite() raises OverflowError
+    # instead of the module reporting the overflow as SpecError like every
+    # other overflow in this module does.
+    huge = 10**200
+    result = implied_series(((huge, huge),), "x")
+    assert result == (float(huge), float(huge))
+    assert all(math.isfinite(value) for value in result)
+
+    with pytest.raises(SpecError, match="orders of magnitude"):
+        implied_series(((huge,), (huge,)), "x")
+
+
+def test_ribbon_domain_stays_nondegenerate_for_a_flat_subnormal_series():
+    # 0.1 * span underflows to exactly 0.0 for a subnormal-magnitude flat
+    # series, so the naive padded bounds come out equal even though the
+    # docstring promises a non-degenerate domain.
+    smallest_subnormal = 5e-324
+    flat = (smallest_subnormal, smallest_subnormal, smallest_subnormal)
+    lower, upper = ribbon_bounds(flat)
+    lo, hi = ribbon_domain(flat, lower, upper)
+    assert hi > lo
+    assert math.isfinite(lo)
+    assert math.isfinite(hi)
+
+
+def test_log_ratio_stays_finite_for_large_but_safe_integer_inputs():
+    assert log_ratio(10**400, 10**399) == pytest.approx(math.log(10.0))
+
+
+def test_log_ratio_refuses_inputs_that_cannot_produce_a_finite_ratio():
+    # Every input shape that previously let a raw OverflowError,
+    # ZeroDivisionError, or ValueError escape log_ratio instead of SpecError.
+    huge = 10**400
+    cases = (
+        (huge, 10**50),  # the direct quotient itself overflows the divide
+        (float(10**300), huge),  # converting the huge side overflows
+        (5.0, 0.0),  # division by zero
+        (0.0, 5.0),  # log(0.0) is undefined on the fallback path
+        (-5.0, 2.0),  # log() of a negative number is undefined
+        (float("nan"), 5.0),  # NaN never resolves to a finite log
+    )
+    for numerator, denominator in cases:
+        with pytest.raises(SpecError):
+            log_ratio(numerator, denominator)
+
+
 def _random_positive_finite(rng: random.Random) -> float:
     """A positive float spanning subnormal to near-max magnitude."""
     exponent = rng.uniform(-323, 308)
@@ -324,3 +373,59 @@ def test_every_public_function_stays_finite_or_raises_spec_error_across_magnitud
             assert all(math.isfinite(correlation) for _, _, correlation in pairs)
         except SpecError:
             pass
+
+
+def _random_huge_int(rng: random.Random) -> int:
+    """A signed Python int large enough to stay arbitrary-precision through
+    arithmetic instead of ever implicitly becoming a machine float."""
+    exponent = rng.randint(150, 500)
+    return rng.choice((1, -1)) * (10**exponent + rng.randint(0, 999))
+
+
+_INT_PROBE_TRIALS = 200
+_SUBNORMAL_FLAT_MAGNITUDES = (5e-324, 4.9e-324, 1e-323, 2e-323, 1e-320, 1e-310, 1e-300)
+
+
+def test_public_functions_survive_large_integers_and_flat_subnormal_series():
+    # Extends the random-float magnitude sweep above along the two axes it
+    # never exercises: raw Python ints large enough to stay
+    # arbitrary-precision through arithmetic (implied_series, log_ratio),
+    # and perfectly flat series pinned at subnormal magnitude
+    # (ribbon_domain). Both previously let a raw OverflowError or a
+    # degenerate (lo == hi) domain escape instead of SpecError / a
+    # non-degenerate, finite result.
+    rng = random.Random(20260827)  # noqa: S311  -- deterministic fuzz seed, not security-sensitive
+    probed = 0
+
+    for _ in range(_INT_PROBE_TRIALS):
+        length = rng.randint(1, 4)
+        children = tuple(
+            tuple(_random_huge_int(rng) for _ in range(length)) for _ in range(rng.randint(1, 3))
+        )
+        op = rng.choice(("+", "x"))
+        probed += 1
+        try:
+            implied = implied_series(children, op)
+            assert all(math.isfinite(value) for value in implied)
+        except SpecError:
+            pass
+
+        numerator = rng.choice((_random_huge_int(rng), _random_positive_finite(rng)))
+        denominator = rng.choice((_random_huge_int(rng), _random_positive_finite(rng)))
+        probed += 1
+        try:
+            ratio = log_ratio(numerator, denominator)
+            assert math.isfinite(ratio)
+        except SpecError:
+            pass
+
+    for magnitude in _SUBNORMAL_FLAT_MAGNITUDES:
+        flat = (magnitude, magnitude, magnitude)
+        probed += 1
+        lower, upper = ribbon_bounds(flat)
+        lo, hi = ribbon_domain(flat, lower, upper)
+        assert hi > lo
+        assert math.isfinite(lo)
+        assert math.isfinite(hi)
+
+    assert probed == 2 * _INT_PROBE_TRIALS + len(_SUBNORMAL_FLAT_MAGNITUDES)
