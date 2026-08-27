@@ -267,19 +267,48 @@ def _child_closures(
     return closures
 
 
+def _grouping_spares(order: Sequence[str], reaching: frozenset[str]) -> bool:
+    """Whether some equal-sized contiguous split leaves every group a reaching child.
+
+    The real option boundaries never reach this far -- only the switcher's
+    flattened, order-preserving direct-children list does -- but every
+    breakout requires at least two alternatives of equal size, so the true
+    grouping is necessarily one of the equal-sized contiguous splits of
+    `order` (children are wired to their parent option by option, each
+    option's own children in order). If even one such split leaves every
+    group with at least one reaching child, the true grouping might be
+    that split, in which case every selectable option keeps `node` alive
+    through it and no selection could ever exclude it.
+    """
+    total = len(order)
+    return any(
+        total % size == 0
+        and all(
+            any(child in reaching for child in order[start : start + size])
+            for start in range(0, total, size)
+        )
+        for size in range(1, total // 2 + 1)
+    )
+
+
 def _reaching_children(node: str, per_child: Mapping[str, frozenset[str]]) -> frozenset[str]:
-    """Return `node`'s reaching direct children, when only some of them reach it.
+    """Return `node`'s reaching direct children, unless some grouping spares it.
 
     A parent whose children unanimously reach `node` -- or unanimously miss
     it -- cannot gate it: every option would carry the same verdict, so no
-    selection changes anything. Only a split between reaching and
-    non-reaching children makes the parent a real gate, and every reaching
-    child counts: an option that happens to contribute several of them
-    still excludes `node` in full the moment some other option is selected
-    instead, exactly as a single-child option would.
+    selection changes anything (this is the `size == 1` split
+    `_grouping_spares` finds trivially, since every singleton group either
+    is or isn't the sole reaching child). Beyond that, `node` is only
+    provably excludable by *some* selection when every equal-sized
+    contiguous grouping of the children -- every candidate for the real
+    option boundaries -- has at least one group with no reaching child at
+    all: only then is picking that group's option guaranteed to exclude
+    `node`, regardless of which grouping the switcher actually uses. A
+    reaching child in every candidate group proves the opposite: `node`
+    would survive any real selection, so the switcher is no gate.
     """
     reaching = frozenset(child for child, closure in per_child.items() if node in closure)
-    if not reaching or len(reaching) == len(per_child):
+    if not reaching or _grouping_spares(tuple(per_child), reaching):
         return frozenset()
     return reaching
 
@@ -312,11 +341,14 @@ def _reject_orphanable_descendants(
     combination that excludes all of them at once leaves it with nothing
     pointing at it. Each contributing switcher is identified at the option
     level, by every one of its direct children that reaches the
-    descendant: those children all belong to the option(s) a selection
-    would exclude, so pruning all of them together (not just one) is what
-    correctly simulates that exclusion, however many children the option
-    contributes. Finding the descendant still unreachable from every root
-    after pruning proves the orphaning combination is real and selectable.
+    descendant -- but only once no equal-sized grouping of those children
+    could leave every option with a reaching child, since such a grouping
+    would mean some option always keeps the descendant alive regardless of
+    the selection. Pruning all of the identified children together (not
+    just one) is what correctly simulates the exclusion, however many
+    children the excluding option contributes. Finding the descendant
+    still unreachable from every root after pruning proves the orphaning
+    combination is real and selectable.
     """
     closures = _child_closures(parents, adjacency)
     if len(closures) < 2:

@@ -563,3 +563,81 @@ def test_an_option_contributing_multiple_children_to_a_shared_descendant_still_g
     )
     with pytest.raises(SpecError, match=r"'shared'.*more than one breakout switcher"):
         reject_nested_switchers(("a", "b"), edges)
+
+
+def test_two_switchers_whose_every_option_reaches_a_descendant_are_allowed():
+    # `a` and `b` are independent switchers, each with two two-child
+    # options. `a`'s first option contributes `a1` (reaches `shared`) and
+    # `a2` (doesn't); its second option contributes `a3` (reaches) and
+    # `a4` (doesn't) -- so *every* option of `a` keeps `shared` alive no
+    # matter which is picked. Same shape for `b` via `b1`..`b4`. Treating
+    # the raw union of each switcher's reaching children as one excludable
+    # group -- ignoring that `a1`/`a3` sit in different options -- would
+    # wrongly conclude both switchers gate `shared` and that selecting
+    # `a`'s and `b`'s non-`a1`/`b1` options together orphans it. No real
+    # selection can ever exclude `shared`, so this must not raise, and the
+    # graph layer must accept the resulting topology.
+    a_breakouts = (
+        Breakout(key="a_first", label="A first", op="+", children=("a1", "a2")),
+        Breakout(key="a_second", label="A second", op="+", children=("a3", "a4")),
+    )
+    b_breakouts = (
+        Breakout(key="b_first", label="B first", op="+", children=("b1", "b2")),
+        Breakout(key="b_second", label="B second", op="+", children=("b3", "b4")),
+    )
+    edges = (
+        ("root", "a"),
+        ("root", "b"),
+        ("a", "a1"),
+        ("a", "a2"),
+        ("a", "a3"),
+        ("a", "a4"),
+        ("b", "b1"),
+        ("b", "b2"),
+        ("b", "b3"),
+        ("b", "b4"),
+        ("a1", "shared"),
+        ("a3", "shared"),
+        ("b1", "shared"),
+        ("b3", "shared"),
+    )
+    reject_nested_switchers(("a", "b"), edges)  # must not raise
+
+    # The real gate: the full topology, wired up as `DriverTree` would,
+    # still builds -- `partition_rules` never hid `shared` here either.
+    control_a = breakout_control(a_breakouts, key="a_breakout")
+    control_b = breakout_control(b_breakouts, key="b_breakout")
+    rules = partition_rules("a", "a_breakout", a_breakouts, edges) + partition_rules(
+        "b", "b_breakout", b_breakouts, edges
+    )
+    nodes = (
+        ("root", Card("Root", width=140)),
+        ("a", Card("A", content=(control_a,), width=140)),
+        ("b", Card("B", content=(control_b,), width=140)),
+        ("a1", Card("A1", width=140)),
+        ("a2", Card("A2", width=140)),
+        ("a3", Card("A3", width=140)),
+        ("a4", Card("A4", width=140)),
+        ("b1", Card("B1", width=140)),
+        ("b2", Card("B2", width=140)),
+        ("b3", Card("B3", width=140)),
+        ("b4", Card("B4", width=140)),
+        ("shared", Card("Shared", width=140)),
+    )
+    slots = (
+        Slot("root", 0, 0),
+        Slot("a", 1, 0),
+        Slot("b", 1, 1),
+        Slot("a1", 2, 0),
+        Slot("a3", 2, 0),
+        Slot("a2", 2, 1),
+        Slot("a4", 2, 1),
+        Slot("b1", 2, 2),
+        Slot("b3", 2, 2),
+        Slot("b2", 2, 3),
+        Slot("b4", 2, 3),
+        Slot("shared", 3, 0),
+    )
+    wires = tuple(Wire(f"w{i}", src, dst) for i, (src, dst) in enumerate(edges))
+    graph = Graph(nodes, Slotted(slots), wires=wires, rules=rules, dom_prefix="brk8")
+    assert graph.measure().width > 0
