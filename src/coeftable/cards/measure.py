@@ -16,6 +16,7 @@ from dataclasses import dataclass, replace
 from coeftable.cards.adornments import (
     Adornment,
     Badge,
+    Callout,
     CaptionRow,
     InlineSvg,
     KeyValuePopover,
@@ -63,6 +64,12 @@ def _minimum_inline_width(adornment: Adornment, chrome: CardChrome) -> float | N
     if isinstance(adornment, Badge):
         return 2 * chrome.chip_padding_x + _minimum_text_width(
             adornment.text, chrome.chip_size, chrome.char_width_ratio
+        )
+    if isinstance(adornment, Callout):
+        return (
+            chrome.callout_accent
+            + chrome.callout_inset
+            + _minimum_text_width(adornment.text, chrome.body_size, chrome.char_width_ratio)
         )
     if isinstance(adornment, CaptionRow):
         fixed = 0 if adornment.color is None else chrome.swatch_width + chrome.swatch_gap
@@ -240,6 +247,16 @@ def resolve_rows(
                     rows.append(
                         RenderRow(
                             replace(adornment, text=lined, max_lines=1), line_height(size, chrome)
+                        )
+                    )
+            case Callout(text=text, max_lines=max_lines):
+                inset = chrome.callout_accent + chrome.callout_inset
+                budget = _budget(usable - inset, chrome.body_size, chrome.char_width_ratio)
+                for lined in text_line_plan(text, budget=budget, max_lines=max_lines):
+                    rows.append(
+                        RenderRow(
+                            replace(adornment, text=lined, max_lines=1),
+                            line_height(chrome.body_size, chrome),
                         )
                     )
             case MetricValue():

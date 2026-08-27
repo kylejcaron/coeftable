@@ -223,16 +223,21 @@ def test_every_leaf_is_frozen_slotted_and_without_dict():
 def test_graph_export_surface_is_exact_and_top_level_excludes_graph():
     expected = {
         "Atom",
+        "Breakout",
         "ControlRef",
+        "DriverTree",
         "Graph",
+        "GraphReport",
         "MeasuredGraph",
+        "MeasuredReport",
         "MetricTree",
         "Slot",
         "Slotted",
         "StateRule",
+        "TimelineEvent",
         "Wire",
     }
-    assert len(coeftable.graph.__all__) == 9
+    assert len(coeftable.graph.__all__) == 14
     assert set(coeftable.graph.__all__) == expected
     for name in expected:
         assert hasattr(coeftable.graph, name)

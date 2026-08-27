@@ -586,6 +586,126 @@ CSS and no JavaScript.
 A `MetricTree` left as the last notebook expression renders itself via
 `_repr_html_`; `with_theme()` follows the same conventions as cards.
 
+## Driver-tree reports (experimental)
+
+`coeftable.graph.DriverTree` is the composition root over the metric-tree
+layer: give it level series and a decomposition per parent, and it builds the
+cards, wires, and layout itself, plus three opt-in honesty checks a hand-built
+`MetricTree` graph would otherwise have to redo per node. The API is
+experimental and may change; it is deliberately not exported from the
+top-level `coeftable` namespace yet.
+
+```python
+import coeftable as ct
+from coeftable.graph import DriverTree
+from coeftable.graph.breakout import Breakout
+from coeftable.graph.timeline import TimelineEvent
+
+x = (0.0, 1.0, 2.0, 3.0)
+series = {
+    "revenue": (1000.0, 1071.0, 1144.0, 1219.0),
+    "users": (100.0, 105.0, 110.0, 115.0),
+    "aov": (10.0, 10.2, 10.4, 10.6),
+    "us": (600.0, 640.0, 680.0, 720.0),
+    "eu": (400.0, 431.0, 464.0, 499.0),
+}
+titles = {"revenue": "Revenue", "users": "Users", "aov": "AOV", "us": "US", "eu": "EU"}
+breakouts = {
+    "revenue": (
+        Breakout(key="drivers", label="by drivers", op="x", children=("users", "aov")),
+        Breakout(key="region", label="by region", op="+", children=("us", "eu")),
+    )
+}
+events = (TimelineEvent(at=1.0, label="Launch", color="#4C72B0", affects=("revenue", "users")),)
+
+report = DriverTree(
+    series,
+    titles,
+    breakouts,
+    ct.Percent(decimals=1),
+    x,
+    events=events,
+    level_fmt=ct.Number(decimals=1),
+)
+html = report.as_raw_html()
+```
+
+Every node id in `series` and `titles` is derived from `breakouts`: each key
+is a parent, and each `Breakout` names one decomposition of it (an `op="x"`
+product or an `op="+"` sum) plus the child node ids it contributes. A parent
+with two or more breakouts (like `revenue` above) renders a native
+`<select>` that swaps its children's whole subtree in place — no JavaScript,
+because the alternatives share one slotted position and pure CSS shows
+exactly one of them at a time.
+
+Each decomposition is checked against its own arithmetic: a parent that
+should equal the sum or product of its children but falls short gets an
+injected `"Unattributed"` residual card (additive shortfalls) or a reported
+gap badge (multiplicative shortfalls, which have no subtraction fix), and a
+decomposition explaining under 80% of its parent refuses to build rather than
+render a misleading tree. Every wire's label role comes from its own child's
+noise-aware confidence interval, so a wobbly delta renders muted with a
+`· ns` marker instead of a confident color. Anti-correlated siblings (movers
+that trade off against each other week to week) surface a callout hosted on
+one of the participating children, so it stays visible only alongside that
+alternative rather than the parent, which stays visible under every switch.
+The root card renders no text of its own; pass `caption=` to add one. It
+wraps to fit the card using an estimated character width, growing across
+as many lines as that estimate needs. Runs of whitespace collapse to a
+single space and line breaks are not preserved, and unusually wide text
+can still be clipped on a line, since the wrap is an estimate rather than
+a font measurement. A literal `{weeks}` placeholder is substituted for the
+observed period count, and `caption` defaults to `None`, so nothing
+renders unless you ask for it.
+If you want a note that edge labels are accounting, not causal
+claims, that wording is yours to choose — for example
+`caption="Edge labels are an accounting of the realized {weeks}-week
+change, not causal impact."` `events` fan out to every card named in their
+`affects` tuple, both as sparkline markers and as captions, and the
+report's header is a timeline strip indexing them across the whole canvas.
+That strip carries no heading of its own — pass `strip_title=` if you want
+one, since only you know whether your events are deploys, holidays, or
+experiments. With neither events nor a `strip_title` there is nothing to
+index and no heading to show, so the strip is omitted rather than reserving
+space for a bare axis; supplying either one brings it back.
+
+**Switchers can nest.** Every level of the tree may carry its own switcher at
+the same time — revenue by drivers or region, and within drivers, active users
+by funnel or country, and within that, sessions by platform or channel.
+Switching an outer choice takes away the whole branch beneath it, including any
+nested switcher and its alternatives; switching back restores it with the inner
+selection intact, because a native `<select>` keeps its value while hidden.
+
+**Limitations.** All alternatives of one switcher must have the same number of
+children, since they share the same positions.
+
+And every card must keep a visible parent under every combination of choices. A
+card that disappears together with its own alternative is fine — that is the
+point of a switcher. What is refused is a card whose visibility depends on
+several switchers that do not subsume one another, so that some combination of
+selections leaves it on the page with every route to it closed.
+
+Nesting satisfies this on its own: an outer choice that removes a branch is
+decided by the outer rule alone, and everything below goes with it. Being
+reachable through more than one switcher is not by itself a problem either — if
+every option of each switcher reaches the card, or if any route to it is
+unconditional, it always keeps a parent and the tree is accepted.
+
+One shape is refused: a card where *every* route can be independently closed and
+none survives unconditionally. The clearest example is a card reachable through a
+nested branch and also through a different alternative of the switcher above it.
+Keep the outer branch that preserves the nested switcher, then pick an inner
+option that does not reach the card, and both of its routes close at once. Since
+each switcher's rules are emitted independently, no single one can see that. Such
+a tree is rejected at construction with a `SpecError` naming the card and every
+switcher implicated in it.
+
+`DriverTree` returns a `GraphReport`: the underlying `Graph`, and above it a
+measured, exact-width timeline strip whenever events or a `strip_title` call
+for one. `report.measure()`,
+`report.as_raw_html()`, and its `_repr_html_` notebook display all work the
+same way they do for a plain `Graph`.
+
 ## Plot annotations
 
 `ct.Rule` draws a line and `ct.Band` shades an interval in a forest plot or

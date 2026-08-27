@@ -1,6 +1,6 @@
 """Typed card-content vocabulary: the closed set card regions resolve into.
 
-The renderer (`coeftable.cards.fragments`) knows exactly these nine types
+The renderer (`coeftable.cards.fragments`) knows exactly these types
 and never branches on report type. Construction is the runtime contract
 boundary for intrinsic field validity: every invalid value raises `SpecError`
 here. Layout-dependent fit, including overflow and minimum widths, raises
@@ -205,6 +205,23 @@ class Badge:
 
 
 @dataclass(frozen=True, slots=True)
+class Callout:
+    """Role-coloured prose that wraps: a warning or caveat with severity."""
+
+    text: str
+    role: Role = "neutral"
+    max_lines: int = 3
+
+    def __post_init__(self) -> None:
+        """Validate fields."""
+        _require_str(self.text, name="Callout.text")
+        _require_member(self.role, _ROLES, name="Callout.role")
+        _require_int(self.max_lines, name="Callout.max_lines")
+        if self.max_lines < 1:
+            raise SpecError("Callout.max_lines must be >= 1")
+
+
+@dataclass(frozen=True, slots=True)
 class CaptionRow:
     """A caption line with an optional colour-matched line marker."""
 
@@ -248,6 +265,7 @@ type Adornment = (
     | KeyValuePopover
     | SelectControl
     | Badge
+    | Callout
     | CaptionRow
     | Legend
     | RuleStrip

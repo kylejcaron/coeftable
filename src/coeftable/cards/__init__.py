@@ -7,6 +7,7 @@ resolve into; `render_adornment` is its only serializer.
 from coeftable.cards.adornments import (
     Adornment,
     Badge,
+    Callout,
     CaptionRow,
     InlineSvg,
     KeyValuePopover,
@@ -38,6 +39,7 @@ __all__ = [
     "Adornment",
     "Anchor",
     "Badge",
+    "Callout",
     "CaptionRow",
     "Card",
     "CardChrome",
