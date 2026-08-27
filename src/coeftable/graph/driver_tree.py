@@ -59,6 +59,7 @@ from coeftable.graph.metric_tree import _label, _layers, _slots
 from coeftable.graph.model import Atom, ControlRef, Graph, Slot, Slotted, StateRule, Wire
 from coeftable.graph.report import GraphReport
 from coeftable.graph.timeline import TimelineEvent, events_for, timeline_strip
+from coeftable.graph.topology import check_acyclic
 from coeftable.theme import DEFAULT, Direction, Role, Theme, role_for
 
 _DIRECTIONS: tuple[Direction, ...] = ("higher_is_better", "lower_is_better", "neutral")
@@ -295,6 +296,31 @@ def _compute_node_roles(
     return node_role
 
 
+def _reserve_residual_id(
+    resid_id: str,
+    pair: tuple[str, str],
+    seen_nodes: set[str],
+    resid_ids: dict[str, tuple[str, str]],
+) -> None:
+    """Claim `resid_id` for `pair`, rejecting an id collision.
+
+    Rejects collision with either a declared node or an earlier residual
+    generated from a different pair. Ids are formed by joining a parent
+    and a breakout key with `_`, so distinct pairs like `("a_b", "c")` and
+    `("a", "b_c")` can collide on the same string; silently letting the
+    second overwrite the first's card and series would be a
+    data-integrity bug, not a shrug.
+    """
+    if resid_id in seen_nodes:
+        raise SpecError(f"residual id {resid_id!r} collides with a declared node")
+    prior = resid_ids.get(resid_id)
+    if prior is not None:
+        raise SpecError(
+            f"residual id {resid_id!r} collides between breakouts {prior!r} and {pair!r}"
+        )
+    resid_ids[resid_id] = pair
+
+
 def _apply_breakout_honesty(
     parent: str,
     breakout: Breakout,
@@ -303,6 +329,7 @@ def _apply_breakout_honesty(
     titles: Mapping[str, str],
     seen_nodes: set[str],
     outcome: _HonestyOutcome,
+    resid_ids: dict[str, tuple[str, str]],
 ) -> None:
     """Check one breakout's identity gap and trade-offs (cluster A3 + A4)."""
     parent_series = node_series[parent]
@@ -318,8 +345,7 @@ def _apply_breakout_honesty(
         if breakout.op == "+":
             implied = implied_series(children_series, "+")
             resid_id = f"resid_{parent}_{breakout.key}"
-            if resid_id in seen_nodes:
-                raise SpecError(f"residual id {resid_id!r} collides with a declared node")
+            _reserve_residual_id(resid_id, (parent, breakout.key), seen_nodes, resid_ids)
             resid_values = tuple(p - i for p, i in zip(parent_series, implied, strict=True))
             subtitle = f"identity residual ({gap:.0%} of {titles[parent]})"
             outcome.residuals[(parent, breakout.key)] = _Residual(resid_id, resid_values, subtitle)
@@ -344,10 +370,11 @@ def _apply_honesty(
     titles: Mapping[str, str],
 ) -> _HonestyOutcome:
     outcome = _HonestyOutcome()
+    resid_ids: dict[str, tuple[str, str]] = {}
     for parent in topology.parents:
         for breakout in topology.breakout_map[parent]:
             _apply_breakout_honesty(
-                parent, breakout, node_series, node_role, titles, topology.seen, outcome
+                parent, breakout, node_series, node_role, titles, topology.seen, outcome, resid_ids
             )
     return outcome
 
@@ -639,6 +666,11 @@ def DriverTree(
     topology = _build_topology(breakout_map)
     node_series = _collect_node_series(topology, series, titles, x_values)
     edges = _raw_edges(topology)
+
+    # Cheapest possible failure first: the layered-barycenter layout below
+    # walks parent chains recursively and never terminates on a cycle, so
+    # this must run before any statistics or layout work touches `edges`.
+    check_acyclic(topology.node_order, edges)
 
     # `reject_nested_switchers` runs before any honesty arithmetic, so the
     # clearest error (naming the two nested switcher parents) surfaces first.

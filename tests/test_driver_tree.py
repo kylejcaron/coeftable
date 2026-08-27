@@ -489,3 +489,52 @@ def test_a_normal_positive_node_series_still_gets_its_ribbon():
     assert trend.lower is not None
     assert trend.upper is not None
     assert trend.domain[0] < trend.domain[1]
+
+
+def _colliding_residual_ids_fixture() -> GraphReport:
+    """Two distinct (parent, breakout-key) pairs collide on the same id:
+    `("a_b", "c")` and `("a", "b_c")` both join to `resid_a_b_c`."""
+    x = (0.0, 1.0, 2.0)
+    titles = {"a_b": "AB", "c1": "C1", "c2": "C2", "a": "A", "d1": "D1", "d2": "D2"}
+    series = {
+        "a_b": (1000.0, 1040.0, 1081.0),
+        "c1": (600.0, 620.0, 645.0),
+        "c2": (320.0, 335.0, 345.0),
+        "a": (1000.0, 1040.0, 1081.0),
+        "d1": (600.0, 620.0, 645.0),
+        "d2": (320.0, 335.0, 345.0),
+    }
+    breakouts = {
+        "a_b": (Breakout(key="c", label="c", op="+", children=("c1", "c2")),),
+        "a": (Breakout(key="b_c", label="b_c", op="+", children=("d1", "d2")),),
+    }
+    return DriverTree(series, titles, breakouts, _FMT, x)
+
+
+def test_colliding_residual_ids_are_rejected_naming_both_pairs():
+    with pytest.raises(SpecError, match="resid_a_b_c") as excinfo:
+        _colliding_residual_ids_fixture()
+    message = str(excinfo.value)
+    assert "('a_b', 'c')" in message
+    assert "('a', 'b_c')" in message
+
+
+def _cyclic_breakout_fixture() -> GraphReport:
+    """`root` is fine, but `a` and `b` decompose into each other: a cycle
+    downstream of a legitimate root."""
+    x = (0.0, 1.0, 2.0)
+    titles = {"root": "Root", "a": "A", "b": "B"}
+    series = {"root": (1.0, 2.0, 3.0), "a": (1.0, 2.0, 3.0), "b": (1.0, 2.0, 3.0)}
+    breakouts = {
+        "root": (Breakout(key="k1", label="k1", op="+", children=("a",)),),
+        "a": (Breakout(key="k2", label="k2", op="+", children=("b",)),),
+        "b": (Breakout(key="k3", label="k3", op="+", children=("a",)),),
+    }
+    return DriverTree(series, titles, breakouts, _FMT, x)
+
+
+def test_a_cyclic_breakout_topology_is_refused_before_layout():
+    """Regression: this used to overflow the recursion stack instead of
+    raising a clean `SpecError`."""
+    with pytest.raises(SpecError, match="acyclic"):
+        _cyclic_breakout_fixture()
