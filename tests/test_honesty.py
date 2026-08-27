@@ -188,3 +188,45 @@ def test_nonpositive_levels_are_rejected():
     # Log ratios are undefined at or below zero; refuse rather than emit nan.
     with pytest.raises(SpecError, match="positive"):
         weekly_log_changes((100.0, 0.0, 50.0))
+
+
+def test_endpoint_interval_refuses_a_percentage_that_only_overflows_on_scaling():
+    # exp(707) ~= 1.11e307 is finite - the exponential guard alone would let
+    # it through - but multiplying by 100 to form a percentage pushes past
+    # float range. Two equal weekly changes give a zero band so all three
+    # returned percentages hit this scaling-only overflow.
+    v2 = math.exp(353.5)
+    v3 = math.exp(707.0)
+    assert math.isfinite(v3)
+    with pytest.raises(SpecError, match="orders of magnitude"):
+        endpoint_interval((1.0, v2, v3))
+
+
+def test_tradeoff_pairs_treats_near_one_geometric_siblings_as_steady():
+    # With log changes around 1e-12, a purely relative tolerance
+    # (1e-9 * 1e-12 = 1e-21) is far below the ~1e-16 noise that independent
+    # divisions and logs actually introduce, so a genuinely steady pair can
+    # look like it has real variance and correlate into a spurious
+    # trade-off. These ratios reproduce that spurious -1.0 correlation
+    # without the combined absolute+relative tolerance.
+    first = tuple(100.0 * (1.0000000000003**index) for index in range(12))
+    second = tuple(100.0 * (0.9999999999997**index) for index in range(12))
+    assert tradeoff_pairs((("first", first), ("second", second))) == ()
+
+
+def test_weekly_log_changes_uses_log_subtraction_for_a_subnormal_quotient():
+    # The smallest subnormal divided by 1.5 rounds right back to itself,
+    # silently losing log(1.5) - the direct-quotient path must be skipped
+    # for a subnormal quotient, not only a zero or infinite one.
+    smallest_subnormal = 5e-324
+    changes = weekly_log_changes((1.5, smallest_subnormal, smallest_subnormal * 2))
+    assert changes[0] == pytest.approx(math.log(smallest_subnormal) - math.log(1.5))
+
+
+def test_ribbon_bounds_refuses_a_factor_that_would_be_infinite():
+    # This series' weekly log changes swing by ~+/-1382, large enough that
+    # the ribbon's own +/-2 sigma exponential overflows even though the
+    # endpoint percentage guard is never exercised.
+    series = (1e-300, 1e300, 1e-300, 1e300)
+    with pytest.raises(SpecError, match="orders of magnitude"):
+        ribbon_bounds(series)

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import math
 import statistics
+import sys
 from collections.abc import Sequence
 
 from coeftable.errors import SpecError
@@ -16,6 +17,11 @@ from coeftable.errors import SpecError
 RESIDUAL_WARN = 0.005
 RESIDUAL_FAIL = 0.20
 TRADEOFF_R = -0.5
+
+# Below this magnitude a positive double is subnormal and has lost most of
+# its precision; a quotient landing here is not trustworthy even though it
+# is a finite, positive float (see `_log_ratio`).
+_MIN_NORMAL_RATIO = sys.float_info.min
 
 
 def _levels(series: Sequence[float], *, name: str) -> tuple[float, ...]:
@@ -36,12 +42,16 @@ def _log_ratio(numerator: float, denominator: float) -> float:
     on the order of 1e-16 even when the true ratio is exactly constant
     across a series - enough to make a perfectly steady series look like it
     has real variance. The direct quotient avoids that in the common case;
-    fall back to subtracting logs only when the quotient itself would
-    overflow to infinity or underflow to zero, which is what the extreme-
-    magnitude case (e.g. 1e-300 over 1e300) needs to stay finite.
+    fall back to subtracting logs when the quotient itself would overflow to
+    infinity, underflow to zero, or land in subnormal range. The
+    extreme-magnitude case (e.g. 1e-300 over 1e300) needs the overflow/
+    underflow fallback to stay finite; a subnormal quotient (e.g. the
+    smallest subnormal divided by 1.5, which rounds right back to itself)
+    needs the same fallback because it has too few significant bits left to
+    trust - dividing the logs instead stays accurate.
     """
     ratio = numerator / denominator
-    if ratio > 0.0 and math.isfinite(ratio):
+    if ratio >= _MIN_NORMAL_RATIO and math.isfinite(ratio):
         return math.log(ratio)
     return math.log(numerator) - math.log(denominator)
 
@@ -57,6 +67,14 @@ def level_noise(series: Sequence[float]) -> float:
     return statistics.stdev(weekly_log_changes(series)) / math.sqrt(2.0)
 
 
+def _overflow_error(magnitude: float, *, purpose: str) -> SpecError:
+    """Build the shared "too many orders of magnitude" error."""
+    return SpecError(
+        f"a log magnitude of {magnitude!r} spans too many orders of magnitude "
+        f"to express as {purpose}"
+    )
+
+
 def _guarded_exp(exponent: float, *, purpose: str) -> float:
     """exp(), refusing to silently overflow into infinity.
 
@@ -70,15 +88,22 @@ def _guarded_exp(exponent: float, *, purpose: str) -> float:
     try:
         return math.exp(exponent)
     except OverflowError as exc:
-        raise SpecError(
-            f"a log magnitude of {exponent!r} spans too many orders of magnitude "
-            f"to express as {purpose}"
-        ) from exc
+        raise _overflow_error(exponent, purpose=purpose) from exc
 
 
 def _percent(log_change: float) -> float:
-    """Convert a log change to a percentage, refusing an infinite answer."""
-    return 100.0 * (_guarded_exp(log_change, purpose="a percentage change") - 1.0)
+    """Convert a log change to a percentage, refusing an infinite answer.
+
+    `_guarded_exp` only catches the exponential itself overflowing; the
+    subsequent scale-by-100 can still push an already-huge-but-finite
+    exponential past float range (e.g. exp() near 1e307), which would
+    otherwise return infinity silently instead of raising.
+    """
+    purpose = "a percentage change"
+    percent = 100.0 * (_guarded_exp(log_change, purpose=purpose) - 1.0)
+    if not math.isfinite(percent):
+        raise _overflow_error(log_change, purpose=purpose)
+    return percent
 
 
 def endpoint_interval(series: Sequence[float]) -> tuple[float, float, float]:
@@ -156,6 +181,16 @@ def identity_gap(parent: Sequence[float], children: Sequence[Sequence[float]], o
     ) / len(values)
 
 
+# A relative-only tolerance fails for changes whose true magnitude is itself
+# tiny (e.g. a geometric ratio a hair above 1): the allowed spread shrinks
+# along with the changes, while the float noise from independently rounded
+# divisions and logarithms stays a fixed ~1e-16 regardless of scale. The
+# absolute floor catches that noise; it's far below any change size a real
+# report would ever treat as meaningful.
+_CONSTANT_CHANGE_ABS_TOL = 1e-12
+_CONSTANT_CHANGE_REL_TOL = 1e-9
+
+
 def _is_effectively_constant(values: Sequence[float]) -> bool:
     """Report whether a change series has no real variation, only rounding noise.
 
@@ -163,16 +198,16 @@ def _is_effectively_constant(values: Sequence[float]) -> bool:
     overflow-safe quotient in `_log_ratio`, floating-point division and
     logarithms are not perfectly associative, so a genuinely constant-ratio
     series can still produce a handful of changes that differ by ~1e-16.
-    Comparing the spread of the changes to their magnitude - rather than to
-    a fixed absolute epsilon - treats that float-epsilon-scale noise as "no
-    variation" regardless of whether the series' changes are large or tiny,
-    while any variation of a real size still counts.
+    Comparing the spread of the changes to a tolerance combining a relative
+    term - so noise is judged against the changes' own magnitude when that
+    magnitude is large - with an absolute floor - so noise is still caught
+    when the changes themselves are already tiny - treats float-epsilon-scale
+    noise as "no variation" at every scale, while any variation of a real
+    size still counts.
     """
     spread = max(values) - min(values)
     scale = max(abs(value) for value in values)
-    if scale == 0.0:
-        return spread == 0.0
-    return spread <= 1e-9 * scale
+    return spread <= _CONSTANT_CHANGE_ABS_TOL + _CONSTANT_CHANGE_REL_TOL * scale
 
 
 def tradeoff_pairs(
