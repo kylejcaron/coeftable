@@ -2135,13 +2135,14 @@ def test_metric_tree_driver_fixture_has_exact_layout_wires_labels_nubs_and_deter
         )
         assert match is not None
         coordinates = tuple(float(value) for value in match.groups())
-        src_left, src_top, _src_width, src_height = boxes[wire.src]
+        src_left, src_top, _src_width, _src_height = boxes[wire.src]
         dst_left, dst_top, _dst_width, _dst_height = boxes[wire.dst]
         (_, (out_x, out_y)) = anchors[wire.src]
         (in_x, in_y), _ = anchors[wire.dst]
         x0, y0 = src_left + out_x, src_top + out_y
         x1, y1 = dst_left + in_x, dst_top + in_y
-        my1 = src_top + src_height + graph.layer_gap / 2
+        src_layer = slot_by_id[wire.src].layer
+        my1 = src_top + layer_heights[src_layer] + graph.layer_gap / 2
         my2 = dst_top - graph.layer_gap / 2
         assert coordinates == pytest.approx((x0, y0, x0, my1, x1, my2, x1, y1 - 3))
     # Construction-level determinism: a FRESH fixture build yields identical HTML.

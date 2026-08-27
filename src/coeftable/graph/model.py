@@ -596,7 +596,7 @@ def _graph_measure(
     }
     wire_geometry: list[tuple[str, WireGeometry]] = []
     for wire_index, wire in enumerate(wires):
-        src_left, src_top, _src_width, src_height = boxes_by_id[wire.src]
+        src_left, src_top, _src_width, _src_height = boxes_by_id[wire.src]
         dst_left, dst_top, _dst_width, _dst_height = boxes_by_id[wire.dst]
         src_slot = slot_by_id[wire.src]
         dst_slot = slot_by_id[wire.dst]
@@ -606,7 +606,10 @@ def _graph_measure(
         y0 = src_top + out_y
         x1 = dst_left + in_x
         y1 = dst_top + in_y
-        my1 = src_top + src_height + layer_gap / 2
+        # Bend only after clearing the source LAYER's max bottom: a short
+        # card's wire must not sweep behind a taller sibling.
+        src_layer_bottom = padding + layer_offsets[src_slot.layer] + layer_heights[src_slot.layer]
+        my1 = src_layer_bottom + layer_gap / 2
         my2 = dst_top - layer_gap / 2
         if dst_slot.layer - src_slot.layer > 1:
             if src_slot.slot < len(column_widths) - 1:
