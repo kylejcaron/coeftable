@@ -153,11 +153,12 @@ def _label_anchor_and_text(x: float, label: str, width: int) -> tuple[str, str]:
     a boundary event's centred label runs straight off the canvas.
 
     When centring spills past exactly one edge, anchor away from it: at the
-    start for a left spill, at the end for a right spill. When it spills
-    past BOTH edges the label is wider than the strip, so neither side can
-    show it whole; anchor to whichever side has more room, since anchoring
-    to the cramped side would truncate to almost nothing. Truncate with an
-    ellipsis as a last resort when the chosen side still cannot fit it.
+    start for a left spill, at the end for a right spill. Spilling past BOTH
+    means neither side of `x` has room for the centred label within the
+    halo-safe text area, so no anchor can show it whole; pick the side with
+    more room, since anchoring to the cramped side would truncate to almost
+    nothing. Truncate with an ellipsis when the chosen side still cannot fit
+    it.
 
     The pin, its stem, and its dot stay on `x` regardless -- only the text
     anchor moves.
