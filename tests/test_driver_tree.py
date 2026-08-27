@@ -538,3 +538,51 @@ def test_a_cyclic_breakout_topology_is_refused_before_layout():
     raising a clean `SpecError`."""
     with pytest.raises(SpecError, match="acyclic"):
         _cyclic_breakout_fixture()
+
+
+def _switcher_with_residual_fixture() -> GraphReport:
+    """A two-way switcher whose additive alternative falls short by ~8% and
+    injects a residual: exercises the shared-slot exclusivity proof together
+    with a residual hide rule on the very same select."""
+    x = (0.0, 1.0, 2.0)
+    titles = {
+        "revenue": "Revenue",
+        "users": "Users",
+        "aov": "AOV",
+        "paid": "Paid",
+        "organic": "Organic",
+    }
+    series = {
+        "revenue": (1000.0, 1040.0, 1081.0),
+        "users": (100.0, 104.0, 108.1),  # users * aov == revenue exactly
+        "aov": (10.0, 10.0, 10.0),
+        "paid": (600.0, 620.0, 645.0),  # paid + organic falls short by ~8%
+        "organic": (320.0, 335.0, 345.0),
+    }
+    breakouts = {
+        "revenue": (
+            Breakout(key="drivers", label="by drivers", op="x", children=("users", "aov")),
+            Breakout(key="channel", label="by channel", op="+", children=("paid", "organic")),
+        )
+    }
+    return DriverTree(series, titles, breakouts, _FMT, x)
+
+
+def test_a_switcher_with_an_injected_residual_builds_and_merges_the_hide_rule():
+    """Regression: this combination used to fail at `Graph` construction
+    because the residual's visibility was a second rule on the same option."""
+    report = _switcher_with_residual_fixture()
+    html = report.as_raw_html()
+    assert "Unattributed" in html
+
+    # Exactly one rule governs "drivers" being selected, and it hides both
+    # channel's own subtree and the residual injected on channel's behalf.
+    drivers_rules = [
+        rule
+        for rule in report.graph.rules
+        if len(rule.when_all) == 1 and rule.when_all[0].option == "drivers"
+    ]
+    assert len(drivers_rules) == 1
+    hidden = drivers_rules[0].hide_cards
+    assert "paid" in hidden and "organic" in hidden
+    assert "resid_revenue_channel" in hidden

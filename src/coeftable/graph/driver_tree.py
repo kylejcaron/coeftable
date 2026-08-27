@@ -56,7 +56,7 @@ from coeftable.graph.honesty import (
     tradeoff_pairs,
 )
 from coeftable.graph.metric_tree import _label, _layers, _slots
-from coeftable.graph.model import Atom, ControlRef, Graph, Slot, Slotted, StateRule, Wire
+from coeftable.graph.model import Graph, Slot, Slotted, StateRule, Wire
 from coeftable.graph.report import GraphReport
 from coeftable.graph.timeline import TimelineEvent, events_for, timeline_strip
 from coeftable.graph.topology import check_acyclic
@@ -503,6 +503,42 @@ def _compute_layout(
     )
 
 
+def _merge_residual_hides(
+    base_rules: tuple[StateRule, ...],
+    breakout_list: tuple[Breakout, ...],
+    residuals: dict[tuple[str, str], _Residual],
+    parent: str,
+) -> tuple[StateRule, ...]:
+    """Fold each residual's hide target into its sibling options' rule.
+
+    A second rule for the same `option_checked` atom would give that
+    option two rules, and the shared-slot exclusivity proof requires
+    exactly one rule per option -- so the residual's hide target joins
+    the governing rule `partition_rules` already built for that option
+    instead.
+    """
+    extra_hides: dict[int, list[str]] = {}
+    for index, breakout in enumerate(breakout_list):
+        resid = residuals.get((parent, breakout.key))
+        if resid is None:
+            continue
+        for other_index in range(len(breakout_list)):
+            if other_index != index:
+                extra_hides.setdefault(other_index, []).append(resid.id)
+    if not extra_hides:
+        return base_rules
+    return tuple(
+        rule
+        if index not in extra_hides
+        else StateRule(
+            rule.when_all,
+            hide_cards=(*rule.hide_cards, *extra_hides[index]),
+            hide_wires=rule.hide_wires,
+        )
+        for index, rule in enumerate(base_rules)
+    )
+
+
 def _build_switcher_state(
     topology: _Topology,
     residuals: dict[tuple[str, str], _Residual],
@@ -514,20 +550,8 @@ def _build_switcher_state(
         key = f"{parent}_breakout"
         breakout_list = topology.breakout_map[parent]
         select_controls[parent] = breakout_control(breakout_list, key=key)
-        rules.extend(partition_rules(parent, key, breakout_list, edges))
-        for index, breakout in enumerate(breakout_list):
-            resid = residuals.get((parent, breakout.key))
-            if resid is None:
-                continue
-            for other_index, other in enumerate(breakout_list):
-                if other_index == index:
-                    continue
-                rules.append(
-                    StateRule(
-                        (Atom(ControlRef(parent, key), "option_checked", other.key),),
-                        hide_cards=(resid.id,),
-                    )
-                )
+        base_rules = partition_rules(parent, key, breakout_list, edges)
+        rules.extend(_merge_residual_hides(base_rules, breakout_list, residuals, parent))
     return rules, select_controls
 
 
