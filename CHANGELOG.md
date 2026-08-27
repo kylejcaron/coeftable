@@ -1,3 +1,23 @@
+<a id="v0.7.0"></a>
+# [v0.7.0](https://github.com/kylejcaron/coeftable/releases/tag/v0.7.0) - 2026-08-27
+
+<!-- Release notes generated using configuration in .github/release.yml at v0.7.0 -->
+
+## What's Changed
+### New Features
+* Generalize the shared-position proof for nested breakout switchers by [@kylejcaron](https://github.com/kylejcaron) in [#43](https://github.com/kylejcaron/coeftable/pull/43)
+* Add DriverTree, a decomposition report with nested breakout switching by [@kylejcaron](https://github.com/kylejcaron) in [#44](https://github.com/kylejcaron/coeftable/pull/44)
+### Maintenance
+* Update changelog for v0.6.0 by [@github-actions](https://github.com/github-actions)[bot] in [#42](https://github.com/kylejcaron/coeftable/pull/42)
+* Run CI on pull requests to any base branch by [@kylejcaron](https://github.com/kylejcaron) in [#46](https://github.com/kylejcaron/coeftable/pull/46)
+* Judge additive decompositions at their endpoints too by [@kylejcaron](https://github.com/kylejcaron) in [#47](https://github.com/kylejcaron/coeftable/pull/47)
+
+
+**Full Changelog**: https://github.com/kylejcaron/coeftable/compare/v0.6.0...v0.7.0
+
+[Changes][v0.7.0]
+
+
 <a id="v0.6.0"></a>
 # [v0.6.0](https://github.com/kylejcaron/coeftable/releases/tag/v0.6.0) - 2026-08-27
 
@@ -147,6 +167,7 @@
 [Changes][v0.1.0]
 
 
+[v0.7.0]: https://github.com/kylejcaron/coeftable/compare/v0.6.0...v0.7.0
 [v0.6.0]: https://github.com/kylejcaron/coeftable/compare/v0.5.0...v0.6.0
 [v0.5.0]: https://github.com/kylejcaron/coeftable/compare/v0.4.0...v0.5.0
 [v0.4.0]: https://github.com/kylejcaron/coeftable/compare/v0.3.1...v0.4.0
