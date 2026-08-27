@@ -12,7 +12,8 @@ same layered barycenter helpers ``MetricTree`` uses (giving every breakout
 alternative's children the *same* (layer, slot) coordinates so the kernel's
 shared-position proof accepts them), wires up ``breakout_control`` /
 ``partition_rules`` per switcher, and finally wraps the ``Graph`` in a
-``GraphReport`` whose header is a timeline strip sized to the canvas.
+``GraphReport`` whose header is a timeline strip sized to the canvas when
+there is something to put in it.
 """
 
 from __future__ import annotations

@@ -663,10 +663,11 @@ claims, that wording is yours to choose — for example
 change, not causal impact."` `events` fan out to every card named in their
 `affects` tuple, both as sparkline markers and as captions, and the
 report's header is a timeline strip indexing them across the whole canvas.
-That strip appears only when there is something to index: with no events it
-is omitted rather than drawing a bare axis, and it carries no heading of its
-own — pass `strip_title=` if you want one, since only you know whether your
-events are deploys, holidays, or experiments.
+That strip carries no heading of its own — pass `strip_title=` if you want
+one, since only you know whether your events are deploys, holidays, or
+experiments. With neither events nor a `strip_title` there is nothing to
+index and no heading to show, so the strip is omitted rather than reserving
+space for a bare axis; supplying either one brings it back.
 
 **Switchers can nest.** Every level of the tree may carry its own switcher at
 the same time — revenue by drivers or region, and within drivers, active users
@@ -699,8 +700,9 @@ each switcher's rules are emitted independently, no single one can see that. Suc
 a tree is rejected at construction with a `SpecError` naming the card and every
 switcher implicated in it.
 
-`DriverTree` returns a `GraphReport`: the underlying `Graph` plus a
-measured, exact-width timeline strip stacked above it. `report.measure()`,
+`DriverTree` returns a `GraphReport`: the underlying `Graph`, and above it a
+measured, exact-width timeline strip whenever events or a `strip_title` call
+for one. `report.measure()`,
 `report.as_raw_html()`, and its `_repr_html_` notebook display all work the
 same way they do for a plain `Graph`.
 

@@ -12,7 +12,7 @@ from dataclasses import replace
 
 import pytest
 
-from coeftable.cards.adornments import Callout, TextBlock
+from coeftable.cards.adornments import Callout, InlineSvg, TextBlock
 from coeftable.cards.chrome import DEFAULT_CHROME, CardChrome, line_height
 from coeftable.cards.measure import _budget, text_line_plan
 from coeftable.cards.regions import Metric, Trend
@@ -1526,13 +1526,17 @@ def test_a_report_with_no_events_has_no_strip():
 def test_the_strip_carries_no_wording_of_its_own():
     # The strip's contents are the caller's events -- deploys, holidays,
     # experiments -- so this module ships no heading that could misdescribe
-    # them. Guard the shape of the claim, not one retired sentence: no prose
-    # appears above the spine unless a caller asked for it.
-    html = _fixture().as_raw_html()
-    assert "Timeline" not in html
-    assert "releases" not in html
-    assert "campaigns" not in html
-    assert "incidents" not in html
+    # them. A blocklist of retired words would let the next hardcoded
+    # heading through, so assert structurally instead: every text element
+    # the strip paints must be a week tick or one of the caller's own event
+    # labels, leaving nowhere for library prose to hide.
+    event = TimelineEvent(at=1.0, label="Rollout", color="#4C72B0", affects=("revenue",))
+    strip = _fixture(events=(event,)).header[0]
+    assert isinstance(strip, InlineSvg)  # the strip is measured SVG, not a text adornment
+    painted = re.findall(r"<text\b[^>]*>(.*?)</text>", strip.svg)
+    assert painted, "the strip should paint its week ticks"
+    for text in painted:
+        assert re.fullmatch(r"W\d+", text) or event.label in text, text
 
 
 def test_a_supplied_strip_title_renders_verbatim():

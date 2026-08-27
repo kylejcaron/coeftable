@@ -446,3 +446,23 @@ def test_strip_sizes_tick_spacing_from_the_widest_endpoint_label():
         span = len(label) * _TICK_FONT_SIZE * _CHAR_WIDTH_RATIO
         right = {"start": x1 + span, "end": x1, "middle": x1 + span / 2}[anchor]
         assert right <= x2 + 0.5
+
+
+def test_a_strip_paints_no_caption_when_no_title_is_given():
+    # `title` defaults to None so the module ships no wording of its own. A
+    # substring check cannot prove that -- assert structurally that the only
+    # text painted is the axis's own week ticks, so any future built-in
+    # heading fails here rather than riding along unnoticed.
+    strip = timeline_strip((), x_domain=(0.0, 11.0), width=_MIN_WIDTH + 200, theme=DEFAULT)
+    painted = re.findall(r"<text\b[^>]*>(.*?)</text>", strip.svg)
+    assert painted, "the strip should still paint its week ticks"
+    assert all(re.fullmatch(r"W\d+", text) for text in painted), painted
+
+
+def test_a_supplied_title_is_the_only_non_tick_text():
+    strip = timeline_strip(
+        (), x_domain=(0.0, 11.0), width=_MIN_WIDTH + 200, theme=DEFAULT, title="Release windows"
+    )
+    painted = re.findall(r"<text\b[^>]*>(.*?)</text>", strip.svg)
+    non_ticks = [text for text in painted if not re.fullmatch(r"W\d+", text)]
+    assert non_ticks == ["Release windows"]
