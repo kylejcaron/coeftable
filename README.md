@@ -586,6 +586,74 @@ CSS and no JavaScript.
 A `MetricTree` left as the last notebook expression renders itself via
 `_repr_html_`; `with_theme()` follows the same conventions as cards.
 
+## Driver-tree reports (experimental)
+
+`coeftable.graph.DriverTree` is the composition root over the metric-tree
+layer: give it level series and a decomposition per parent, and it builds the
+cards, wires, and layout itself, plus three opt-in honesty checks a hand-built
+`MetricTree` graph would otherwise have to redo per node. The API is
+experimental and may change; it is deliberately not exported from the
+top-level `coeftable` namespace yet.
+
+```python
+import coeftable as ct
+from coeftable.graph import DriverTree
+from coeftable.graph.breakout import Breakout
+from coeftable.graph.timeline import TimelineEvent
+
+x = (0.0, 1.0, 2.0, 3.0)
+series = {
+    "revenue": (1000.0, 1071.0, 1144.0, 1219.0),
+    "users": (100.0, 105.0, 110.0, 115.0),
+    "aov": (10.0, 10.2, 10.4, 10.6),
+    "us": (600.0, 640.0, 680.0, 720.0),
+    "eu": (400.0, 431.0, 464.0, 499.0),
+}
+titles = {"revenue": "Revenue", "users": "Users", "aov": "AOV", "us": "US", "eu": "EU"}
+breakouts = {
+    "revenue": (
+        Breakout(key="drivers", label="by drivers", op="x", children=("users", "aov")),
+        Breakout(key="region", label="by region", op="+", children=("us", "eu")),
+    )
+}
+events = (TimelineEvent(at=1.0, label="Launch", color="#4C72B0", affects=("revenue", "users")),)
+
+report = DriverTree(series, titles, breakouts, ct.Percent(decimals=1), x, events=events)
+html = report.as_raw_html()
+```
+
+Every node id in `series` and `titles` is derived from `breakouts`: each key
+is a parent, and each `Breakout` names one decomposition of it (an `op="x"`
+product or an `op="+"` sum) plus the child node ids it contributes. A parent
+with two or more breakouts (like `revenue` above) renders a native
+`<select>` that swaps its children's whole subtree in place — no JavaScript,
+because the alternatives share one slotted position and pure CSS shows
+exactly one of them at a time.
+
+Each decomposition is checked against its own arithmetic: a parent that
+should equal the sum or product of its children but falls short gets an
+injected `"Unattributed"` residual card (additive shortfalls) or a reported
+gap badge (multiplicative shortfalls, which have no subtraction fix), and a
+decomposition explaining under 80% of its parent refuses to build rather than
+render a misleading tree. Every wire's label role comes from its own child's
+noise-aware confidence interval, so a wobbly delta renders muted with a
+`· ns` marker instead of a confident color. Anti-correlated siblings (movers
+that trade off against each other week to week) surface a callout on their
+parent card, and the root card carries a fixed disclaimer that edge labels
+are accounting, not causal claims. `events` fan out to every card named in
+their `affects` tuple, both as sparkline markers and as captions, and the
+report's header is a timeline strip indexing them across the whole canvas.
+
+**Current limitation:** at most one breakout switcher may appear on any
+root-to-leaf path. A switcher nested inside another switcher's alternative
+subtree is rejected at construction with a `SpecError` naming both parents;
+switchers in disjoint branches of the same tree are unaffected.
+
+`DriverTree` returns a `GraphReport`: the underlying `Graph` plus a
+measured, exact-width timeline strip stacked above it. `report.measure()`,
+`report.as_raw_html()`, and its `_repr_html_` notebook display all work the
+same way they do for a plain `Graph`.
+
 ## Plot annotations
 
 `ct.Rule` draws a line and `ct.Band` shades an interval in a forest plot or
