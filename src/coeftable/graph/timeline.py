@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import html
 import math
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import cast
 
@@ -62,6 +62,11 @@ _MIN_WIDTH = 4 * _INSET
 # event's stem begins -- with enough headroom left over to also fit the
 # tick labels rendered `_TICK_LABEL_OFFSET` below the spine.
 _MIN_HEIGHT = int(_LABEL_ROWS[-1]) + 4 + int(_SPINE_MARGIN) + int(_TICK_LABEL_OFFSET)
+
+
+def default_period_label(index: float) -> str:
+    """Label a zero-based period index; the shipped default reads W1, W2, ..."""
+    return f"W{int(index) + 1}"
 
 
 def _non_empty_str(value: object, *, name: str) -> None:
@@ -201,15 +206,18 @@ def _label_anchor_and_text(x: float, label: str, width: int) -> tuple[str, str]:
     return anchor, _clip_label(label, max(budget, 0.0), _LABEL_FONT_SIZE)
 
 
-def _min_tick_gap(low: float, high: float, width: int) -> float:
+def _min_tick_gap(
+    low: float, high: float, width: int, period_label: Callable[[float], str]
+) -> float:
     """Minimum domain-unit spacing between adjacent ticks that keeps their labels apart.
 
     Derived from the pixel width of the widest label the domain will render,
     converted to domain units via the strip's pixels-per-unit. Both integer
-    endpoints are measured rather than assuming the high end is widest: a
-    negative domain renders labels like `W-19999` at the LOW end while the
-    high end is just `W1`, so sizing from the high end alone would overlap
-    badly.
+    endpoints are measured rather than assuming the high end is widest: with
+    the default formatter, a negative domain renders labels like `W-19999`
+    at the LOW end while the high end is just `W1`, so sizing from the high
+    end alone would overlap badly -- a caller-supplied `period_label` can
+    just as easily be lopsided the other way.
 
     The budget is 1.5x the label width rather than 1x: the first and last
     ticks anchor inward (`text-anchor="start"`/`"end"`) instead of
@@ -221,7 +229,7 @@ def _min_tick_gap(low: float, high: float, width: int) -> float:
     if span <= 0:
         return 0.0
     plot_width = max(width - 2 * _INSET, 1.0)
-    endpoint_labels = (f"W{math.ceil(low) + 1}", f"W{math.floor(high) + 1}")
+    endpoint_labels = (period_label(float(math.ceil(low))), period_label(float(math.floor(high))))
     label_width = max(
         len(label) * _TICK_FONT_SIZE * _CHAR_WIDTH_RATIO for label in endpoint_labels
     )
@@ -229,8 +237,8 @@ def _min_tick_gap(low: float, high: float, width: int) -> float:
     return min_gap_px * span / plot_width
 
 
-def _tick_stride(low: float, high: float, width: int) -> int:
-    """Choose an integer week stride so tick labels neither overlap nor exceed the hard cap.
+def _tick_stride(low: float, high: float, width: int, period_label: Callable[[float], str]) -> int:
+    """Choose an integer period stride so tick labels neither overlap nor exceed the hard cap.
 
     Rounds `_min_tick_gap` up to a human-readable step (1, 2, 5, 10, 20,
     50, ...) -- the same "1-2-5" ladder `coeftable.svg.nice_ticks` uses for
@@ -242,7 +250,9 @@ def _tick_stride(low: float, high: float, width: int) -> int:
     span = high - low
     if span <= 0:
         return 1
-    min_stride = max(_min_tick_gap(low, high, width), span / (_TICK_MAX_COUNT - 1), 1e-9)
+    min_stride = max(
+        _min_tick_gap(low, high, width, period_label), span / (_TICK_MAX_COUNT - 1), 1e-9
+    )
     magnitude = 10.0 ** math.floor(math.log10(min_stride))
     stride = next(
         (step * magnitude for step in _TICK_STRIDE_STEPS if min_stride <= step * magnitude),
@@ -251,7 +261,9 @@ def _tick_stride(low: float, high: float, width: int) -> int:
     return max(math.ceil(stride), 1)
 
 
-def _tick_positions(low: float, high: float, width: int) -> list[int]:
+def _tick_positions(
+    low: float, high: float, width: int, period_label: Callable[[float], str]
+) -> list[int]:
     """Integer tick positions across `[low, high]`, strided to avoid overlap and unbounded output.
 
     Always keeps the first and last integer in range so boundary ticks stay
@@ -267,11 +279,11 @@ def _tick_positions(low: float, high: float, width: int) -> list[int]:
     start, end = math.ceil(low), math.floor(high)
     if end < start:
         return []
-    stride = _tick_stride(low, high, width)
+    stride = _tick_stride(low, high, width, period_label)
     ticks = list(range(start, end, stride))
     if not ticks:
         return [end]
-    if len(ticks) > 1 and end - ticks[-1] < _min_tick_gap(low, high, width):
+    if len(ticks) > 1 and end - ticks[-1] < _min_tick_gap(low, high, width, period_label):
         ticks[-1] = end
     elif ticks[-1] != end:
         ticks.append(end)
@@ -286,6 +298,7 @@ def timeline_strip(
     theme: Theme,
     height: int = 96,
     title: str | None = None,
+    period_label: Callable[[float], str] = default_period_label,
 ) -> InlineSvg:
     """Render a full-width strip indexing every event over `x_domain`.
 
@@ -300,6 +313,13 @@ def timeline_strip(
     renders no caption at all. The strip carries whatever the caller's events
     happen to be -- deploys, holidays, experiments -- so any wording this
     module chose would misdescribe someone's data.
+
+    `period_label` maps a zero-based period index to its tick and event-pin
+    text, and defaults to `default_period_label` (`W1`, `W2`, ...). It also
+    sizes tick spacing (`_min_tick_gap`), so a wider custom label spreads
+    ticks further apart to keep them from overlapping. Rendered labels are
+    still clipped to the strip's declared width regardless of what the
+    formatter returns.
 
     Projects `at` to pixels with `coeftable.svg`'s own inset convention, so a
     marker on a card sparkline and a pin here agree. Raises `SpecError`
@@ -328,13 +348,13 @@ def timeline_strip(
         f'y2="{spine_y:.2f}" stroke="{_esc(theme.axis)}" stroke-width="1"/>'
     )
 
-    for tick in _tick_positions(low, high, width):
+    for tick in _tick_positions(low, high, width, period_label):
         x = project(float(tick))
         parts.append(
             f'<line x1="{x:.2f}" y1="{spine_y:.2f}" x2="{x:.2f}" '
             f'y2="{spine_y + _TICK_LEN:.2f}" stroke="{_esc(theme.axis)}" stroke-width="0.75"/>'
         )
-        tick_text = f"W{tick + 1}"
+        tick_text = period_label(float(tick))
         # Multi-digit boundary labels centred on the first or last tick paint
         # past the declared width, so anchor them inward the way event labels
         # already are. Interior ticks stay centred on their own coordinate.
@@ -367,7 +387,7 @@ def timeline_strip(
             f'<circle cx="{x:.2f}" cy="{spine_y:.2f}" r="{_CIRCLE_R:.1f}" '
             f'fill="{_esc(event.color)}"/>'
         )
-        label = f"{event.label} \u00b7 W{int(event.at) + 1}"
+        label = f"{event.label} \u00b7 {period_label(event.at)}"
         anchor, label = _label_anchor_and_text(x, label, width)
         parts.append(
             f'<text x="{x:.2f}" y="{label_y:.2f}" fill="{_esc(event.color)}" '

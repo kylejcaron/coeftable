@@ -19,7 +19,7 @@ there is something to put in it.
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import cast
 
@@ -68,7 +68,12 @@ from coeftable.graph.honesty import (
 from coeftable.graph.metric_tree import _label, _layers, _slots
 from coeftable.graph.model import Graph, Slot, Slotted, StateRule, Wire
 from coeftable.graph.report import GraphReport
-from coeftable.graph.timeline import TimelineEvent, events_for, timeline_strip
+from coeftable.graph.timeline import (
+    TimelineEvent,
+    default_period_label,
+    events_for,
+    timeline_strip,
+)
 from coeftable.graph.topology import check_acyclic, is_acyclic
 from coeftable.theme import DEFAULT, Direction, Role, Theme, role_for
 
@@ -95,8 +100,8 @@ _CARD_WIDTH = 300
 _ROOT_CARD_WIDTH = 560
 
 
-def _render_caption(text: str, *, weeks: str) -> str:
-    """Substitute a literal ``{weeks}`` placeholder into `text`.
+def _render_caption(text: str, *, periods: str) -> str:
+    """Substitute a literal ``{periods}`` placeholder into `text`.
 
     A caller-supplied caption is arbitrary text, not a template this
     module controls, so it must never be run through `str.format`: any
@@ -106,7 +111,7 @@ def _render_caption(text: str, *, weeks: str) -> str:
     placeholder this module knows about and leaves everything else --
     including unrelated braces -- untouched.
     """
-    return text.replace("{weeks}", weeks)
+    return text.replace("{periods}", periods)
 
 
 def _non_empty_str(value: object, *, name: str) -> None:
@@ -183,6 +188,7 @@ def _validate_scalars(
     chrome: object,
     caption: object,
     strip_title: object,
+    period_label: object,
 ) -> None:
     if not isinstance(series, Mapping):
         raise SpecError("DriverTree.series must be a mapping")
@@ -202,10 +208,12 @@ def _validate_scalars(
         raise SpecError("DriverTree.caption must be a str or None")
     if strip_title is not None and not isinstance(strip_title, str):
         raise SpecError("DriverTree.strip_title must be a str or None")
+    if not callable(period_label):
+        raise SpecError("DriverTree.period_label must be callable")
 
 
 def _format_period_count(span: float) -> str:
-    """Render a period span for a caption's `{weeks}` placeholder: whole numbers stay bare."""
+    """Render a period span for a caption's `{periods}` placeholder: whole numbers stay bare."""
     if span == int(span):
         return str(int(span))
     return f"{span:g}"
@@ -241,7 +249,7 @@ def _prepare_x(x: Sequence[float]) -> tuple[tuple[float, ...], tuple[float, floa
     whereas `math.ulp` tracks only the cancellation error actually
     incurred by the subtraction. A gap that differs by more than that
     combined tolerance is real irregularity, not rounding. A caption's
-    `{weeks}` placeholder, if used, substitutes the coordinates' own span
+    `{periods}` placeholder, if used, substitutes the coordinates' own span
     (`x[-1] - x[0]`), measured directly from the endpoints rather than
     recomputed as `(len(x) - 1)` times the shared gap -- the two are only
     approximately equal once the tolerated per-gap rounding is accounted
@@ -900,7 +908,8 @@ def _build_card(
     direction: Direction,
     fmt: Format,
     level_fmt: Format,
-    weeks: float,
+    period_label: Callable[[float], str],
+    periods: float,
     caption: str | None,
     select_controls: dict[str, SelectControl],
     outcome: _HonestyOutcome,
@@ -929,6 +938,7 @@ def _build_card(
         lower=lower_ribbon,
         upper=upper_ribbon,
         fmt=level_fmt,
+        axis_fmt=period_label,
         direction=direction,
         role=role,
         annotations=annotations,
@@ -947,7 +957,7 @@ def _build_card(
         content.append(Callout(callout_text, role="unfavorable"))
     has_caption = node_id in topology.roots and caption is not None
     if has_caption:
-        caption_text = _render_caption(caption, weeks=_format_period_count(weeks))
+        caption_text = _render_caption(caption, periods=_format_period_count(periods))
         # `TextBlock.max_lines` is where `text_line_plan` starts cramming the
         # unrendered remainder onto the last line instead of giving it its own
         # row. There is no fixed line cap to pick here -- sizing it to however
@@ -1005,6 +1015,7 @@ def DriverTree(
     level_fmt: Format = _LEVEL_FORMAT,
     caption: str | None = None,
     strip_title: str | None = None,
+    period_label: Callable[[float], str] = default_period_label,
 ) -> GraphReport:
     """Build a complete driver-tree report from level series and breakouts.
 
@@ -1025,8 +1036,8 @@ def DriverTree(
 
     ``x`` must be strictly increasing and evenly spaced (no duplicate,
     descending, or irregular coordinates): a caller-supplied caption's
-    ``{weeks}`` placeholder, if used, describes the realized change over
-    ``x[-1] - x[0]`` "weeks", and every credibility statistic downstream
+    ``{periods}`` placeholder, if used, describes the realized change over
+    ``x[-1] - x[0]`` periods, and every credibility statistic downstream
     treats each adjacent pair as one equal noise-model period, so unevenly
     spaced ``x`` would silently mis-scale those statistics rather than
     generalizing them, and is rejected instead.
@@ -1037,10 +1048,19 @@ def DriverTree(
     wrapped to fit the card using an estimated character width: runs of
     whitespace collapse to a single space, line breaks are not preserved,
     and unusually wide text can still be clipped on a line, since the wrap
-    is an estimate rather than a font measurement. A ``{weeks}`` placeholder
+    is an estimate rather than a font measurement. A ``{periods}`` placeholder
     in it is substituted with the observed period count (by plain substring
     replacement, never `str.format`, so any other brace in the string is
     left untouched rather than risking a format error).
+
+    ``period_label`` maps a zero-based period index to display text, and
+    defaults to :func:`coeftable.graph.timeline.default_period_label`
+    (``W1``, ``W2``, ...). It is forwarded to the shared event strip, where
+    it labels tick marks and each event pin, and is also passed as every
+    card's own sparkline ``axis_fmt``, so the strip and every card's x axis
+    always agree. This is the one parameter that makes the report
+    period-neutral: supply a callable such as ``lambda i: f"M{int(i) + 1}"``
+    to relabel monthly, daily, or quarterly data instead of weeks.
 
     ``strip_title`` is optional text placed above the shared event strip, and
     likewise defaults to ``None`` -- the strip carries whatever events the
@@ -1060,9 +1080,18 @@ def DriverTree(
     data still renders muted with a ``" · ns"`` marker.
     """
     _validate_scalars(
-        series, titles, breakouts, fmt, level_fmt, direction, chrome, caption, strip_title
+        series,
+        titles,
+        breakouts,
+        fmt,
+        level_fmt,
+        direction,
+        chrome,
+        caption,
+        strip_title,
+        period_label,
     )
-    x_values, x_domain, weeks = _prepare_x(x)
+    x_values, x_domain, periods = _prepare_x(x)
 
     breakout_map = _build_breakout_map(breakouts)
     topology = _build_topology(breakout_map)
@@ -1121,7 +1150,8 @@ def DriverTree(
             direction=direction,
             fmt=fmt,
             level_fmt=level_fmt,
-            weeks=weeks,
+            period_label=period_label,
+            periods=periods,
             caption=caption,
             select_controls=select_controls,
             outcome=outcome,
@@ -1157,5 +1187,6 @@ def DriverTree(
         width=graph.measure().width,
         theme=theme,
         title=strip_title,
+        period_label=period_label,
     )
     return GraphReport(graph, header=(strip,))
