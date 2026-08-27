@@ -102,7 +102,8 @@ def _broken_fixture() -> GraphReport:
 
 
 def _mult_gap_fixture() -> GraphReport:
-    """A multiplicative split short by ~8.9%: gap is reported, never patched."""
+    """A multiplicative split short by ~8.9% on average, ~10% at the start
+    endpoint: gap is reported (the larger of the two), never patched."""
     x = (0.0, 1.0, 2.0)
     titles = {"rev2": "Rev2", "childA": "ChildA", "childB": "ChildB"}
     series = {
@@ -110,8 +111,11 @@ def _mult_gap_fixture() -> GraphReport:
         "childA": (10.0, 11.0, 12.0),
         "childB": (9.0, 10.0, 11.0),
     }
-    # product = (90, 110, 132); gap = mean(|rev2-product|/rev2)
+    # product = (90, 110, 132); mean gap = mean(|rev2-product|/rev2)
     #   = (10/100 + 10/120 + 12/144) / 3 ≈ 0.0889 (8.9%, between 0.5% and 20%)
+    # endpoint gap = max(|100-90|/100, |144-132|/144) = max(0.10, 0.0833) = 0.10
+    # combined gap = max(mean, endpoint) = 0.10 (10%): the badge shows the
+    # larger, worse-case discrepancy, not the averaged-away smaller one.
     breakouts = {
         "rev2": (
             Breakout(key="factors", label="by factors", op="x", children=("childA", "childB")),
@@ -248,8 +252,8 @@ def test_a_switcher_parent_has_no_operator_badge_but_its_options_do():
     html = _fixture().as_raw_html()
     assert re.search(r">\u00d7 decomposition</span>", html) is None
     assert re.search(r">\+ slice</span>", html) is None
-    assert "by drivers (\u00d7 decomposition)" in html
-    assert "by region (+ slice)" in html
+    assert "by drivers \u00d7" in html
+    assert "by region +" in html
 
 
 def test_a_single_alternative_parent_still_shows_its_operator_badge():
@@ -284,7 +288,7 @@ def test_a_decomposition_explaining_under_eighty_percent_states_exact_coverage()
 def test_a_multiplicative_gap_is_reported_not_patched():
     html = _mult_gap_fixture().as_raw_html()
     assert "Unattributed" not in html
-    assert "gap 9%" in html
+    assert "gap 10%" in html
 
 
 def test_anticorrelated_siblings_raise_a_trade_off_callout():
@@ -597,6 +601,25 @@ def test_small_magnitude_unequal_spacing_is_still_refused():
         DriverTree(series, titles, breakouts, _FMT, x)
 
 
+def test_uniform_spacing_shifted_to_a_large_origin_is_still_accepted():
+    """Translation invariance: `(0.1, 0.2, 0.3)` shifted to a large origin
+    (e.g. `(1_000_000.0, 1_000_000.1, 1_000_000.2, 1_000_000.3)`) is exactly
+    as uniform mathematically, but subtracting two similarly large floats
+    loses absolute precision that swamps a purely relative tolerance sized
+    to the (small) gap alone -- a relative-only check would wrongly refuse
+    it. The absolute floor, scaled to the coordinates' own magnitude, must
+    accept it."""
+    x = tuple(1_000_000.0 + 0.1 * i for i in range(4))
+    titles = {"p": "P", "a": "A", "b": "B"}
+    series = {
+        "p": (10.0, 11.0, 12.0, 13.0),
+        "a": (5.0, 5.5, 6.0, 6.5),
+        "b": (5.0, 5.5, 6.0, 6.5),
+    }
+    breakouts = {"p": (Breakout(key="k", label="K", op="+", children=("a", "b")),)}
+    DriverTree(series, titles, breakouts, _FMT, x)
+
+
 def test_equal_non_unit_spacing_is_accepted_with_a_correct_disclaimer():
     """Coordinates need not be unit-spaced, only *evenly* spaced."""
     x = (0.0, 7.0, 14.0, 21.0)
@@ -614,7 +637,7 @@ def test_equal_non_unit_spacing_is_accepted_with_a_correct_disclaimer():
 
 def test_gap_badge_text_matches_hand_computed_percentage():
     html = _mult_gap_fixture().as_raw_html()
-    assert re.search(r"factors gap 9%", html)
+    assert re.search(r"factors gap 10%", html)
 
 
 def test_multiplicative_contribution_uses_the_shared_log_ratio_for_a_subnormal_quotient():
@@ -724,8 +747,10 @@ def _near_cancel_mismatch_series():
         "users": (100.0, 150.0, 200.0),
         "aov": (10.0, 7.5, 5.0000000005),
     }
-    # product = (1000, 1125, 1000.0000001); gap = mean(|revenue-product|/revenue)
-    #   = (0/1000 + 45/1080 + 157.9999999/1158) / 3 ~= 0.0594 (~6%, between 0.5% and 20%)
+    # product = (1000, 1125, 1000.0000001); mean gap = mean(|revenue-product|/revenue)
+    #   = (0/1000 + 45/1080 + 157.9999999/1158) / 3 ~= 0.0594 (~6%)
+    # endpoint gap = max(0/1000, 157.9999999/1158) ~= 0.1364 (~14%)
+    # combined gap = max(mean, endpoint) ~= 0.1364 (14%, between 0.5% and 20%)
     breakouts = {
         "revenue": (
             Breakout(key="drivers", label="by drivers", op="x", children=("users", "aov")),
@@ -754,7 +779,7 @@ def test_a_near_cancelling_approximate_decomposition_sums_to_the_parent_and_flag
     assert abs(users_share) > 1000.0
 
     html = DriverTree(series, titles, breakouts, _FMT, x).as_raw_html()
-    assert re.search(r"drivers gap 6%", html)
+    assert re.search(r"drivers gap 14%", html)
 
 
 def test_a_small_endpoint_agreement_does_not_override_a_disagreeing_path():
@@ -833,6 +858,57 @@ def test_small_offsetting_endpoint_noise_does_not_trigger_an_unbadged_extreme_fa
     breakouts = {"revenue": topology.breakout_map["revenue"]}
     html = DriverTree(node_series, titles, breakouts, _FMT, (0.0, 1.0, 2.0)).as_raw_html()
     assert not re.search(r"drivers gap", html)
+
+
+def _endpoint_dilution_fixture():
+    """`a` and `b` track `parent`'s product exactly for twelve periods, then
+    `parent` jumps 6% above their product at the thirteenth (last)
+    observation alone. Averaged over all thirteen points the mismatch is
+    only ~0.44% (under `RESIDUAL_WARN`), but at the endpoint alone -- the
+    only two points the edge labels are actually computed from -- it is
+    ~5.66% (over `RESIDUAL_WARN`).
+    """
+    n = 13
+    x = tuple(float(i) for i in range(n))
+    a = tuple(10.0 + i for i in range(n))
+    b = tuple(5.0 + 0.2 * i for i in range(n))
+    product = tuple(ai * bi for ai, bi in zip(a, b, strict=True))
+    parent = (*product[:-1], product[-1] * 1.06)
+    titles = {"parent": "Parent", "a": "A", "b": "B"}
+    series = {"parent": parent, "a": a, "b": b}
+    breakouts = {
+        "parent": (Breakout(key="drivers", label="by drivers", op="x", children=("a", "b")),)
+    }
+    return series, titles, breakouts, x
+
+
+def test_an_endpoint_only_mismatch_diluted_by_a_long_series_still_flags_and_reconciles():
+    """Regression: `identity_gap`'s whole-series mean can stay under the
+    badge threshold even when the parent's actual endpoint change disagrees
+    badly with the children's product at the endpoint alone. The edge
+    labels describe the endpoint change specifically, so that mismatch must
+    still surface a badge, and the labels must still sum to what the parent
+    actually did at the endpoint -- not to the wrong, identity-implied
+    number a mean-only check would have picked.
+    """
+    series, titles, breakouts, x = _endpoint_dilution_fixture()
+    topology = _Topology(parents=("parent",), breakout_map={"parent": breakouts["parent"]})
+    contributions = _compute_contributions(topology, dict(series), {})
+    a_share = contributions[("parent", "a")]
+    b_share = contributions[("parent", "b")]
+    parent_delta = (series["parent"][-1] - series["parent"][0]) / series["parent"][0] * 100.0
+    total_sum = math.log(series["a"][-1] / series["a"][0]) + math.log(
+        series["b"][-1] / series["b"][0]
+    )
+    identity_delta = 100.0 * math.expm1(total_sum)
+
+    # Labels reconcile with the parent's actual endpoint change...
+    assert a_share + b_share == pytest.approx(parent_delta)
+    # ...not the wrong, identity-implied number a mean-only check would pick.
+    assert parent_delta != pytest.approx(identity_delta)
+
+    html = DriverTree(series, titles, breakouts, _FMT, x).as_raw_html()
+    assert "drivers gap 6%" in html
 
 
 def _zero_residual_fixture() -> GraphReport:

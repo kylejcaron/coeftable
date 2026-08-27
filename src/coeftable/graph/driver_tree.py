@@ -199,21 +199,27 @@ def _prepare_x(x: Sequence[float]) -> tuple[tuple[float, ...], tuple[float, floa
     model, so unequal gaps would silently mis-scale that model rather than
     generalizing it. Irregular spacing is therefore rejected, naming the
     offending index and the two differing gaps, rather than accepted and
-    mislabeled. Gaps are compared with a small relative tolerance rather
-    than bit-for-bit, so mathematically uniform coordinates whose gaps
-    differ only in the last bits of binary rounding (e.g. `0.1, 0.2, 0.3`)
-    are still accepted; a gap that differs by more than that tolerance is
-    real irregularity, not rounding. The disclaimer's period count is the
-    coordinates' own span (`x[-1] - x[0]`), which -- once spacing is
-    uniform -- is exactly `(len(x) - 1)` periods times the shared gap, so
-    it stays correct by construction instead of needing a separate
-    `len(x) - 1` computation.
+    mislabeled. Gaps are compared with a relative tolerance plus an
+    absolute floor scaled to the coordinates' own magnitude, rather than
+    bit-for-bit or relative-only: mathematically uniform coordinates whose
+    gaps differ only in the last bits of binary rounding (e.g. `0.1, 0.2,
+    0.3`) are still accepted, and so is that same uniformity after a large
+    shift of origin, where subtracting two similarly large coordinates
+    loses absolute precision that swamps a purely relative tolerance sized
+    to the (small) gap alone. A gap that differs by more than that
+    combined tolerance is real irregularity, not rounding. The
+    disclaimer's period count is the coordinates' own span
+    (`x[-1] - x[0]`), measured directly from the endpoints rather than
+    recomputed as `(len(x) - 1)` times the shared gap -- the two are only
+    approximately equal once the tolerated per-gap rounding is accounted
+    for, not exactly equal.
     """
     raw = _canonical(x, name="DriverTree.x")
     x_values = tuple(_finite(value, name="DriverTree.x") for value in raw)
     if len(x_values) < 3:
         raise SpecError("DriverTree.x must have at least 3 observations")
     gap = x_values[1] - x_values[0]
+    magnitude = max(abs(value) for value in x_values)
     for index in range(1, len(x_values)):
         previous, current = x_values[index - 1], x_values[index]
         if current <= previous:
@@ -222,7 +228,7 @@ def _prepare_x(x: Sequence[float]) -> tuple[tuple[float, ...], tuple[float, floa
                 f"x[{index}]={current!r} is not greater than x[{index - 1}]={previous!r}"
             )
         this_gap = current - previous
-        if not math.isclose(this_gap, gap, rel_tol=1e-9):
+        if not math.isclose(this_gap, gap, rel_tol=1e-9, abs_tol=1e-9 * magnitude):
             raise SpecError(
                 "DriverTree.x must be evenly spaced: "
                 f"x[{index}] - x[{index - 1}]={this_gap!r} differs from the first gap "
@@ -374,6 +380,45 @@ def _reserve_residual_id(
     resid_ids[resid_id] = pair
 
 
+def _endpoint_identity_gap(
+    parent_series: Sequence[float], children_series: Sequence[Sequence[float]], op: str
+) -> float:
+    """Relative discrepancy between the parent and its implied children.
+
+    Computed at the first and last observation only, the larger of the two.
+
+    `identity_gap` averages that discrepancy over every observation, so a
+    decomposition that tracks its parent closely for most of the window but
+    diverges badly only at the endpoint still reports a small mean gap. The
+    edge labels this gates are themselves computed from the endpoints alone
+    (`log_ratio(child[-1], child[0])`), so whether to trust them has to be
+    judged at the endpoints too, not smoothed away by an in-between average.
+    """
+    implied = implied_series(children_series, op)
+    return max(
+        abs(parent_series[0] - implied[0]) / abs(parent_series[0]),
+        abs(parent_series[-1] - implied[-1]) / abs(parent_series[-1]),
+    )
+
+
+# Final rule (C3 + A3): a multiplicative breakout's identity gap is the
+# *larger* of the mean relative discrepancy across the whole series
+# (`identity_gap`) and the discrepancy at the endpoints alone
+# (`_endpoint_identity_gap`). Either one exceeding `RESIDUAL_WARN` means the
+# labels -- which describe the endpoint change specifically -- do not
+# reconcile with the parent, so both scaling (`_compute_contributions`) and
+# the badge (`_apply_breakout_honesty`) key off this same combined value:
+# implied-identity scaling, and a clean unbadged card, require *both* the
+# whole-series mean and the endpoints alone to agree with the parent.
+def _multiplicative_identity_gap(
+    parent_series: Sequence[float], children_series: Sequence[Sequence[float]]
+) -> float:
+    return max(
+        identity_gap(parent_series, children_series, "x"),
+        _endpoint_identity_gap(parent_series, children_series, "x"),
+    )
+
+
 def _apply_breakout_honesty(
     parent: str,
     breakout: Breakout,
@@ -387,7 +432,11 @@ def _apply_breakout_honesty(
     """Check one breakout's identity gap and trade-offs (cluster A3 + A4)."""
     parent_series = node_series[parent]
     children_series = [node_series[child] for child in breakout.children]
-    gap = identity_gap(parent_series, children_series, breakout.op)
+    gap = (
+        _multiplicative_identity_gap(parent_series, children_series)
+        if breakout.op == "x"
+        else identity_gap(parent_series, children_series, breakout.op)
+    )
     if gap > RESIDUAL_FAIL:
         coverage = (1.0 - gap) * 100.0
         raise SpecError(
@@ -548,12 +597,13 @@ def _compute_contributions(
                 total_sum = math.fsum(totals.values())
                 # Consistency rule: implied-identity scaling and the gap badge
                 # (`_apply_breakout_honesty`) are keyed off the *same*
-                # `identity_gap` value, not two different discrepancy
-                # measures. Implied-identity scaling is picked only when that
+                # `_multiplicative_identity_gap` value (see its own final-rule
+                # comment), not two different discrepancy measures.
+                # Implied-identity scaling is picked only when that combined
                 # gap is small enough that no badge renders, so any mismatch
                 # large enough to trigger the `parent_delta / total_sum`
                 # fallback always surfaces the gap indicator too.
-                gap = identity_gap(parent_series, children_series, "x")
+                gap = _multiplicative_identity_gap(parent_series, children_series)
                 identity_holds = gap <= RESIDUAL_WARN
                 scale = _multiplicative_scale(parent_delta, total_sum, identity_holds)
                 for child in breakout.children:
@@ -919,7 +969,7 @@ def DriverTree(
     # gating switchers) surfaces first. Nesting is legal and passes
     # straight through; only a genuine conjunction across two switchers
     # with no ordering between them is refused.
-    reject_switcher_conjunctions(topology.switcher_parents, edges)
+    reject_switcher_conjunctions(topology.breakout_map, edges)
 
     rep = _build_rep_mapping(topology)
     node_role = _compute_node_roles(topology.node_order, node_series, direction)
