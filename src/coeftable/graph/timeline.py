@@ -19,7 +19,7 @@ from typing import cast
 from coeftable.annotations import Dash
 from coeftable.cards import Event, InlineSvg
 from coeftable.errors import SpecError
-from coeftable.svg import _projector
+from coeftable.svg import _CHAR_WIDTH_RATIO, _clip_label, _projector
 from coeftable.theme import Theme
 
 _DASHES = ("solid", "dashed", "dotted")
@@ -32,6 +32,24 @@ _SPINE_MARGIN = 24.0
 _TICK_LEN = 4.0
 _TICK_LABEL_OFFSET = 14.0
 _CIRCLE_R = 3.5
+_LABEL_FONT_SIZE = 10.0
+
+# Half of the event label's stroke-width halo (`stroke-width="3"`), which
+# paints outside the glyphs' own outline on every side. Kept clear of both
+# canvas edges so the halo itself never bleeds past the declared width.
+_LABEL_HALO = 1.5
+
+# `_projector` divides the plotting span by `width - 2 * _INSET`; at or
+# below this the span collapses to zero or goes negative, producing an
+# inverted or degenerate projection. `_MIN_WIDTH` instead leaves a usable
+# span of `2 * _INSET` px between the two insets.
+_MIN_WIDTH = 4 * _INSET
+
+# The spine sits `_SPINE_MARGIN` above the bottom edge. A usable strip needs
+# the spine to clear the lower label row -- including the 4px gap where each
+# event's stem begins -- with enough headroom left over to also fit the
+# tick labels rendered `_TICK_LABEL_OFFSET` below the spine.
+_MIN_HEIGHT = int(_LABEL_ROWS[-1]) + 4 + int(_SPINE_MARGIN) + int(_TICK_LABEL_OFFSET)
 
 
 def _non_empty_str(value: object, *, name: str) -> None:
@@ -120,6 +138,35 @@ def _domain(value: tuple[float, float], *, name: str) -> tuple[float, float]:
     return (float(low), float(high))
 
 
+def _validate_strip_size(width: int, height: int) -> None:
+    if width <= _MIN_WIDTH:
+        raise SpecError(f"timeline_strip.width must be greater than {_MIN_WIDTH}, got {width}")
+    if height <= _MIN_HEIGHT:
+        raise SpecError(f"timeline_strip.height must be greater than {_MIN_HEIGHT}, got {height}")
+
+
+def _label_anchor_and_text(x: float, label: str, width: int) -> tuple[str, str]:
+    """Choose a text-anchor and (possibly truncated) label for a pin at pixel `x`.
+
+    Centring every label on its projected coordinate clips events near
+    either domain edge -- the strip's viewport doesn't grow to fit text, so
+    a boundary event's centred label runs straight off the canvas. Anchor
+    at the start when centring would spill past the left edge, at the end
+    when it would spill past the right, and truncate with an ellipsis as a
+    last resort when even a single-edge anchor can't fit. The pin, its
+    stem, and its dot stay on `x` regardless -- only the text anchor moves.
+    """
+    half = len(label) * _LABEL_FONT_SIZE * _CHAR_WIDTH_RATIO / 2
+    low, high = _LABEL_HALO, width - _LABEL_HALO
+    if x - half < low:
+        anchor, budget = "start", high - x
+    elif x + half > high:
+        anchor, budget = "end", x - low
+    else:
+        anchor, budget = "middle", 2 * min(x - low, high - x)
+    return anchor, _clip_label(label, max(budget, 0.0), _LABEL_FONT_SIZE)
+
+
 def timeline_strip(
     events: Sequence[TimelineEvent],
     *,
@@ -145,6 +192,7 @@ def timeline_strip(
     """
     events = tuple(events)
     low, high = _domain(x_domain, name="timeline_strip.x_domain")
+    _validate_strip_size(width, height)
     project = _projector((low, high), width, _INSET)
     spine_y = height - _SPINE_MARGIN
 
@@ -184,9 +232,10 @@ def timeline_strip(
             f'fill="{_esc(event.color)}"/>'
         )
         label = f"{event.label} \u00b7 W{int(event.at) + 1}"
+        anchor, label = _label_anchor_and_text(x, label, width)
         parts.append(
             f'<text x="{x:.2f}" y="{label_y:.2f}" fill="{_esc(event.color)}" '
-            f'font-size="10" font-weight="700" text-anchor="middle" '
+            f'font-size="{_LABEL_FONT_SIZE:.0f}" font-weight="700" text-anchor="{anchor}" '
             f'stroke="{_esc(theme.surface)}" stroke-width="3" '
             f'style="paint-order:stroke">{_esc(label)}</text>'
         )

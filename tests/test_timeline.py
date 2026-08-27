@@ -1,7 +1,20 @@
+import html
+
 import pytest
 
 from coeftable.errors import SpecError
-from coeftable.graph.timeline import TimelineEvent, events_for, timeline_strip
+from coeftable.graph.timeline import (
+    _CHAR_WIDTH_RATIO,
+    _DASH_ARRAY,
+    _INSET,
+    _LABEL_FONT_SIZE,
+    _MIN_HEIGHT,
+    _MIN_WIDTH,
+    TimelineEvent,
+    _projector,
+    events_for,
+    timeline_strip,
+)
 from coeftable.theme import DEFAULT
 
 
@@ -77,3 +90,119 @@ def test_strip_rejects_an_event_outside_the_domain():
             width=400,
             theme=DEFAULT,
         )
+
+
+def _event_label_fragments(svg: str) -> list[str]:
+    """Isolate the `<text>` fragments belonging to event labels.
+
+    Event labels are the only `<text>` elements with `font-weight="700"` --
+    the title uses 600 and tick labels carry no font-weight at all -- so
+    this scopes out both without touching the SVG structure.
+    """
+    return [fragment for fragment in svg.split("<text")[1:] if 'font-weight="700"' in fragment]
+
+
+def _parse_label_fragment(fragment: str) -> tuple[float, str, str]:
+    """Pull `(x, text-anchor, rendered text)` out of one label fragment."""
+    x = float(fragment.split(' x="', 1)[1].split('"', 1)[0])
+    anchor = fragment.split('text-anchor="', 1)[1].split('"', 1)[0]
+    text = html.unescape(fragment.split(">", 1)[1].split("</text>", 1)[0])
+    return x, anchor, text
+
+
+def _label_extent(x: float, anchor: str, text: str) -> tuple[float, float]:
+    """Estimated pixel `(left, right)` extent of a label, mirroring the module's approximation."""
+    label_width = len(text) * _LABEL_FONT_SIZE * _CHAR_WIDTH_RATIO
+    if anchor == "start":
+        return x, x + label_width
+    if anchor == "end":
+        return x - label_width, x
+    return x - label_width / 2, x + label_width / 2
+
+
+def test_strip_keeps_boundary_event_labels_inside_the_declared_width():
+    # A centred label at either domain edge would run off the canvas: the
+    # projected coordinate sits only `_INSET` px from that edge, well
+    # inside half the width of most labels. Boundary events must instead
+    # anchor inward, at "start" on the left and "end" on the right.
+    width = 400
+    events = (
+        TimelineEvent(at=0.0, label="quarterly release", color="#c33", affects=("a",)),
+        TimelineEvent(at=11.0, label="year-end incident", color="#3c3", affects=("a",)),
+    )
+    strip = timeline_strip(events, x_domain=(0.0, 11.0), width=width, theme=DEFAULT)
+    fragments = _event_label_fragments(strip.svg)
+    assert len(fragments) == 2
+
+    parsed = [_parse_label_fragment(fragment) for fragment in fragments]
+    for (x, anchor, text), event in zip(parsed, events, strict=True):
+        expected_text = f"{event.label} \u00b7 W{int(event.at) + 1}"
+        assert text == expected_text  # short enough that no truncation is needed
+        left, right = _label_extent(x, anchor, text)
+        assert left >= 0
+        assert right <= width
+
+    assert parsed[0][1] == "start"  # leftmost event: centring would clip the left edge
+    assert parsed[1][1] == "end"  # rightmost event: centring would clip the right edge
+
+
+def test_strip_truncates_a_label_that_cannot_fit_even_edge_anchored():
+    width = _MIN_WIDTH + 16
+    event = TimelineEvent(
+        at=0.0,
+        label="an extremely long release name that will never fit in this strip",
+        color="#c33",
+        affects=("a",),
+    )
+    strip = timeline_strip((event,), x_domain=(0.0, 5.0), width=width, theme=DEFAULT)
+    (fragment,) = _event_label_fragments(strip.svg)
+    x, anchor, text = _parse_label_fragment(fragment)
+    full_text = f"{event.label} \u00b7 W1"
+
+    assert anchor == "start"
+    assert text != full_text
+    assert text.endswith("\u2026")
+    left, right = _label_extent(x, anchor, text)
+    assert left >= 0
+    assert right <= width
+
+
+def test_strip_rejects_a_width_at_or_below_the_minimum():
+    pattern = rf"width must be greater than {_MIN_WIDTH}, got {_MIN_WIDTH}"
+    with pytest.raises(SpecError, match=pattern):
+        timeline_strip(_events(), x_domain=(0.0, 11.0), width=_MIN_WIDTH, theme=DEFAULT)
+
+
+def test_strip_rejects_a_height_at_or_below_the_minimum():
+    with pytest.raises(
+        SpecError, match=rf"height must be greater than {_MIN_HEIGHT}, got {_MIN_HEIGHT}"
+    ):
+        timeline_strip(
+            _events(), x_domain=(0.0, 11.0), width=400, height=_MIN_HEIGHT, theme=DEFAULT
+        )
+
+
+def test_strip_projects_pins_to_the_shared_projector_convention():
+    x_domain = (0.0, 11.0)
+    width = 400
+    events = (
+        TimelineEvent(at=3.0, label="a", color="#c33", affects=("x",)),
+        TimelineEvent(at=8.0, label="b", color="#3c3", affects=("x",)),
+    )
+    strip = timeline_strip(events, x_domain=x_domain, width=width, theme=DEFAULT)
+    project = _projector(x_domain, width, _INSET)
+    for event in events:
+        x = project(event.at)
+        assert f'cx="{x:.2f}" cy=' in strip.svg
+        assert f'x1="{x:.2f}" y1=' in strip.svg
+        assert f'x2="{x:.2f}" y2=' in strip.svg
+
+
+def test_dashed_event_keeps_its_dash_through_fan_out_and_render():
+    event = TimelineEvent(at=3.0, label="x", color="#c33", affects=("aov",), dash="dashed")
+
+    (fanned,) = events_for((event,), "aov")
+    assert fanned.dash == "dashed"
+
+    strip = timeline_strip((event,), x_domain=(0.0, 11.0), width=400, theme=DEFAULT)
+    assert f'stroke-dasharray="{_DASH_ARRAY["dashed"]}"' in strip.svg
