@@ -225,6 +225,7 @@ def test_graph_export_surface_is_exact_and_top_level_excludes_graph():
         "Atom",
         "Breakout",
         "ControlRef",
+        "DriverTree",
         "Graph",
         "GraphReport",
         "MeasuredGraph",
@@ -236,7 +237,7 @@ def test_graph_export_surface_is_exact_and_top_level_excludes_graph():
         "TimelineEvent",
         "Wire",
     }
-    assert len(coeftable.graph.__all__) == 13
+    assert len(coeftable.graph.__all__) == 14
     assert set(coeftable.graph.__all__) == expected
     for name in expected:
         assert hasattr(coeftable.graph, name)

@@ -1,0 +1,670 @@
+"""``DriverTree``: the composition root assembling every R4 cluster.
+
+This is the one module in the graph package allowed to import all of its
+siblings. Honesty statistics (``honesty.py``), timeline fan-out
+(``timeline.py``), breakout switching (``breakout.py``), and the report
+composite (``report.py``) stay mutually independent -- ``DriverTree`` is
+where their outputs meet, and nowhere else. Everything it does is glue over
+already-public primitives: it derives a topology from ``breakouts``, applies
+the honesty thresholds from ``coeftable.graph.honesty`` per decomposition,
+formats one wire per real parent/child edge, lays every card out with the
+same layered barycenter helpers ``MetricTree`` uses (giving every breakout
+alternative's children the *same* (layer, slot) coordinates so the kernel's
+shared-position proof accepts them), wires up ``breakout_control`` /
+``partition_rules`` per switcher, and finally wraps the ``Graph`` in a
+``GraphReport`` whose header is a timeline strip sized to the canvas.
+"""
+
+from __future__ import annotations
+
+import math
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
+from typing import cast
+
+from coeftable.cards import (
+    DEFAULT_CHROME,
+    Adornment,
+    Badge,
+    Callout,
+    Card,
+    CardChrome,
+    Events,
+    Metric,
+    Region,
+    SelectControl,
+    TextBlock,
+    Trend,
+)
+from coeftable.errors import SpecError
+from coeftable.format import Format, Number
+from coeftable.graph.breakout import (
+    Breakout,
+    breakout_control,
+    partition_rules,
+    reject_nested_switchers,
+)
+from coeftable.graph.honesty import (
+    RESIDUAL_FAIL,
+    RESIDUAL_WARN,
+    endpoint_interval,
+    identity_gap,
+    implied_series,
+    ribbon_bounds,
+    ribbon_domain,
+    tradeoff_pairs,
+)
+from coeftable.graph.metric_tree import _label, _layers, _slots
+from coeftable.graph.model import Atom, ControlRef, Graph, Slot, Slotted, StateRule, Wire
+from coeftable.graph.report import GraphReport
+from coeftable.graph.timeline import TimelineEvent, events_for, timeline_strip
+from coeftable.theme import DEFAULT, Direction, Role, Theme, role_for
+
+_DIRECTIONS: tuple[Direction, ...] = ("higher_is_better", "lower_is_better", "neutral")
+
+# The card headline shows a raw level (dollars, users, ratios, ...); `fmt` is
+# reserved for edge contribution labels, mirroring `MetricTree.fmt`. A fixed
+# internal default keeps the public signature to exactly the fields the plan
+# specifies rather than adding a second formatter parameter.
+_HEADLINE_FORMAT = Number(decimals=1)
+
+_CARD_WIDTH = 300
+
+# Wide enough that the verbatim disclaimer sentence (see `_DISCLAIMER`) never
+# splits its "not causal impact and not levers" clause across a wrapped line,
+# regardless of the injected week count's digit width.
+_ROOT_CARD_WIDTH = 560
+
+_DISCLAIMER = (
+    "Edge labels are an accounting of the realized {weeks}-week change under "
+    "the chosen decomposition \u2014 they are not causal impact and not "
+    "levers. For causal claims, attach an experiment / causal graph."
+)
+
+
+def _non_empty_str(value: object, *, name: str) -> None:
+    if not isinstance(value, str) or not value:
+        raise SpecError(f"{name} must be a non-empty str")
+
+
+def _canonical(value: object, *, name: str) -> tuple[object, ...]:
+    """Snapshot an input sequence while presenting malformed inputs as specs."""
+    if isinstance(value, (str, bytes)):
+        raise SpecError(f"{name} must be a sequence of entries, not a string")
+    try:
+        return tuple(cast(Iterable[object], value))
+    except TypeError as error:
+        raise SpecError(f"{name} must be a sequence") from error
+
+
+def _finite(value: object, *, name: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise SpecError(f"{name} must be a finite number")
+    result = float(value)
+    if not math.isfinite(result):
+        raise SpecError(f"{name} must be a finite number")
+    return result
+
+
+def _operator_badge_text(op: str) -> str:
+    return "\u00d7 decomposition" if op == "x" else "+ slice"
+
+
+def _log_ratio(numerator: float, denominator: float) -> float:
+    """Log of numerator/denominator; see honesty._log_ratio for the rationale."""
+    ratio = numerator / denominator
+    if ratio > 0.0 and math.isfinite(ratio):
+        return math.log(ratio)
+    return math.log(numerator) - math.log(denominator)
+
+
+@dataclass(frozen=True, slots=True)
+class _Residual:
+    """A computed, injected residual node: an accounting leftover, not data."""
+
+    id: str
+    values: tuple[float, ...]
+    subtitle: str
+
+
+@dataclass(slots=True)
+class _Topology:
+    """The node/edge shape derived from `breakouts`, built up incrementally."""
+
+    parents: tuple[str, ...]
+    breakout_map: dict[str, tuple[Breakout, ...]]
+    node_order: list[str] = field(default_factory=list)
+    seen: set[str] = field(default_factory=set)
+    roots: tuple[str, ...] = ()
+    switcher_parents: tuple[str, ...] = ()
+
+    def add_node(self, node_id: str) -> None:
+        """Append `node_id` once, in first-seen order."""
+        if node_id not in self.seen:
+            self.seen.add(node_id)
+            self.node_order.append(node_id)
+
+
+@dataclass(slots=True)
+class _HonestyOutcome:
+    """Per-decomposition results of the honesty pass (cluster A)."""
+
+    residuals: dict[tuple[str, str], _Residual] = field(default_factory=dict)
+    gap_badges: dict[str, list[str]] = field(default_factory=dict)
+    tradeoff_callouts: dict[str, list[str]] = field(default_factory=dict)
+
+
+def _validate_scalars(
+    series: object,
+    titles: object,
+    breakouts: object,
+    fmt: object,
+    direction: object,
+    chrome: object,
+) -> None:
+    if not isinstance(series, Mapping):
+        raise SpecError("DriverTree.series must be a mapping")
+    if not isinstance(titles, Mapping):
+        raise SpecError("DriverTree.titles must be a mapping")
+    if not isinstance(breakouts, Mapping):
+        raise SpecError("DriverTree.breakouts must be a mapping")
+    if not callable(fmt):
+        raise SpecError("DriverTree.fmt must be callable")
+    if direction not in _DIRECTIONS:
+        raise SpecError("DriverTree.direction must be valid")
+    if not isinstance(chrome, CardChrome):
+        raise SpecError("DriverTree.chrome must be a CardChrome")
+
+
+def _prepare_x(x: Sequence[float]) -> tuple[tuple[float, ...], tuple[float, float], int]:
+    raw = _canonical(x, name="DriverTree.x")
+    x_values = tuple(_finite(value, name="DriverTree.x") for value in raw)
+    if len(x_values) < 3:
+        raise SpecError("DriverTree.x must have at least 3 observations")
+    return x_values, (min(x_values), max(x_values)), len(x_values) - 1
+
+
+def _build_breakout_map(
+    breakouts: Mapping[str, Sequence[Breakout]],
+) -> dict[str, tuple[Breakout, ...]]:
+    breakout_map: dict[str, tuple[Breakout, ...]] = {}
+    for parent in breakouts:
+        _non_empty_str(parent, name="DriverTree.breakouts key")
+        entries = _canonical(breakouts[parent], name=f"DriverTree.breakouts[{parent!r}]")
+        if not entries:
+            raise SpecError(f"DriverTree.breakouts[{parent!r}] must not be empty")
+        for index, entry in enumerate(entries):
+            if not isinstance(entry, Breakout):
+                raise SpecError(f"DriverTree.breakouts[{parent!r}][{index}] must be a Breakout")
+        breakout_map[parent] = cast(tuple[Breakout, ...], entries)
+    return breakout_map
+
+
+def _build_topology(breakout_map: dict[str, tuple[Breakout, ...]]) -> _Topology:
+    topology = _Topology(parents=tuple(breakout_map), breakout_map=breakout_map)
+    for parent in topology.parents:
+        topology.add_node(parent)
+        for breakout in breakout_map[parent]:
+            for child in breakout.children:
+                topology.add_node(child)
+
+    all_children = {
+        child
+        for parent in topology.parents
+        for breakout in breakout_map[parent]
+        for child in breakout.children
+    }
+    topology.roots = tuple(
+        node_id for node_id in topology.node_order if node_id not in all_children
+    )
+    if not topology.roots:
+        raise SpecError("DriverTree topology has no root: every node is someone's child")
+    topology.switcher_parents = tuple(
+        parent for parent in topology.parents if len(breakout_map[parent]) >= 2
+    )
+    return topology
+
+
+def _collect_node_series(
+    topology: _Topology,
+    series: Mapping[str, Sequence[float]],
+    titles: Mapping[str, str],
+    x_values: tuple[float, ...],
+) -> dict[str, tuple[float, ...]]:
+    for node_id in topology.node_order:
+        if node_id not in series:
+            raise SpecError(f"DriverTree.series is missing an entry for {node_id!r}")
+        if node_id not in titles:
+            raise SpecError(f"DriverTree.titles is missing an entry for {node_id!r}")
+
+    node_series: dict[str, tuple[float, ...]] = {}
+    for node_id in topology.node_order:
+        name = f"DriverTree.series[{node_id!r}]"
+        raw = _canonical(series[node_id], name=name)
+        values = tuple(_finite(value, name=name) for value in raw)
+        if len(values) != len(x_values):
+            raise SpecError(f"DriverTree.series[{node_id!r}] must match DriverTree.x in length")
+        node_series[node_id] = values
+    return node_series
+
+
+def _raw_edges(topology: _Topology) -> tuple[tuple[str, str], ...]:
+    return tuple(
+        (parent, child)
+        for parent in topology.parents
+        for breakout in topology.breakout_map[parent]
+        for child in breakout.children
+    )
+
+
+def _build_rep_mapping(topology: _Topology) -> dict[str, str]:
+    """Map every non-default alternative child to its default sibling.
+
+    Alternative children of one breakout must occupy the *same* (layer,
+    slot) position, so only the default alternative gets a real position;
+    every other alternative's children resolve through this map to it.
+    """
+    rep: dict[str, str] = {}
+    for parent in topology.parents:
+        breakout_list = topology.breakout_map[parent]
+        if len(breakout_list) < 2:
+            continue
+        default = breakout_list[0]
+        for alt in breakout_list[1:]:
+            if len(alt.children) != len(default.children):
+                raise SpecError(
+                    f"breakout alternatives for {parent!r} must have the same number of "
+                    "children so they can share a position"
+                )
+            for index, child in enumerate(alt.children):
+                rep[child] = default.children[index]
+    return rep
+
+
+def _resolve_rep(node_id: str, rep: dict[str, str]) -> str:
+    current = node_id
+    visited: set[str] = set()
+    while current in rep:
+        if current in visited:
+            raise SpecError(f"breakout representative mapping cycles at {current!r}")
+        visited.add(current)
+        current = rep[current]
+    return current
+
+
+def _compute_node_roles(
+    node_order: list[str], node_series: dict[str, tuple[float, ...]], direction: Direction
+) -> dict[str, Role]:
+    node_role: dict[str, Role] = {}
+    for node_id in node_order:
+        _, lower, upper = endpoint_interval(node_series[node_id])
+        node_role[node_id] = role_for(lower, upper, 0.0, direction)
+    return node_role
+
+
+def _apply_breakout_honesty(
+    parent: str,
+    breakout: Breakout,
+    node_series: dict[str, tuple[float, ...]],
+    node_role: dict[str, Role],
+    titles: Mapping[str, str],
+    seen_nodes: set[str],
+    outcome: _HonestyOutcome,
+) -> None:
+    """Check one breakout's identity gap and trade-offs (cluster A3 + A4)."""
+    parent_series = node_series[parent]
+    children_series = [node_series[child] for child in breakout.children]
+    gap = identity_gap(parent_series, children_series, breakout.op)
+    if gap > RESIDUAL_FAIL:
+        coverage = (1.0 - gap) * 100.0
+        raise SpecError(
+            f"breakout {breakout.key!r} on {parent!r} explains {coverage:.1f}% of "
+            f"{titles[parent]!r}; a decomposition explaining under 80% is not a decomposition"
+        )
+    if gap > RESIDUAL_WARN:
+        if breakout.op == "+":
+            implied = implied_series(children_series, "+")
+            resid_id = f"resid_{parent}_{breakout.key}"
+            if resid_id in seen_nodes:
+                raise SpecError(f"residual id {resid_id!r} collides with a declared node")
+            resid_values = tuple(p - i for p, i in zip(parent_series, implied, strict=True))
+            subtitle = f"identity residual ({gap:.0%} of {titles[parent]})"
+            outcome.residuals[(parent, breakout.key)] = _Residual(resid_id, resid_values, subtitle)
+        else:
+            outcome.gap_badges.setdefault(parent, []).append(f"{breakout.key} gap {gap:.0%}")
+
+    non_muted = [
+        (titles[child], node_series[child])
+        for child in breakout.children
+        if node_role[child] != "inconclusive"
+    ]
+    pairs = tradeoff_pairs(non_muted)
+    if pairs:
+        text = "\u26a0 trade-off: " + "; ".join(f"{a} \u2194 {b} (r={r:.2f})" for a, b, r in pairs)
+        outcome.tradeoff_callouts.setdefault(parent, []).append(text)
+
+
+def _apply_honesty(
+    topology: _Topology,
+    node_series: dict[str, tuple[float, ...]],
+    node_role: dict[str, Role],
+    titles: Mapping[str, str],
+) -> _HonestyOutcome:
+    outcome = _HonestyOutcome()
+    for parent in topology.parents:
+        for breakout in topology.breakout_map[parent]:
+            _apply_breakout_honesty(
+                parent, breakout, node_series, node_role, titles, topology.seen, outcome
+            )
+    return outcome
+
+
+def _register_residuals(
+    topology: _Topology,
+    outcome: _HonestyOutcome,
+    node_series: dict[str, tuple[float, ...]],
+    node_role: dict[str, Role],
+) -> dict[str, _Residual]:
+    """Fold injected residuals into the node set, and index them by id."""
+    residual_by_id: dict[str, _Residual] = {}
+    for resid in outcome.residuals.values():
+        node_series[resid.id] = resid.values
+        node_role[resid.id] = "inconclusive"
+        topology.add_node(resid.id)
+        residual_by_id[resid.id] = resid
+    return residual_by_id
+
+
+def _compute_contributions(
+    topology: _Topology,
+    node_series: dict[str, tuple[float, ...]],
+    residuals: dict[tuple[str, str], _Residual],
+) -> dict[tuple[str, str], float]:
+    """C3: additive slices vs. multiplicative log-share attribution."""
+    contribution_by_edge: dict[tuple[str, str], float] = {}
+    for parent in topology.parents:
+        parent_series = node_series[parent]
+        parent_delta = endpoint_interval(parent_series)[0]
+        for breakout in topology.breakout_map[parent]:
+            if breakout.op == "+":
+                for child in breakout.children:
+                    child_series = node_series[child]
+                    contribution_by_edge[(parent, child)] = (
+                        (child_series[-1] - child_series[0]) / parent_series[0] * 100.0
+                    )
+            else:
+                totals = {
+                    child: _log_ratio(node_series[child][-1], node_series[child][0])
+                    for child in breakout.children
+                }
+                total_sum = math.fsum(totals.values())
+                for child in breakout.children:
+                    contribution_by_edge[(parent, child)] = (
+                        0.0 if total_sum == 0.0 else parent_delta * (totals[child] / total_sum)
+                    )
+            resid = residuals.get((parent, breakout.key))
+            if resid is not None:
+                contribution_by_edge[(parent, resid.id)] = (
+                    (resid.values[-1] - resid.values[0]) / parent_series[0] * 100.0
+                )
+    return contribution_by_edge
+
+
+def _build_wires(
+    topology: _Topology,
+    residuals: dict[tuple[str, str], _Residual],
+    contribution_by_edge: dict[tuple[str, str], float],
+    node_role: dict[str, Role],
+    fmt: Format,
+) -> list[Wire]:
+    wires: list[Wire] = []
+
+    def add_wire(src: str, dst: str) -> None:
+        contribution = contribution_by_edge[(src, dst)]
+        label = _label(fmt, contribution)
+        role = node_role[dst]
+        if role == "inconclusive":
+            label = f"{label} \u00b7 ns"
+        wires.append(Wire(id=f"w{len(wires)}", src=src, dst=dst, label=label, label_role=role))
+
+    for parent in topology.parents:
+        for breakout in topology.breakout_map[parent]:
+            for child in breakout.children:
+                add_wire(parent, child)
+            resid = residuals.get((parent, breakout.key))
+            if resid is not None:
+                add_wire(parent, resid.id)
+    return wires
+
+
+def _compute_layout(
+    topology: _Topology, rep: dict[str, str], residuals: dict[tuple[str, str], _Residual]
+) -> tuple[Slot, ...]:
+    """Reuse MetricTree's own layered barycenter helpers on the collapsed tree.
+
+    Only the *default* alternative's children ever get a real position;
+    every other alternative resolves through `rep` to it, so alternatives
+    share a box by construction rather than by any hiding trick.
+    """
+    canonical_ids: list[str] = []
+    canonical_seen: set[str] = set()
+    canonical_edges: list[tuple[str, str, float | None]] = []
+
+    def add_canonical(node_id: str) -> None:
+        if node_id not in canonical_seen:
+            canonical_seen.add(node_id)
+            canonical_ids.append(node_id)
+
+    for parent in topology.parents:
+        rp = _resolve_rep(parent, rep)
+        add_canonical(rp)
+        default = topology.breakout_map[parent][0]
+        for child in default.children:
+            rc = _resolve_rep(child, rep)
+            add_canonical(rc)
+            canonical_edges.append((rp, rc, None))
+        for breakout in topology.breakout_map[parent]:
+            resid = residuals.get((parent, breakout.key))
+            if resid is not None:
+                add_canonical(resid.id)
+                canonical_edges.append((rp, resid.id, None))
+
+    canonical_layers = _layers(tuple(canonical_ids), tuple(canonical_edges))
+    canonical_slots = _slots(tuple(canonical_ids), tuple(canonical_edges), canonical_layers)
+    canonical_position = {slot.card_id: slot for slot in canonical_slots}
+
+    return tuple(
+        Slot(
+            node_id,
+            canonical_position[_resolve_rep(node_id, rep)].layer,
+            canonical_position[_resolve_rep(node_id, rep)].slot,
+        )
+        for node_id in topology.node_order
+    )
+
+
+def _build_switcher_state(
+    topology: _Topology, residuals: dict[tuple[str, str], _Residual]
+) -> tuple[list[StateRule], dict[str, SelectControl]]:
+    rules: list[StateRule] = []
+    select_controls: dict[str, SelectControl] = {}
+    for parent in topology.switcher_parents:
+        key = f"{parent}_breakout"
+        breakout_list = topology.breakout_map[parent]
+        select_controls[parent] = breakout_control(breakout_list, key=key)
+        rules.extend(partition_rules(parent, key, breakout_list))
+        for index, breakout in enumerate(breakout_list):
+            resid = residuals.get((parent, breakout.key))
+            if resid is None:
+                continue
+            for other_index, other in enumerate(breakout_list):
+                if other_index == index:
+                    continue
+                rules.append(
+                    StateRule(
+                        (Atom(ControlRef(parent, key), "option_checked", other.key),),
+                        hide_cards=(resid.id,),
+                    )
+                )
+    return rules, select_controls
+
+
+def _build_card(
+    node_id: str,
+    *,
+    topology: _Topology,
+    node_series: dict[str, tuple[float, ...]],
+    node_role: dict[str, Role],
+    titles: Mapping[str, str],
+    events: Sequence[TimelineEvent],
+    x_values: tuple[float, ...],
+    x_domain: tuple[float, float],
+    direction: Direction,
+    fmt: Format,
+    weeks: int,
+    select_controls: dict[str, SelectControl],
+    outcome: _HonestyOutcome,
+    residual_by_id: dict[str, _Residual],
+) -> tuple[str, Card]:
+    values = node_series[node_id]
+    role = node_role[node_id]
+    lower_ribbon, upper_ribbon = ribbon_bounds(values)
+    domain = ribbon_domain(values, lower_ribbon, upper_ribbon)
+    node_events = events_for(events, node_id)
+    annotations = Events(node_events).rules() if node_events else ()
+    trend = Trend(
+        x=x_values,
+        y=values,
+        x_domain=x_domain,
+        domain=domain,
+        lower=lower_ribbon,
+        upper=upper_ribbon,
+        fmt=fmt,
+        direction=direction,
+        role=role,
+        annotations=annotations,
+    )
+    content: list[Region | Adornment] = [Metric(values[-1], _HEADLINE_FORMAT, role=role), trend]
+    if node_events:
+        content.append(Events(node_events, captions=True))
+    if node_id in select_controls:
+        content.append(select_controls[node_id])
+    if node_id in topology.switcher_parents:
+        default_op = topology.breakout_map[node_id][0].op
+        content.append(Badge(_operator_badge_text(default_op), role="neutral"))
+    for badge_text in outcome.gap_badges.get(node_id, ()):
+        content.append(Badge(badge_text, role="unfavorable"))
+    for callout_text in outcome.tradeoff_callouts.get(node_id, ()):
+        content.append(Callout(callout_text, role="unfavorable"))
+    if node_id in topology.roots:
+        content.append(TextBlock(_DISCLAIMER.format(weeks=weeks), variant="caption", max_lines=8))
+
+    resid = residual_by_id.get(node_id)
+    if resid is not None:
+        title, subtitle, width = "Unattributed", resid.subtitle, _CARD_WIDTH
+    else:
+        title, subtitle = titles[node_id], None
+        width = _ROOT_CARD_WIDTH if node_id in topology.roots else _CARD_WIDTH
+    return node_id, Card(title, content=tuple(content), subtitle=subtitle, width=width)
+
+
+def _derive_layer_gap(wires: list[Wire], chrome: CardChrome) -> int:
+    """Mirror `MetricTree`'s own derived gap so labeled wires always fit."""
+    labeled_indegree: dict[str, int] = {}
+    for wire in wires:
+        if wire.label is not None:
+            labeled_indegree[wire.dst] = labeled_indegree.get(wire.dst, 0) + 1
+    max_stack = max(labeled_indegree.values(), default=1) - 1
+    label_offset = chrome.caption_size + 2
+    label_step = chrome.caption_size + 4
+    return max(56, 18 + label_offset + chrome.caption_size + label_step * max_stack)
+
+
+def DriverTree(
+    series: Mapping[str, Sequence[float]],
+    titles: Mapping[str, str],
+    breakouts: Mapping[str, Sequence[Breakout]],
+    fmt: Format,
+    x: Sequence[float],
+    events: Sequence[TimelineEvent] = (),
+    direction: Direction = "higher_is_better",
+    theme: Theme = DEFAULT,
+    chrome: CardChrome = DEFAULT_CHROME,
+    dom_prefix: str = "g0",
+) -> GraphReport:
+    """Build a complete driver-tree report from level series and breakouts.
+
+    The whole topology is derived from ``breakouts``: every parent maps to
+    one or more :class:`Breakout` alternatives, and the node set is every
+    parent plus every alternative's children. A parent with exactly one
+    breakout gets a plain, unswitched decomposition; two or more make it a
+    switcher, rendered as a native ``<select>`` with every alternative's
+    children sharing one (layer, slot) position so only one subtree is ever
+    visible at a time -- proven by the kernel's shared-slot rules, not by
+    hiding logic this module invents.
+
+    Every decomposition is checked against ``coeftable.graph.honesty``'s
+    identity-gap thresholds: additive shortfalls above ``RESIDUAL_WARN`` get
+    an injected ``"Unattributed"`` residual card, multiplicative shortfalls
+    are reported on a badge instead (a ratio gap has no subtraction fix), and
+    anything above ``RESIDUAL_FAIL`` refuses to build. Every edge label's
+    role comes from the *child's own* noise-aware interval, never from the
+    raw contribution sign, so a confident-looking number backed by noisy
+    data still renders muted with a ``" · ns"`` marker.
+    """
+    _validate_scalars(series, titles, breakouts, fmt, direction, chrome)
+    x_values, x_domain, weeks = _prepare_x(x)
+
+    breakout_map = _build_breakout_map(breakouts)
+    topology = _build_topology(breakout_map)
+    node_series = _collect_node_series(topology, series, titles, x_values)
+
+    # `reject_nested_switchers` runs before any honesty arithmetic, so the
+    # clearest error (naming the two nested switcher parents) surfaces first.
+    reject_nested_switchers(topology.switcher_parents, _raw_edges(topology))
+
+    rep = _build_rep_mapping(topology)
+    node_role = _compute_node_roles(topology.node_order, node_series, direction)
+    outcome = _apply_honesty(topology, node_series, node_role, titles)
+    residual_by_id = _register_residuals(topology, outcome, node_series, node_role)
+
+    contribution_by_edge = _compute_contributions(topology, node_series, outcome.residuals)
+    wires = _build_wires(topology, outcome.residuals, contribution_by_edge, node_role, fmt)
+    final_slots = _compute_layout(topology, rep, outcome.residuals)
+    rules, select_controls = _build_switcher_state(topology, outcome.residuals)
+
+    cards = [
+        _build_card(
+            node_id,
+            topology=topology,
+            node_series=node_series,
+            node_role=node_role,
+            titles=titles,
+            events=events,
+            x_values=x_values,
+            x_domain=x_domain,
+            direction=direction,
+            fmt=fmt,
+            weeks=weeks,
+            select_controls=select_controls,
+            outcome=outcome,
+            residual_by_id=residual_by_id,
+        )
+        for node_id in topology.node_order
+    ]
+
+    graph = Graph(
+        nodes=tuple(cards),
+        layout=Slotted(final_slots),
+        wires=tuple(wires),
+        rules=tuple(rules),
+        theme=theme,
+        chrome=chrome,
+        dom_prefix=dom_prefix,
+        layer_gap=_derive_layer_gap(wires, chrome),
+    )
+
+    # The strip is sized to the graph's own measured width, after the graph
+    # exists -- it cannot be known any earlier.
+    strip = timeline_strip(events, x_domain=x_domain, width=graph.measure().width, theme=theme)
+    return GraphReport(graph, header=(strip,))

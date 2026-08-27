@@ -1,6 +1,7 @@
 """Experimental graph value types."""
 
 from coeftable.graph.breakout import Breakout
+from coeftable.graph.driver_tree import DriverTree
 from coeftable.graph.metric_tree import MetricTree
 from coeftable.graph.model import (
     Atom,
@@ -19,6 +20,7 @@ __all__ = [
     "Atom",
     "Breakout",
     "ControlRef",
+    "DriverTree",
     "Graph",
     "GraphReport",
     "MeasuredGraph",
