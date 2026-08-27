@@ -18,7 +18,7 @@ shared-position proof accepts them), wires up ``breakout_control`` /
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import cast
 
@@ -599,22 +599,60 @@ def _build_wires(
 def _cyclic_nodes(
     node_ids: tuple[str, ...], edges: tuple[tuple[str, str], ...]
 ) -> tuple[str, ...]:
-    """Nodes Kahn's algorithm never dequeues: exactly the ones stuck in a cycle."""
+    """Nodes that actually lie on a cycle (Kosaraju SCCs of size > 1, or a self-edge).
+
+    Kahn's algorithm alone only identifies nodes that never reach indegree
+    zero, which is every node stuck *downstream* of a cycle as well as the
+    cycle's own members -- naming all of them would blame innocent
+    descendants. Strongly connected components pin down only the nodes
+    genuinely reachable from themselves.
+    """
     outgoing: dict[str, list[str]] = {node_id: [] for node_id in node_ids}
-    indegree = {node_id: 0 for node_id in node_ids}
+    incoming: dict[str, list[str]] = {node_id: [] for node_id in node_ids}
     for src, dst in edges:
         outgoing[src].append(dst)
-        indegree[dst] += 1
-    ready = [node_id for node_id in node_ids if indegree[node_id] == 0]
-    visited: set[str] = set()
-    while ready:
-        node_id = ready.pop()
-        visited.add(node_id)
-        for child in outgoing[node_id]:
-            indegree[child] -= 1
-            if indegree[child] == 0:
-                ready.append(child)
-    return tuple(sorted(node_id for node_id in node_ids if node_id not in visited))
+        incoming[dst].append(src)
+
+    finish_order: list[str] = []
+    seen: set[str] = set()
+    for start in node_ids:
+        if start in seen:
+            continue
+        seen.add(start)
+        stack: list[tuple[str, Iterator[str]]] = [(start, iter(outgoing[start]))]
+        while stack:
+            node_id, children = stack[-1]
+            child = next((c for c in children if c not in seen), None)
+            if child is None:
+                finish_order.append(node_id)
+                stack.pop()
+            else:
+                seen.add(child)
+                stack.append((child, iter(outgoing[child])))
+
+    component: dict[str, str] = {}
+    for root in reversed(finish_order):
+        if root in component:
+            continue
+        component[root] = root
+        frontier: list[str] = [root]
+        while frontier:
+            node_id = frontier.pop()
+            for parent in incoming[node_id]:
+                if parent not in component:
+                    component[parent] = root
+                    frontier.append(parent)
+
+    self_loops = {src for src, dst in edges if src == dst}
+    component_size: dict[str, int] = {}
+    for root in component.values():
+        component_size[root] = component_size.get(root, 0) + 1
+    cyclic = {
+        node_id
+        for node_id in node_ids
+        if component_size[component[node_id]] > 1 or node_id in self_loops
+    }
+    return tuple(sorted(cyclic))
 
 
 def _check_layout_acyclic(
@@ -891,10 +929,11 @@ def DriverTree(
     wires = _build_wires(topology, outcome.residuals, contribution_by_edge, node_role, fmt)
     final_slots = _compute_layout(topology, rep, outcome.residuals)
 
-    # Residual nodes/edges join the topology only above, in `_register_residuals`
-    # -- so the edges used for switcher descendant traversal must be built only
-    # now, or a nested descendant's own residual leaks as a visible orphan once
-    # its owner is switched away.
+    # Residual nodes joined the topology already, in `_register_residuals` --
+    # their ownership edges are synthesized only here, so the edges used for
+    # switcher descendant traversal must be built only now, or a nested
+    # descendant's own residual leaks as a visible orphan once its owner is
+    # switched away.
     switcher_edges = edges + _residual_edges(outcome.residuals)
     rules, select_controls = _build_switcher_state(topology, outcome.residuals, switcher_edges)
 

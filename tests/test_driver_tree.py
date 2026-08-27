@@ -306,6 +306,26 @@ def test_the_disclaimer_describes_the_actual_span_not_the_observation_count():
     assert "realized 2-week change" not in html
 
 
+def _fractional_span_fixture() -> GraphReport:
+    """Same identity shape as `_fixture`, but `x` spans a fractional number
+    of weeks: exercises `_format_period_count`'s non-whole-number branch,
+    which `_wide_span_fixture` (a whole-number span) never touches."""
+    x = (0.0, 1.25, 2.5)
+    titles = {"total": "Total", "a": "A", "b": "B"}
+    series = {
+        "total": (100.0, 110.0, 121.0),
+        "a": (60.0, 66.0, 72.6),
+        "b": (40.0, 44.0, 48.4),
+    }
+    breakouts = {"total": (Breakout(key="split", label="by split", op="+", children=("a", "b")),)}
+    return DriverTree(series, titles, breakouts, _FMT, x)
+
+
+def test_the_disclaimer_formats_a_fractional_span_without_a_trailing_zero():
+    html = _fractional_span_fixture().as_raw_html()
+    assert "realized 2.5-week change" in html
+
+
 def test_an_event_reaches_every_affected_card_and_no_others():
     report, event = _event_fanout_fixture()
     html = report.as_raw_html()
@@ -749,7 +769,45 @@ def test_a_collapsed_representative_self_edge_is_refused_not_a_recursion_error()
     this used to overflow the recursion stack instead of raising."""
     with pytest.raises(SpecError, match="cyclic") as excinfo:
         _collapsed_self_cycle_fixture()
-    assert "a" in str(excinfo.value)
+    assert str(excinfo.value) == (
+        "breakout layout is cyclic once alternatives collapse to shared positions: a"
+    )
+
+
+def _cycle_with_downstream_leaf_fixture() -> GraphReport:
+    """`q` switches between `a` and its rep `a2`. `a` decomposes into `d`
+    (which collapses back onto `a` via `a2`, closing a two-node cycle
+    `a <-> d`) and a sibling `e` that is a plain downstream leaf -- never
+    itself reachable from the cycle. Kahn's algorithm alone cannot tell
+    `e` apart from the cycle it merely sits behind."""
+    x = (0.0, 1.0, 2.0)
+    titles = {"q": "Q", "a": "A", "a2": "A2", "d": "D", "e": "E"}
+    series = {
+        "q": (1000.0, 1000.0, 1000.0),
+        "a": (1000.0, 1000.0, 1000.0),
+        "a2": (999.0, 999.0, 999.0),
+        "d": (999.0, 999.0, 999.0),
+        "e": (1.0, 1.0, 1.0),
+    }
+    breakouts = {
+        "q": (
+            Breakout(key="opt_a", label="A", op="+", children=("a",)),
+            Breakout(key="opt_a2", label="A2", op="+", children=("a2",)),
+        ),
+        "a": (Breakout(key="split", label="Split", op="+", children=("d", "e")),),
+        "d": (Breakout(key="only", label="Only", op="+", children=("a2",)),),
+    }
+    return DriverTree(series, titles, breakouts, _FMT, x)
+
+
+def test_the_cycle_diagnostic_names_only_the_cyclic_nodes_not_their_downstream():
+    """Regression: naming every node Kahn's algorithm never dequeues blames
+    `e`, a plain downstream leaf, for a cycle it plays no part in."""
+    with pytest.raises(SpecError, match="cyclic") as excinfo:
+        _cycle_with_downstream_leaf_fixture()
+    assert str(excinfo.value) == (
+        "breakout layout is cyclic once alternatives collapse to shared positions: a, d"
+    )
 
 
 def _switcher_with_residual_fixture() -> GraphReport:
