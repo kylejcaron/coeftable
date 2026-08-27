@@ -368,6 +368,9 @@ def endpoint_identity_gap(
     judged at the endpoints too, not smoothed away by an in-between average.
     """
     implied = implied_series(children_series, op)
+    for value in (parent_series[0], parent_series[-1]):
+        if not math.isfinite(value) or value == 0.0:
+            raise SpecError("decomposition parent values must be finite and non-zero")
     return max(
         abs(parent_series[0] - implied[0]) / abs(parent_series[0]),
         abs(parent_series[-1] - implied[-1]) / abs(parent_series[-1]),
@@ -408,23 +411,28 @@ def infer_op(parent: Sequence[float], children: Sequence[Sequence[float]]) -> st
     therefore optional -- it is derivable from the numbers the caller already
     supplied.
 
-    Either candidate may be undefined rather than merely worse. A series that
-    touches zero or goes negative has no logarithm, so `"x"` raises instead of
-    scoring; that is an answer too, and the additive reading wins by default.
+    A genuine additive series with signed or zero children still scores under
+    `"x"`; its product simply has a much larger gap, so `"+"` wins by score.
+    A candidate is undefined only when the shared gap calculation cannot be
+    made, such as when a parent value is zero or non-finite.
 
     Raises `SpecError` when neither reading explains the parent, which is a
     more useful failure than arbitrarily adopting one and then blaming the
     caller's arithmetic for the gap it leaves.
     """
     scored: dict[str, float] = {}
+    failures: list[SpecError] = []
     for candidate in ("+", "x"):
         try:
             scored[candidate] = combined_identity_gap(parent, children, candidate)
-        except SpecError:
-            # Undefined for this data (a non-positive series under "x"), which
-            # eliminates the candidate rather than ranking it last.
+        except SpecError as exc:
+            # Undefined for this candidate, so eliminate it rather than
+            # ranking it last.
+            failures.append(exc)
             continue
     if not scored:
+        if failures and all(str(exc) == str(failures[0]) for exc in failures[1:]):
+            raise failures[0]
         raise SpecError(
             "a decomposition's operator could not be inferred: these children combine "
             "into neither a sum nor a product of the parent"

@@ -9,9 +9,11 @@ from coeftable.graph.honesty import (
     RESIDUAL_FAIL,
     RESIDUAL_WARN,
     TRADEOFF_R,
+    endpoint_identity_gap,
     endpoint_interval,
     identity_gap,
     implied_series,
+    infer_op,
     level_noise,
     log_ratio,
     ribbon_bounds,
@@ -90,6 +92,16 @@ def test_identity_gap_measures_mean_relative_shortfall():
     parent = (100.0, 100.0)
     children = ((40.0, 30.0),)  # short by 60% then 70%
     assert identity_gap(parent, children, "+") == pytest.approx(0.65)
+
+
+def test_endpoint_identity_gap_rejects_a_zero_parent_endpoint():
+    with pytest.raises(SpecError, match="finite and non-zero"):
+        endpoint_identity_gap((0.0, 10.0), ((0.0, 10.0),), "+")
+
+
+def test_infer_op_reports_a_zero_parent_value_directly():
+    with pytest.raises(SpecError, match="decomposition parent values must be finite and non-zero"):
+        infer_op((0.0, 10.0), ((0.0, 10.0),))
 
 
 def test_tradeoff_pairs_flag_only_strongly_negative_change_correlation():
