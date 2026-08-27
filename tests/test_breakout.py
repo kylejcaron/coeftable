@@ -828,3 +828,44 @@ def test_a_descendant_shared_across_a_nested_boundary_is_rejected():
     )
     with pytest.raises(SpecError, match=r"'shared'.*more than one breakout switcher"):
         reject_switcher_conjunctions({"revenue": rev_breakouts, "users": users_breakouts}, edges)
+
+
+def test_a_nested_switchers_parent_with_a_second_incoming_edge_is_accepted():
+    # `users` is nested inside `revenue`'s `drivers` alternative, same as
+    # the plain-nesting shape, but `users` also has a second incoming edge
+    # from `extra`, a node entirely outside `revenue`'s switcher. Naive
+    # subsumption modeling -- checking only whether `revenue`'s own edge to
+    # `users` is still reachable -- would see `extra -> users` keep `users`
+    # nominally live and conclude `revenue`'s gate does not subsume `users`'
+    # own gate, wrongly treating `sessions` (a `users` descendant) as gated
+    # by two independent switchers. But `users` is `region`'s own direct
+    # child once `drivers` is unselected, so `revenue`'s rule always hides
+    # it -- and everything beneath it -- regardless of `extra`'s edge,
+    # exactly as `_hidden_subtree` emits. This must not raise, and the
+    # emitted `region` rule must actually hide the whole nested subtree.
+    rev_breakouts = (
+        Breakout(key="drivers", label="Drivers", op="x", children=("users", "aov")),
+        Breakout(key="region", label="Region", op="+", children=("na", "intl")),
+    )
+    users_breakouts = (
+        Breakout(key="funnel", label="Funnel", op="x", children=("sessions", "conv")),
+        Breakout(key="country", label="Country", op="+", children=("us_u", "eu_u")),
+    )
+    edges = (
+        ("revenue", "users"),
+        ("revenue", "aov"),
+        ("revenue", "na"),
+        ("revenue", "intl"),
+        ("extra", "users"),
+        ("users", "sessions"),
+        ("users", "conv"),
+        ("users", "us_u"),
+        ("users", "eu_u"),
+    )
+    reject_switcher_conjunctions(
+        {"revenue": rev_breakouts, "users": users_breakouts}, edges
+    )  # must not raise
+
+    drivers, region = partition_rules("revenue", "rev_breakout", rev_breakouts, edges)
+    assert set(region.hide_cards) == {"users", "aov", "sessions", "conv", "us_u", "eu_u"}
+    assert set(drivers.hide_cards) == {"na", "intl"}

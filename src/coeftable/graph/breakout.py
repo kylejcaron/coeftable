@@ -8,15 +8,17 @@ emit exactly the shape the graph kernel's shared-position proof requires: one
 external keyed select whose option count matches the alternative count, and
 one single-condition rule per option hiding every other option's cards.
 
-A switcher nested inside another switcher's alternative is legal: the
-ancestor and its descendant are ordered, so the ancestor's own rule already
-hides the nested switcher's parent -- and everything beneath it, including
-its own alternatives -- whenever it excludes that branch, without needing
-the nested switcher's cooperation. `reject_switcher_conjunctions` guards the
-one shape the kernel proof still cannot cover: a descendant whose only
-paths run through two switchers with no such ordering between them -- a
-genuine conjunction across independent selects that no single switcher's
-own liveness proof can see.
+A switcher nested inside another switcher's alternative is ordinary and
+supported: when the ancestor's own excluding option is the branch that
+carries the nested switcher, the ancestor's rule alone already hides the
+nested switcher's parent -- and everything beneath it, including its own
+alternatives -- without needing the nested switcher's cooperation.
+Nesting grants no blanket exemption, though: `reject_switcher_conjunctions`
+still refuses a card whose visibility depends on two switcher gates that
+neither one subsumes, whether those two switchers sit in unrelated
+branches or one is nested inside the other but reachable through some
+*other*, non-excluded branch of its ancestor -- a genuine conjunction no
+single switcher's own liveness proof can see.
 """
 
 from __future__ import annotations
@@ -190,6 +192,29 @@ def _descendant_closure(
     return closure
 
 
+def _visible_from_roots(roots: frozenset[str], adjacency: dict[str, tuple[str, ...]]) -> set[str]:
+    """Every node reachable from some root, roots themselves included."""
+    visible = set(roots)
+    for root in roots:
+        visible |= _reachable(root, adjacency)
+    return visible
+
+
+def _prune_forced_hidden(
+    adjacency: dict[str, tuple[str, ...]], forced_hidden: frozenset[str]
+) -> dict[str, tuple[str, ...]]:
+    """Zero every forced-hidden node's own outgoing edges.
+
+    Blocks traversal through a forced-hidden node regardless of how else it
+    is reached -- the exact rule `_hidden_subtree` applies to an unselected
+    alternative's own direct children, shared here so the switcher
+    subsumption model in `_drop_subsumed_gates` and
+    `_reject_orphanable_descendants` cannot disagree with what rule
+    emission actually hides again.
+    """
+    return {node: () if node in forced_hidden else targets for node, targets in adjacency.items()}
+
+
 def _hidden_subtree(
     parent: str,
     breakouts: tuple[Breakout, ...],
@@ -228,12 +253,8 @@ def _hidden_subtree(
         if resid_id is not None:
             unselected_direct.add(resid_id)
 
-    pruned_adjacency = {
-        node: () if node in unselected_direct else targets for node, targets in adjacency.items()
-    }
-    visible = set(roots)
-    for root in roots:
-        visible |= _reachable(root, pruned_adjacency)
+    forced_hidden = frozenset(unselected_direct)
+    visible = _visible_from_roots(roots, _prune_forced_hidden(adjacency, forced_hidden))
 
     hidden: list[str] = []
     seen: set[str] = set()
@@ -330,16 +351,21 @@ def _gating_switchers(
 def _prune_gate_edges(
     adjacency: dict[str, tuple[str, ...]], gates: Mapping[str, frozenset[str]]
 ) -> dict[str, tuple[str, ...]]:
-    """Remove each gate's own parent to reaching-child edges from `adjacency`.
+    """Block traversal through every gate's reaching children.
 
-    Simulates the one selection that hides every one of those children --
-    without touching a reaching child's own further descendants, which
-    stay reachable through any other surviving path.
+    A reaching child is a direct child of the option a gate's own switcher
+    would need to select to exclude the node it gates -- the exact
+    position `_hidden_subtree` always force-hides, regardless of any other
+    incoming edge. Zeroing each one's own outgoing edges here, rather than
+    only removing the edge from its switcher parent, is what keeps this
+    reachability model from disagreeing with what `_hidden_subtree`
+    actually emits: a reaching child with a second incoming edge from
+    elsewhere must not read as leaving some still-live path past it.
     """
-    return {
-        src: tuple(dst for dst in dsts if dst not in gates.get(src, frozenset()))
-        for src, dsts in adjacency.items()
-    }
+    forced_hidden: set[str] = set()
+    for reaching in gates.values():
+        forced_hidden.update(reaching)
+    return _prune_forced_hidden(adjacency, frozenset(forced_hidden))
 
 
 def _converge_gates(
@@ -382,28 +408,29 @@ def _drop_subsumed_gates(
     """Drop a gate whose entire switcher another gate already excludes alone.
 
     An ancestor and a nested descendant switcher are ordered, not always
-    independent -- but only when the ancestor's *own* identified gate,
-    pruned by itself, already puts the descendant switcher's own parent
-    out of reach: only then does the ancestor's rule alone hide everything
-    beneath it, without needing the nested switcher's cooperation. A
-    nested switcher gating `node` through a branch the ancestor's own gate
-    never touches -- a sibling alternative, not the branch carrying the
-    nested switcher -- is not subsumed by it and describes a real,
-    separate risk. Checking actual reachability after the *other* gate's
-    own pruning, rather than asking whether one switcher's parent is
-    merely upstream of another's in the raw graph, is what tells the two
-    shapes apart.
+    independent -- but only when the ancestor's *own* identified gate
+    already excludes the descendant switcher's own parent: only then does
+    the ancestor's rule alone hide everything beneath it, without needing
+    the nested switcher's cooperation. That exclusion holds either because
+    `parent` is itself one of the *other* gate's reaching children -- a
+    direct child of an unselected option is always hidden regardless of
+    what else can reach it, the same rule `_hidden_subtree` applies -- or
+    because, once those reaching children are pruned `_hidden_subtree`'s
+    way, `parent` has no surviving path left from any root. A nested
+    switcher gating `node` through a branch the ancestor's own gate never
+    touches -- a sibling alternative, not the branch carrying the nested
+    switcher -- is not subsumed by it and describes a real, separate risk.
     """
     dropped: set[str] = set()
     for parent in gates:
         for other, other_reaching in gates.items():
             if other == parent:
                 continue
+            if parent in other_reaching:
+                dropped.add(parent)
+                break
             pruned = _prune_gate_edges(adjacency, {other: other_reaching})
-            visible = set(roots)
-            for root in roots:
-                visible |= _reachable(root, pruned)
-            if parent not in visible:
+            if parent not in _visible_from_roots(roots, pruned):
                 dropped.add(parent)
                 break
     return {parent: reaching for parent, reaching in gates.items() if parent not in dropped}
@@ -446,11 +473,9 @@ def _reject_orphanable_descendants(
         )
         if len(gates) < 2:
             continue
-        pruned = _prune_gate_edges(adjacency, gates)
-        visible = set(roots)
-        for root in roots:
-            visible |= _reachable(root, pruned)
-        if node not in visible:
+        forced_hidden = frozenset().union(*gates.values())
+        visible = _visible_from_roots(roots, _prune_gate_edges(adjacency, gates))
+        if node in forced_hidden or node not in visible:
             switchers = ", ".join(sorted(gates))
             raise SpecError(
                 f"{node!r} visibility depends on more than one breakout switcher: {switchers}"
@@ -460,7 +485,7 @@ def _reject_orphanable_descendants(
 def reject_switcher_conjunctions(
     breakout_map: Mapping[str, Sequence[Breakout]], edges: Sequence[tuple[str, str]]
 ) -> None:
-    """Reject a descendant gated by two independent (non-nested) switchers.
+    """Reject a descendant gated by two switcher options that neither subsumes.
 
     `breakout_map` maps every switcher's parent node to its own declared
     `Breakout` alternatives -- the real option boundaries, read directly
@@ -468,15 +493,20 @@ def reject_switcher_conjunctions(
     children. A parent with fewer than two breakouts is not a real
     switcher and is ignored.
 
-    Nesting a switcher inside another switcher's alternative is legal and
-    unchecked here: an ancestor and its descendant are ordered, so the
-    ancestor's own rule alone suffices whenever it excludes the branch
-    carrying the descendant switcher. What this still refuses is a
-    descendant whose only paths run through two switchers with no such
-    ordering between them -- a genuine conjunction across independent
-    selects, for the reasons in `_reject_orphanable_descendants`.
-    Switchers in disjoint branches that do not share a descendant are
-    unaffected either way.
+    Ordinary nesting -- a switcher declared inside another switcher's own
+    alternative -- is supported: when the ancestor's excluding option is
+    the branch that carries the nested switcher, the ancestor's own rule
+    alone already hides the nested switcher's parent and everything
+    beneath it, so the nested switcher's own gate is subsumed and drops
+    out of consideration (`_drop_subsumed_gates`). What this still refuses
+    is a descendant whose visibility depends on two switcher gates where
+    neither subsumes the other -- whether that is two switchers in
+    unrelated branches, or a nested switcher reaching a descendant through
+    some *other* branch of its own ancestor, one the ancestor's excluding
+    option never touches. Both shapes leave a real, selectable combination
+    with nothing pointing at the descendant, for the reasons in
+    `_reject_orphanable_descendants`. Switchers in disjoint branches that
+    do not share a descendant are unaffected either way.
     """
     adjacency = _build_adjacency(edges)
     _reject_orphanable_descendants(breakout_map, edges, adjacency)

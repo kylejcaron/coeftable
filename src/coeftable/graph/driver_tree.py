@@ -974,9 +974,12 @@ def DriverTree(
 
     # `reject_switcher_conjunctions` runs before any honesty arithmetic, so
     # the clearest error (naming the descendant and its two independent
-    # gating switchers) surfaces first. Nesting is legal and passes
-    # straight through; only a genuine conjunction across two switchers
-    # with no ordering between them is refused.
+    # gating switchers) surfaces first. Ordinary nesting is supported: an
+    # ancestor's own rule already covers a nested switcher whenever its
+    # excluding option is the branch carrying it. What still gets refused
+    # is a card whose visibility depends on two switcher gates that
+    # neither one subsumes -- unrelated switchers or a nested switcher
+    # reached through some other branch of its own ancestor alike.
     reject_switcher_conjunctions(topology.breakout_map, edges)
 
     rep = _build_rep_mapping(topology)
