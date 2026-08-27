@@ -557,6 +557,7 @@ def _graph_measure(
     slots: tuple[Slot, ...],
     wires: tuple[Wire, ...],
     *,
+    collapsible: tuple[str, ...],
     gap: int,
     layer_gap: int,
     padding: int,
@@ -581,8 +582,14 @@ def _graph_measure(
         )
         top = padding + layer_offsets[slot.layer]
         boxes.append((card_id, (left, top, footprint.width, footprint.expanded_height)))
+    bottom_layer = max(slot.layer for slot in slots)
+    nub_overhang = (
+        max(0, 18 - padding)
+        if any(slot.layer == bottom_layer and slot.card_id in collapsible for slot in slots)
+        else 0
+    )
     width = sum(column_widths) + gap * (len(column_widths) - 1) + 2 * padding
-    height = sum(layer_heights) + layer_gap * (len(layer_heights) - 1) + 2 * padding
+    height = sum(layer_heights) + layer_gap * (len(layer_heights) - 1) + 2 * padding + nub_overhang
     footprint = MeasuredGraph(width, height, tuple(boxes))
     anchor_offsets: list[tuple[str, tuple[AnchorOffset, AnchorOffset]]] = []
     for card_id, _ in nodes:
@@ -689,6 +696,10 @@ class Graph:
         wires = _graph_wires(self.wires, known_cards=known_cards, layers_by_id=layers_by_id)
         wire_ids = tuple(wire.id for wire in wires)
         collapsible = _graph_collapsible(self.collapsible, known_cards)
+        if collapsible and self.layer_gap < 18:
+            raise SpecError(
+                "Graph.layer_gap must be at least 18 when collapsible cards are present"
+            )
         cards, rebound_nodes = _graph_rebound_nodes(nodes, theme=self.theme, chrome=self.chrome)
         card_options = {node_id: card.control_options() for node_id, card in rebound_nodes}
         visibility, visibility_wires = _graph_visibility(
@@ -735,6 +746,7 @@ class Graph:
                 tuple(rebound_nodes),
                 slots,
                 wires,
+                collapsible=collapsible,
                 gap=self.gap,
                 layer_gap=self.layer_gap,
                 padding=self.chrome.padding,

@@ -79,7 +79,8 @@ def _nub_markup(
     rules: list[str] = []
     for card_id, nub_id in compiled.nub_dom_ids.items():
         markup[card_id] = (
-            f'<input type="checkbox" id="{nub_id}" style="display:none">'
+            f'<input type="checkbox" id="{nub_id}" aria-label="Toggle downstream visibility" '
+            f'style="position:absolute;width:1px;height:1px;margin:-1px;clip-path:inset(50%);opacity:0">'
             f'<label for="{nub_id}" style="position:absolute;left:50%;transform:translateX(-50%);'
             f"top:100%;width:18px;height:18px;box-sizing:border-box;"
             f"display:flex;align-items:center;justify-content:center;border:1px solid "
@@ -92,6 +93,7 @@ def _nub_markup(
                 f"#{nub_id} + label span:last-child{{display:none}}",
                 f"#{nub_id}:checked + label span:first-child{{display:none}}",
                 f"#{nub_id}:checked + label span:last-child{{display:inline}}",
+                f"#{nub_id}:focus-visible + label{{outline:2px solid {_esc(graph.theme.axis)}}}",
             )
         )
     return markup, "".join(rules)

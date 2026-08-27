@@ -275,6 +275,24 @@ def test_graph_measure_single_card_is_exact_and_cached():
     )
 
 
+def test_graph_measure_covers_bottom_layer_nub_overhang_only_when_needed():
+    plain = _plain_graph()
+    collapsible = _plain_graph(collapsible=("root",))
+    footprint = plain.nodes[0][1].measure()
+    base_height = footprint.expanded_height + 2 * plain.chrome.padding
+
+    assert plain.measure().height == base_height
+    assert collapsible.measure().height == base_height + 2
+
+
+def test_graph_rejects_collapsible_nubs_in_too_small_layer_gap():
+    with pytest.raises(
+        SpecError,
+        match=re.escape("Graph.layer_gap must be at least 18 when collapsible cards are present"),
+    ):
+        _plain_graph(collapsible=("root",), layer_gap=10)
+
+
 def test_graph_measure_sums_different_column_widths_and_layer_heights():
     left = Card("left", width=200)
     right = Card("right", width=301)
@@ -1814,10 +1832,18 @@ def test_graph_renderer_serializes_compiled_rules_and_nub_glyph_swap():
         prefix = ".rules-canvas" + "".join(f":has({condition})" for condition in conditions)
         expected = ",".join(f"{prefix} #{target}" for target in targets)
         assert f"{expected}{{display:none}}" in style
-    assert 'type="checkbox" id="rules-nub-1" style="display:none"' in output
+    assert (
+        '<input type="checkbox" id="rules-nub-1" aria-label="Toggle downstream visibility" '
+        'style="position:absolute;width:1px;height:1px;margin:-1px;clip-path:inset(50%);opacity:0">'
+    ) in output
+    assert (
+        'style="display:none"'
+        not in output[output.index('<input type="checkbox"') : output.index("</label>")]
+    )
     assert "<span>−</span><span>+</span></label>" in output
     assert "#rules-nub-1:checked + label span:first-child{display:none}" in style
     assert "#rules-nub-1:checked + label span:last-child{display:inline}" in style
+    assert "#rules-nub-1:focus-visible + label{outline:2px solid #616161}" in style
 
 
 def test_graph_renderer_contains_nubs_inside_their_card_wrappers():
@@ -1831,7 +1857,10 @@ def test_graph_renderer_contains_nubs_inside_their_card_wrappers():
     output = graph.as_raw_html()
     source_start = output.index('<div id="contain-card-0"')
     target_start = output.index('<div id="contain-card-1"')
-    nub_input = '<input type="checkbox" id="contain-nub-0" style="display:none">'
+    nub_input = (
+        '<input type="checkbox" id="contain-nub-0" aria-label="Toggle downstream visibility" '
+        'style="position:absolute;width:1px;height:1px;margin:-1px;clip-path:inset(50%);opacity:0">'
+    )
     nub_label = '<label for="contain-nub-0"'
     input_start = output.index(nub_input)
     label_start = output.index(nub_label)
