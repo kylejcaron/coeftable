@@ -466,12 +466,29 @@ def test_a_custom_period_label_labels_both_the_strip_and_every_card_axis():
     # period_label is the one parameter that makes the report period-neutral:
     # it must reach both the shared timeline strip's ticks/pins and each
     # card's own sparkline axis, so the two agree on notation.
+    #
+    # Assert against the two surfaces separately rather than against the whole
+    # document. A single search over the combined HTML passes as long as either
+    # surface is labelled, and the strip only exists here because `_fixture`
+    # substitutes a default event when none is passed -- so a search over
+    # everything would keep passing if that unrelated default ever changed,
+    # silently dropping strip coverage. Pass the event explicitly and pin each
+    # surface on its own.
     def month_label(index: float) -> str:
         return f"M{int(index)}"
 
-    html = _fixture(period_label=month_label).as_raw_html()
-    assert re.search(r">M\d+<", html)
-    assert not re.search(r">W\d+<", html)
+    event = TimelineEvent(at=1.0, label="launch", color="#c33", affects=("revenue",))
+    report = _fixture(period_label=month_label, events=(event,))
+
+    strip = report.header[0]
+    assert isinstance(strip, InlineSvg)
+    assert re.search(r">M\d+<", strip.svg), "strip ticks must use the custom label"
+    assert not re.search(r">W\d+<", strip.svg)
+    assert f"{event.label} \u00b7 M1" in strip.svg, "the event pin must use it too"
+
+    cards = report.graph.as_raw_html()
+    assert re.search(r">M\d+<", cards), "card axes must use the custom label"
+    assert not re.search(r">W\d+<", cards)
 
 
 def test_an_event_reaches_every_affected_card_and_no_others():
