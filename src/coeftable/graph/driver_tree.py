@@ -850,13 +850,20 @@ def _residual_domain(values: Sequence[float]) -> tuple[float, float]:
     strictly positive input) is not defined for it. Mirror `ribbon_domain`'s
     own flat-series guard instead: a flat residual has zero span, so fall
     back to the level's own magnitude, then to 1.0 for a flat-at-zero
-    residual.
+    residual. That fallback pad can still underflow against a
+    subnormal-magnitude residual, so an endpoint the padding fails to move is
+    nudged apart with `math.nextafter` -- the returned domain is never
+    degenerate.
     """
     lo_value = _finite(min(values), name="residual domain")
     hi_value = _finite(max(values), name="residual domain")
     span = (hi_value - lo_value) or abs(hi_value) or 1.0
     lo = _finite(lo_value - 0.1 * span, name="residual domain")
     hi = _finite(hi_value + 0.1 * span, name="residual domain")
+    if lo == lo_value:
+        lo = math.nextafter(lo_value, -math.inf)
+    if hi == hi_value:
+        hi = math.nextafter(hi_value, math.inf)
     return (lo, hi)
 
 

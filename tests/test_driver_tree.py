@@ -24,6 +24,7 @@ from coeftable.graph.driver_tree import (
     _CARD_WIDTH,
     _ROOT_CARD_WIDTH,
     _compute_contributions,
+    _residual_domain,
     _Topology,
 )
 from coeftable.graph.honesty import log_ratio
@@ -1488,3 +1489,17 @@ def test_a_trade_off_host_resolves_by_id_when_sibling_titles_collide():
 
     assert _has_tradeoff_callout(cards["a"])
     assert not _has_tradeoff_callout(cards["b"])
+
+
+def test_a_residual_domain_stays_nondegenerate_for_a_flat_subnormal_series():
+    # A flat series falls back to padding by its own magnitude, but at
+    # subnormal scale that pad underflows to zero and leaves both endpoints on
+    # the original value. A domain whose bounds are equal has no extent to
+    # project a trend into, so the endpoints are nudged apart instead.
+    lo, hi = _residual_domain([5e-324] * 4)
+    assert lo < hi
+
+    # The ordinary flat cases the fallback was written for still pad normally.
+    assert _residual_domain([0.0] * 4) == (-0.1, 0.1)
+    normal_lo, normal_hi = _residual_domain([3.0] * 4)
+    assert (normal_lo, normal_hi) == (2.7, 3.3)
