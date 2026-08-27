@@ -27,7 +27,7 @@ from coeftable.graph.driver_tree import (
     _residual_domain,
     _Topology,
 )
-from coeftable.graph.honesty import log_ratio
+from coeftable.graph.honesty import RESIDUAL_WARN, identity_gap, log_ratio
 from coeftable.graph.timeline import TimelineEvent
 from coeftable.svg import _projector
 
@@ -1556,3 +1556,51 @@ def test_a_strip_title_earns_a_strip_even_with_no_events():
 def test_strip_title_must_be_a_str_or_none():
     with pytest.raises(SpecError, match="strip_title must be a str or None"):
         _fixture(strip_title=123)  # ty: ignore[invalid-argument-type]
+
+
+def test_an_additive_shortfall_at_the_endpoint_alone_still_injects_a_residual():
+    # An additive slice's edge labels are endpoint deltas, exactly like a
+    # factorization's are endpoint log-shares. A shortfall confined to the last
+    # observation therefore misstates every label, but averaged over a long
+    # window its mean relative gap falls under RESIDUAL_WARN -- so the mean
+    # alone would inject nothing and refuse nothing while the numbers on the
+    # page failed to add up to the parent's own move.
+    weeks = 200
+    parent = [1000.0 * (1.002**i) for i in range(weeks)]
+    first = [value * 0.6 for value in parent]
+    second = [value * 0.4 for value in parent]
+    second[-1] = second[-1] * 0.70  # 12% shortfall, last point only
+
+    mean_gap = identity_gap(parent, [first, second], "+")
+    assert mean_gap < RESIDUAL_WARN, "fixture must dilute below the mean threshold"
+
+    report = DriverTree(
+        {"p": parent, "a": first, "b": second},
+        {"p": "Parent", "a": "A", "b": "B"},
+        {"p": (Breakout(key="k", label="by parts", op="+", children=("a", "b")),)},
+        _FMT,
+        list(range(weeks)),
+    )
+    html = report.as_raw_html()
+    assert "Unattributed" in html
+
+    # With the residual present the rendered edges reconcile with the parent.
+    rendered = " ".join(wire.label or "" for wire in report.graph.wires)
+    contributions = [float(match) for match in re.findall(r"([+-]\d+\.\d)%", rendered)]
+    parent_change = (parent[-1] - parent[0]) / parent[0] * 100.0
+    assert len(contributions) == 3  # two declared children plus the residual
+    assert abs(sum(contributions) - parent_change) < 0.5
+
+
+def test_x_coordinates_spanning_an_infinite_range_are_refused():
+    # Each coordinate is finite and the gaps are equal, but the span overflows.
+    # It feeds the period count and the plot projection, so an infinite span
+    # has to be refused here rather than surfacing as a raw arithmetic error.
+    with pytest.raises(SpecError, match="spans too many orders of magnitude"):
+        DriverTree(
+            {"p": (10.0, 20.0, 30.0), "a": (4.0, 8.0, 12.0), "b": (6.0, 12.0, 18.0)},
+            {"p": "P", "a": "A", "b": "B"},
+            {"p": (Breakout(key="k", label="kk", op="+", children=("a", "b")),)},
+            _FMT,
+            (-1e308, 0.0, 1e308),
+        )
