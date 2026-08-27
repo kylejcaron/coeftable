@@ -641,7 +641,9 @@ def _graph_measure(
                 xg = padding + column_offsets[src_slot.slot] - gap / 2
             y_a = my1 + layer_gap / 2
             y_b = my2 - layer_gap / 2
-            xg = max(2, min(footprint.width - 2, xg))
+            # Clamp into the canvas margin: padding/2 stays left of the first
+            # column even under tiny custom padding.
+            xg = max(padding / 2, min(footprint.width - padding / 2, xg))
             path = (
                 f"M {x0:g},{y0:g} L {x0:g},{src_layer_bottom:g} "
                 f"C {x0:g},{my1:g} {xg:g},{my1:g} {xg:g},{y_a:g} "
