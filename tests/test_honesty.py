@@ -1,4 +1,6 @@
 import math
+import random
+import sys
 
 import pytest
 
@@ -9,6 +11,7 @@ from coeftable.graph.honesty import (
     TRADEOFF_R,
     endpoint_interval,
     identity_gap,
+    implied_series,
     level_noise,
     ribbon_bounds,
     ribbon_domain,
@@ -230,3 +233,94 @@ def test_ribbon_bounds_refuses_a_factor_that_would_be_infinite():
     series = (1e-300, 1e300, 1e-300, 1e300)
     with pytest.raises(SpecError, match="orders of magnitude"):
         ribbon_bounds(series)
+
+
+def test_ribbon_bounds_refuses_a_multiplied_bound_that_would_be_infinite():
+    # Each level here is close enough to float max, and the +/-2 sigma noise
+    # small enough, that the ribbon FACTOR itself is finite (~1.01) - the
+    # exponential guard alone would let this through unnoticed - but
+    # multiplying an already-near-max, finite, positive level by that
+    # finite factor still overflows to infinity.
+    near_max = sys.float_info.max
+    series = (near_max * 0.99, near_max * 0.999, near_max * 0.995, near_max * 0.998)
+    sigma = level_noise(series)
+    factor = math.exp(2.0 * sigma)
+    assert math.isfinite(factor)
+    with pytest.raises(SpecError, match="orders of magnitude"):
+        ribbon_bounds(series)
+
+
+def _random_positive_finite(rng: random.Random) -> float:
+    """A positive float spanning subnormal to near-max magnitude."""
+    exponent = rng.uniform(-323, 308)
+    mantissa = rng.uniform(1.0, 9.999999)
+    return mantissa * (10.0**exponent)
+
+
+def _random_finite(rng: random.Random) -> float:
+    """A signed float spanning subnormal to near-max magnitude."""
+    return rng.choice((1.0, -1.0)) * _random_positive_finite(rng)
+
+
+def _flatten(value):
+    if isinstance(value, tuple):
+        for item in value:
+            yield from _flatten(item)
+    else:
+        yield value
+
+
+_PROBE_TRIALS = 400
+
+
+def test_every_public_function_stays_finite_or_raises_spec_error_across_magnitudes():
+    # Several hundred random series spanning subnormal to near-max
+    # magnitude, run through every public function in this module. An
+    # uncaught exception of any other type, or a non-finite float slipping
+    # past a return, fails the test - closing the overflow defect class
+    # instead of only the one multiplication site that prompted this.
+    rng = random.Random(20260827)  # noqa: S311  -- deterministic fuzz seed, not security-sensitive
+    for _ in range(_PROBE_TRIALS):
+        length = rng.randint(3, 8)
+        series = tuple(_random_positive_finite(rng) for _ in range(length))
+
+        for fn in (weekly_log_changes, level_noise, endpoint_interval, ribbon_bounds):
+            try:
+                result = fn(series)
+            except SpecError:
+                continue
+            assert all(math.isfinite(value) for value in _flatten(result))
+
+        try:
+            lower, upper = ribbon_bounds(series)
+            domain = ribbon_domain(series, lower, upper)
+            assert all(math.isfinite(value) for value in domain)
+        except SpecError:
+            pass
+
+        children = tuple(
+            tuple(_random_finite(rng) for _ in range(length)) for _ in range(rng.randint(1, 4))
+        )
+        op = rng.choice(("+", "x"))
+        try:
+            implied = implied_series(children, op)
+            assert all(math.isfinite(value) for value in implied)
+        except SpecError:
+            pass
+
+        parent = tuple(_random_finite(rng) for _ in range(length))
+        try:
+            gap = identity_gap(parent, children, op)
+            assert math.isfinite(gap)
+        except SpecError:
+            pass
+
+        named = tuple(
+            (f"sibling-{index}", tuple(_random_positive_finite(rng) for _ in range(length)))
+            for index in range(rng.randint(2, 4))
+        )
+        try:
+            pairs = tradeoff_pairs(named)
+            assert all(math.isfinite(correlation) for _, _, correlation in pairs)
+        except SpecError:
+            pass

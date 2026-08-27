@@ -70,9 +70,22 @@ def level_noise(series: Sequence[float]) -> float:
 def _overflow_error(magnitude: float, *, purpose: str) -> SpecError:
     """Build the shared "too many orders of magnitude" error."""
     return SpecError(
-        f"a log magnitude of {magnitude!r} spans too many orders of magnitude "
-        f"to express as {purpose}"
+        f"a magnitude of {magnitude!r} spans too many orders of magnitude to express as {purpose}"
     )
+
+
+def _require_finite(values: Sequence[float], *, magnitude: float, purpose: str) -> None:
+    """Raise the shared overflow error unless every completed value is finite.
+
+    Every guard in this module up to this point protects an intermediate
+    step (an exponential, a factor), but a later scale, multiply, or sum can
+    still push an already-huge-but-finite intermediate past float range.
+    This checks the value actually about to be returned, not just the step
+    that most often overflows. `magnitude` is the input driving the
+    computation, since the overflowed result itself isn't useful to report.
+    """
+    if not all(math.isfinite(value) for value in values):
+        raise _overflow_error(magnitude, purpose=purpose)
 
 
 def _guarded_exp(exponent: float, *, purpose: str) -> float:
@@ -101,8 +114,7 @@ def _percent(log_change: float) -> float:
     """
     purpose = "a percentage change"
     percent = 100.0 * (_guarded_exp(log_change, purpose=purpose) - 1.0)
-    if not math.isfinite(percent):
-        raise _overflow_error(log_change, purpose=purpose)
+    _require_finite((percent,), magnitude=log_change, purpose=purpose)
     return percent
 
 
@@ -129,11 +141,12 @@ def ribbon_bounds(
     """Multiplicative +/-2 sigma bounds around each observed level."""
     values = _levels(series, name="series")
     sigma = level_noise(values)
-    factor = _guarded_exp(2.0 * sigma, purpose="a +/-2 sigma ribbon")
-    return (
-        tuple(value / factor for value in values),
-        tuple(value * factor for value in values),
-    )
+    purpose = "a +/-2 sigma ribbon"
+    factor = _guarded_exp(2.0 * sigma, purpose=purpose)
+    lower = tuple(value / factor for value in values)
+    upper = tuple(value * factor for value in values)
+    _require_finite((*lower, *upper), magnitude=2.0 * sigma, purpose=purpose)
+    return (lower, upper)
 
 
 def ribbon_domain(
@@ -147,8 +160,36 @@ def ribbon_domain(
     the level's own magnitude, then to 1.0 for a flat-at-zero series.
     """
     values = tuple(float(value) for value in series)
+    lower_values = tuple(float(value) for value in lower)
+    upper_values = tuple(float(value) for value in upper)
+    if not (values and lower_values and upper_values):
+        raise SpecError("ribbon domain requires at least one observation")
+    for value in (*values, *lower_values, *upper_values):
+        if not math.isfinite(value):
+            raise SpecError("ribbon domain values must be finite")
     span = (max(values) - min(values)) or abs(max(values)) or 1.0
-    return (min(lower) - 0.1 * span, max(upper) + 0.1 * span)
+    lo = min(lower_values) - 0.1 * span
+    hi = max(upper_values) + 0.1 * span
+    _require_finite((lo, hi), magnitude=span, purpose="a ribbon domain")
+    return (lo, hi)
+
+
+def _combine_column(column: tuple[float, ...], op: str) -> float:
+    """Sum or multiply one pointwise column, refusing an out-of-range result.
+
+    `math.fsum` itself raises `OverflowError` when a finite-input sum can't
+    fit in float range; `math.prod` instead returns infinity silently. Both
+    are folded into the module's own overflow error so neither leaks past
+    this module or returns a non-finite series silently.
+    """
+    purpose = "an implied series"
+    magnitude = max(abs(value) for value in column)
+    try:
+        combined = math.fsum(column) if op == "+" else math.prod(column)
+    except OverflowError as exc:
+        raise _overflow_error(magnitude, purpose=purpose) from exc
+    _require_finite((combined,), magnitude=magnitude, purpose=purpose)
+    return combined
 
 
 def implied_series(children: Sequence[Sequence[float]], op: str) -> tuple[float, ...]:
@@ -162,23 +203,30 @@ def implied_series(children: Sequence[Sequence[float]], op: str) -> tuple[float,
         # zip(strict=True) would raise ValueError here; report our own error type.
         raise SpecError("decomposition children must all have the same length")
     columns = zip(*children, strict=True)
-    if op == "+":
-        return tuple(math.fsum(column) for column in columns)
-    return tuple(math.prod(column) for column in columns)
+    return tuple(_combine_column(tuple(column), op) for column in columns)
 
 
 def identity_gap(parent: Sequence[float], children: Sequence[Sequence[float]], op: str) -> float:
     """Mean relative discrepancy between a parent and its combined children."""
     values = tuple(float(value) for value in parent)
+    if not values:
+        raise SpecError("decomposition parent must have at least one value")
     implied = implied_series(children, op)
     if len(implied) != len(values):
         raise SpecError("decomposition children must match the parent's length")
     for value in values:
-        if value == 0.0:
-            raise SpecError("decomposition parent values must be non-zero")
-    return math.fsum(
-        abs(value - other) / abs(value) for value, other in zip(values, implied, strict=True)
-    ) / len(values)
+        if not math.isfinite(value) or value == 0.0:
+            raise SpecError("decomposition parent values must be finite and non-zero")
+    purpose = "a decomposition's identity gap"
+    magnitude = max(abs(value) for value in values)
+    try:
+        gap = math.fsum(
+            abs(value - other) / abs(value) for value, other in zip(values, implied, strict=True)
+        ) / len(values)
+    except OverflowError as exc:
+        raise _overflow_error(magnitude, purpose=purpose) from exc
+    _require_finite((gap,), magnitude=magnitude, purpose=purpose)
+    return gap
 
 
 # A relative-only tolerance fails for changes whose true magnitude is itself
@@ -223,6 +271,9 @@ def tradeoff_pairs(
     normally.
     """
     all_changes = [(name, weekly_log_changes(series)) for name, series in named]
+    lengths = {len(series_changes) for _, series_changes in all_changes}
+    if len(lengths) > 1:
+        raise SpecError("sibling series must all have the same length")
     changes = [
         (name, series_changes)
         for name, series_changes in all_changes
