@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import cast
 
 from coeftable.cards import (
@@ -50,6 +50,7 @@ from coeftable.errors import SpecError
 from coeftable.format import Format, Number
 from coeftable.graph.breakout import (
     Breakout,
+    Op,
     breakout_control,
     partition_rules,
     reject_switcher_conjunctions,
@@ -60,6 +61,7 @@ from coeftable.graph.honesty import (
     endpoint_interval,
     identity_gap,
     implied_series,
+    infer_op,
     log_ratio,
     ribbon_bounds,
     ribbon_domain,
@@ -333,6 +335,50 @@ def _build_topology(breakout_map: dict[str, tuple[Breakout, ...]]) -> _Topology:
     return topology
 
 
+def _resolved_op(breakout: Breakout) -> Op:
+    """Return the operator `_resolve_operators` has already made concrete.
+
+    `Breakout.op` is optional so a caller may leave it to be derived, but
+    every consumer below runs after resolution, where it is always set. Stating
+    that invariant once here beats narrowing at each use site.
+    """
+    if breakout.op is None:  # pragma: no cover - resolution runs before any consumer
+        raise SpecError(f"breakout {breakout.key!r} has an unresolved operator")
+    return breakout.op
+
+
+def _resolve_operators(
+    breakout_map: dict[str, tuple[Breakout, ...]],
+    node_series: dict[str, tuple[float, ...]],
+) -> dict[str, tuple[Breakout, ...]]:
+    """Replace every unspecified operator with the one the series imply.
+
+    Runs after the series are collected and validated, so inference sees the
+    same numbers the honesty checks will, and a missing or malformed series
+    still produces its own error first rather than an inference failure that
+    would point at the wrong thing.
+
+    The returned map holds only concrete operators, so every consumer
+    downstream reads `breakout.op` without caring whether it was declared or
+    derived.
+    """
+    resolved: dict[str, tuple[Breakout, ...]] = {}
+    for parent, breakouts in breakout_map.items():
+        entries: list[Breakout] = []
+        for breakout in breakouts:
+            if breakout.op is not None:
+                entries.append(breakout)
+                continue
+            children_series = [node_series[child] for child in breakout.children]
+            try:
+                op = infer_op(node_series[parent], children_series)
+            except SpecError as exc:
+                raise SpecError(f"breakout {breakout.key!r} on {parent!r}: {exc}") from exc
+            entries.append(replace(breakout, op=op))
+        resolved[parent] = tuple(entries)
+    return resolved
+
+
 def _collect_node_series(
     topology: _Topology,
     series: Mapping[str, Sequence[float]],
@@ -400,12 +446,31 @@ def _resolve_rep(node_id: str, rep: dict[str, str]) -> str:
     return current
 
 
+def _has_multiplicative_noise(values: Sequence[float]) -> bool:
+    """Whether a log-scale noise model is defined for this series.
+
+    The credibility statistics work in log space, so they need every level to
+    be finite and strictly positive. A series that touches zero or goes
+    negative is not malformed -- a churn term subtracts from its parent, and a
+    net figure can legitimately cross zero -- it simply has no logarithm, so no
+    interval and no ribbon can be derived for it.
+    """
+    return all(math.isfinite(value) and value > 0.0 for value in values)
+
+
 def _compute_node_roles(
     node_order: list[str], node_series: dict[str, tuple[float, ...]], direction: Direction
 ) -> dict[str, Role]:
     node_role: dict[str, Role] = {}
     for node_id in node_order:
-        _, lower, upper = endpoint_interval(node_series[node_id])
+        values = node_series[node_id]
+        if not _has_multiplicative_noise(values):
+            # No log-scale interval exists, so no direction can be claimed.
+            # This is the same treatment an injected residual already gets:
+            # the card renders, stated as inconclusive rather than refused.
+            node_role[node_id] = "inconclusive"
+            continue
+        _, lower, upper = endpoint_interval(values)
         node_role[node_id] = role_for(lower, upper, 0.0, direction)
     return node_role
 
@@ -493,7 +558,7 @@ def _apply_breakout_honesty(
     """Check one breakout's identity gap and trade-offs (cluster A3 + A4)."""
     parent_series = node_series[parent]
     children_series = [node_series[child] for child in breakout.children]
-    gap = _combined_identity_gap(parent_series, children_series, breakout.op)
+    gap = _combined_identity_gap(parent_series, children_series, _resolved_op(breakout))
     if gap > RESIDUAL_FAIL:
         coverage = (1.0 - gap) * 100.0
         raise SpecError(
@@ -869,7 +934,7 @@ def _build_switcher_state(
     return rules, select_controls
 
 
-def _residual_domain(values: Sequence[float]) -> tuple[float, float]:
+def _observed_domain(values: Sequence[float]) -> tuple[float, float]:
     """Pad a residual trend's own extent; no ribbon exists to derive it from.
 
     An injected residual is signed -- zero where children exactly explain the
@@ -893,6 +958,31 @@ def _residual_domain(values: Sequence[float]) -> tuple[float, float]:
     if hi == hi_value:
         hi = math.nextafter(hi_value, math.inf)
     return (lo, hi)
+
+
+def _own_change_subtitle(values: Sequence[float], fmt: Format) -> str | None:
+    """Format a card's own change across the window, or `None` where it has none.
+
+    This is the number a reader looks for first -- "did this metric grow?" --
+    and it was the one quantity the report never stated. The edges carry each
+    child's share of its parent's move, and the headline carries the latest
+    level, but a card's own change appeared nowhere.
+
+    Deliberately carries no words. A noun for the window would be this
+    module's opinion about the caller's data, and the axis and the event strip
+    already establish what the window is.
+
+    Returns `None` when the base is not strictly positive, because a percent
+    change measured from zero or from a negative level misleads rather than
+    informs: a churn term growing more negative would read as growth.
+    """
+    base = values[0]
+    if not math.isfinite(base) or base <= 0.0:
+        return None
+    latest = values[-1]
+    if not math.isfinite(latest):
+        return None
+    return fmt((latest - base) / base * 100.0)
 
 
 def _build_card(
@@ -919,12 +1009,15 @@ def _build_card(
     values = node_series[node_id]
     role = node_role[node_id]
     resid = residual_by_id.get(node_id)
-    if resid is not None:
-        # Signed by nature (see `_residual_domain`): no multiplicative
-        # ribbon is defined for it, so the card renders the trend alone.
+    if resid is not None or not _has_multiplicative_noise(values):
+        # No multiplicative ribbon is defined for a series that is not
+        # strictly positive -- an injected residual is signed by nature, and a
+        # declared child may be too (a churn term subtracts from its parent).
+        # The card renders the trend alone, over the extent its own values
+        # occupy.
         lower_ribbon: tuple[float, ...] | None = None
         upper_ribbon: tuple[float, ...] | None = None
-        domain = _residual_domain(values)
+        domain = _observed_domain(values)
     else:
         lower_ribbon, upper_ribbon = ribbon_bounds(values)
         domain = ribbon_domain(values, lower_ribbon, upper_ribbon)
@@ -949,7 +1042,7 @@ def _build_card(
     if node_id in select_controls:
         content.append(select_controls[node_id])
     if node_id in topology.breakout_map and node_id not in topology.switcher_parents:
-        op = topology.breakout_map[node_id][0].op
+        op = _resolved_op(topology.breakout_map[node_id][0])
         content.append(Badge(_operator_badge_text(op), role="neutral"))
     for badge_text in outcome.gap_badges.get(node_id, ()):
         content.append(Badge(badge_text, role="unfavorable"))
@@ -982,7 +1075,7 @@ def _build_card(
     if resid is not None:
         title, subtitle = "Unattributed", resid.subtitle
     else:
-        title, subtitle = titles[node_id], None
+        title, subtitle = titles[node_id], _own_change_subtitle(values, fmt)
     width = _ROOT_CARD_WIDTH if has_caption else _CARD_WIDTH
     return node_id, Card(
         title, content=tuple(content), subtitle=subtitle, width=width, chrome=chrome
@@ -1096,6 +1189,12 @@ def DriverTree(
     breakout_map = _build_breakout_map(breakouts)
     topology = _build_topology(breakout_map)
     node_series = _collect_node_series(topology, series, titles, x_values)
+    # An undeclared operator is derived from the series just collected. The
+    # node set does not change, so only the map and the topology that indexes
+    # it are rebuilt; `node_series` stays valid.
+    if any(entry.op is None for entries in breakout_map.values() for entry in entries):
+        breakout_map = _resolve_operators(breakout_map, node_series)
+        topology = _build_topology(breakout_map)
     edges = _raw_edges(topology)
 
     # Cheapest possible failure first: the layered-barycenter layout below

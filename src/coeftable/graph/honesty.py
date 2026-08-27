@@ -351,3 +351,45 @@ def tradeoff_pairs(
             if correlation < TRADEOFF_R:
                 found.append((left_name, right_name, correlation))
     return tuple(found)
+
+
+def infer_op(parent: Sequence[float], children: Sequence[Sequence[float]]) -> str:
+    """Derive whether `children` combine into `parent` additively or multiplicatively.
+
+    The two candidates are not close together on real data: a genuine sum
+    reconciles exactly under `"+"` and is off by orders of magnitude under
+    `"x"`, and vice versa, so picking the smaller identity gap recovers the
+    caller's intent rather than guessing at it. Declaring the operator is
+    therefore optional -- it is derivable from the numbers the caller already
+    supplied.
+
+    Either candidate may be undefined rather than merely worse. A series that
+    touches zero or goes negative has no logarithm, so `"x"` raises instead of
+    scoring; that is an answer too, and the additive reading wins by default.
+
+    Raises `SpecError` when neither reading explains the parent, which is a
+    more useful failure than arbitrarily adopting one and then blaming the
+    caller's arithmetic for the gap it leaves.
+    """
+    scored: dict[str, float] = {}
+    for candidate in ("+", "x"):
+        try:
+            scored[candidate] = identity_gap(parent, children, candidate)
+        except SpecError:
+            # Undefined for this data (a non-positive series under "x"), which
+            # eliminates the candidate rather than ranking it last.
+            continue
+    if not scored:
+        raise SpecError(
+            "a decomposition's operator could not be inferred: these children combine "
+            "into neither a sum nor a product of the parent"
+        )
+    best = min(scored, key=lambda candidate: scored[candidate])
+    if scored[best] > RESIDUAL_FAIL:
+        coverage = (1.0 - scored[best]) * 100.0
+        raise SpecError(
+            "a decomposition's operator could not be inferred: the closest reading "
+            f"({best!r}) explains only {coverage:.1f}% of the parent, and a "
+            "decomposition explaining under 80% is not a decomposition"
+        )
+    return best

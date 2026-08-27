@@ -638,6 +638,31 @@ with two or more breakouts (like `revenue` above) renders a native
 because the alternatives share one slotted position and pure CSS shows
 exactly one of them at a time.
 
+**Two different percentages appear, and they are not the same number.** Under
+each card's title sits that card's *own* change across the window. On each
+wire sits that child's *contribution* to its parent's change — a
+size-weighted delta for an additive slice, a log share for a factorization —
+and those contributions sum to the parent's own change. The two diverge
+whenever a child is small relative to its parent: a region that grew 90% on
+its own may have moved the total by only 6 points. The card's number answers
+"did this grow?", the wire's answers "how much of the parent's move came from
+here?". A card whose first level is zero or negative shows no own-change,
+since a percentage from that base misleads rather than informs.
+
+`op` is optional. Omit it and the operator is derived from the series: a
+genuine sum reconciles under `+` and is off by orders of magnitude under `x`,
+so the numbers already say which was meant. Supplying it asserts that intent
+and is still checked. If neither reading explains the parent, the build
+refuses and names the breakout rather than adopting one and blaming your
+arithmetic for the gap.
+
+A child may subtract from its parent. Growth accounting —
+`DAU = retained + new + resurrected − churned`, where churn is negative —
+decomposes correctly. The credibility statistics work in log space and so
+need positive levels; a signed child simply gets no uncertainty ribbon and
+claims no direction, exactly as an injected residual does, rather than
+refusing the whole tree.
+
 Each decomposition is checked against its own arithmetic: a parent that
 should equal the sum or product of its children but falls short gets an
 injected `"Unattributed"` residual card (additive shortfalls) or a reported

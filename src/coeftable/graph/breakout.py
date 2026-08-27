@@ -59,19 +59,29 @@ def _canonical(value: object, *, name: str) -> tuple[object, ...]:
 
 @dataclass(frozen=True, slots=True)
 class Breakout:
-    """One alternative decomposition: a label, its operator, and its cards."""
+    """One alternative decomposition: a label, its cards, and optionally its operator.
+
+    ``op`` may be left as ``None``, in which case the builder derives it from
+    the series themselves -- a genuine sum reconciles under ``"+"`` and is off
+    by orders of magnitude under ``"x"``, so the data already says which one
+    the caller meant. Supplying it explicitly asserts that intent and is still
+    checked against the numbers.
+
+    ``children`` keeps its position, so both the fully positional form and the
+    keyword form continue to work unchanged.
+    """
 
     key: str
     label: str
-    op: Op
-    children: tuple[str, ...]
+    op: Op | None = None
+    children: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         """Validate the breakout's identity, operator, and child cards."""
         _non_empty_str(self.key, name="Breakout.key")
         _non_empty_str(self.label, name="Breakout.label")
-        if self.op not in _OPS:
-            raise SpecError(f"Breakout.op must be one of {_OPS}, got {self.op!r}")
+        if self.op is not None and self.op not in _OPS:
+            raise SpecError(f"Breakout.op must be one of {_OPS} or None, got {self.op!r}")
         children = _canonical(self.children, name="Breakout.children")
         if not children:
             raise SpecError("Breakout.children must not be empty")
