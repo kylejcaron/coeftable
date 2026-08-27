@@ -179,12 +179,35 @@ def _validate_scalars(
         raise SpecError("DriverTree.chrome must be a CardChrome")
 
 
-def _prepare_x(x: Sequence[float]) -> tuple[tuple[float, ...], tuple[float, float], int]:
+def _format_period_count(span: float) -> str:
+    """Render a period span for `_DISCLAIMER`: whole numbers stay bare."""
+    if span == int(span):
+        return str(int(span))
+    return f"{span:g}"
+
+
+def _prepare_x(x: Sequence[float]) -> tuple[tuple[float, ...], tuple[float, float], float]:
+    """Canonicalize and validate `DriverTree.x`.
+
+    `x` must be strictly increasing -- duplicate or descending coordinates
+    would silently disconnect the right-hand endpoint label from the last
+    observation, so both are rejected outright rather than tolerated. The
+    disclaimer's period count is derived from the coordinates' own span
+    (`x[-1] - x[0]`), not from `len(x) - 1`, so irregularly spaced input is
+    still described honestly instead of being mislabeled as unit-spaced.
+    """
     raw = _canonical(x, name="DriverTree.x")
     x_values = tuple(_finite(value, name="DriverTree.x") for value in raw)
     if len(x_values) < 3:
         raise SpecError("DriverTree.x must have at least 3 observations")
-    return x_values, (min(x_values), max(x_values)), len(x_values) - 1
+    for index in range(1, len(x_values)):
+        previous, current = x_values[index - 1], x_values[index]
+        if current <= previous:
+            raise SpecError(
+                "DriverTree.x must be strictly increasing: "
+                f"x[{index}]={current!r} is not greater than x[{index - 1}]={previous!r}"
+            )
+    return x_values, (x_values[0], x_values[-1]), x_values[-1] - x_values[0]
 
 
 def _build_breakout_map(
@@ -659,7 +682,7 @@ def _build_card(
     direction: Direction,
     fmt: Format,
     level_fmt: Format,
-    weeks: int,
+    weeks: float,
     select_controls: dict[str, SelectControl],
     outcome: _HonestyOutcome,
     residual_by_id: dict[str, _Residual],
@@ -704,7 +727,13 @@ def _build_card(
     for callout_text in outcome.tradeoff_callouts.get(node_id, ()):
         content.append(Callout(callout_text, role="unfavorable"))
     if node_id in topology.roots:
-        content.append(TextBlock(_DISCLAIMER.format(weeks=weeks), variant="caption", max_lines=8))
+        content.append(
+            TextBlock(
+                _DISCLAIMER.format(weeks=_format_period_count(weeks)),
+                variant="caption",
+                max_lines=8,
+            )
+        )
     if resid is not None:
         title, subtitle, width = "Unattributed", resid.subtitle, _CARD_WIDTH
     else:
@@ -756,6 +785,12 @@ def DriverTree(
     level -- the value plotted by its sparkline trend and its endpoint
     label -- and defaults to a plain, unsigned number since a level is
     dollars, users, or a ratio, never a contribution share.
+
+    ``x`` must be strictly increasing (no duplicate or descending
+    coordinates): the root card's disclaimer describes the realized change
+    over ``x[-1] - x[0]`` "weeks", derived from the coordinates' own span
+    rather than the observation count, so irregularly spaced ``x`` is still
+    described honestly instead of being mislabeled as unit-spaced.
 
     Every decomposition is checked against ``coeftable.graph.honesty``'s
     identity-gap thresholds: additive shortfalls above ``RESIDUAL_WARN`` get

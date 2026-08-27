@@ -285,6 +285,27 @@ def test_the_accounting_disclaimer_is_present_verbatim():
     assert "realized 3-week change" in html
 
 
+def _wide_span_fixture() -> GraphReport:
+    """Same identity shape as `_fixture`, but `x` is irregularly spaced with
+    a span of 20 units rather than 3: pins the disclaimer's period count to
+    the coordinates' own span, not to `len(x) - 1`."""
+    x = (0.0, 10.0, 20.0)
+    titles = {"total": "Total", "a": "A", "b": "B"}
+    series = {
+        "total": (100.0, 110.0, 121.0),
+        "a": (60.0, 66.0, 72.6),
+        "b": (40.0, 44.0, 48.4),
+    }
+    breakouts = {"total": (Breakout(key="split", label="by split", op="+", children=("a", "b")),)}
+    return DriverTree(series, titles, breakouts, _FMT, x)
+
+
+def test_the_disclaimer_describes_the_actual_span_not_the_observation_count():
+    html = _wide_span_fixture().as_raw_html()
+    assert "realized 20-week change" in html
+    assert "realized 2-week change" not in html
+
+
 def test_an_event_reaches_every_affected_card_and_no_others():
     report, event = _event_fanout_fixture()
     html = report.as_raw_html()
@@ -376,6 +397,24 @@ def test_unequal_alternative_sizes_are_refused_before_layout():
         )
     }
     with pytest.raises(SpecError, match="same number of children"):
+        DriverTree(series, titles, breakouts, _FMT, x)
+
+
+def test_descending_x_is_refused_naming_the_offending_index():
+    x = (2.0, 1.0, 0.0)
+    titles = {"p": "P", "a": "A", "b": "B"}
+    series = {"p": (10.0, 11.0, 12.0), "a": (5.0, 5.5, 6.0), "b": (5.0, 5.5, 6.0)}
+    breakouts = {"p": (Breakout(key="k", label="K", op="+", children=("a", "b")),)}
+    with pytest.raises(SpecError, match=r"strictly increasing.*x\[1\]=1\.0.*x\[0\]=2\.0"):
+        DriverTree(series, titles, breakouts, _FMT, x)
+
+
+def test_duplicate_x_is_refused_naming_the_offending_index():
+    x = (0.0, 1.0, 1.0)
+    titles = {"p": "P", "a": "A", "b": "B"}
+    series = {"p": (10.0, 11.0, 12.0), "a": (5.0, 5.5, 6.0), "b": (5.0, 5.5, 6.0)}
+    breakouts = {"p": (Breakout(key="k", label="K", op="+", children=("a", "b")),)}
+    with pytest.raises(SpecError, match=r"strictly increasing.*x\[2\]=1\.0.*x\[1\]=1\.0"):
         DriverTree(series, titles, breakouts, _FMT, x)
 
 
