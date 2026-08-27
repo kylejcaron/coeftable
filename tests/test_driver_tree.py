@@ -26,7 +26,11 @@ from coeftable.svg import _projector
 _FMT = Percent(decimals=1)
 
 
-def _fixture(*, chrome: CardChrome = DEFAULT_CHROME) -> GraphReport:
+def _fixture(
+    *,
+    chrome: CardChrome = DEFAULT_CHROME,
+    events: tuple[TimelineEvent, ...] | None = None,
+) -> GraphReport:
     """A two-way revenue switcher (drivers x vs. region +), both exact."""
     x = (0.0, 1.0, 2.0, 3.0)
     titles = {"revenue": "Revenue", "users": "Users", "aov": "AOV", "us": "US", "eu": "EU"}
@@ -44,9 +48,10 @@ def _fixture(*, chrome: CardChrome = DEFAULT_CHROME) -> GraphReport:
             Breakout(key="region", label="by region", op="+", children=("us", "eu")),
         )
     }
-    events = (
-        TimelineEvent(at=1.0, label="Launch", color="#4C72B0", affects=("revenue", "users")),
-    )
+    if events is None:
+        events = (
+            TimelineEvent(at=1.0, label="Launch", color="#4C72B0", affects=("revenue", "users")),
+        )
     return DriverTree(series, titles, breakouts, _FMT, x, events=events, chrome=chrome)
 
 
@@ -64,7 +69,7 @@ def _noisy_fixture() -> GraphReport:
     return DriverTree(series, titles, breakouts, _FMT, x)
 
 
-def _short_fixture() -> GraphReport:
+def _short_fixture(*, events: tuple[TimelineEvent, ...] = ()) -> GraphReport:
     """Additive split that covers ~92% of its parent (gap ~8%): injects a residual."""
     x = (0.0, 1.0, 2.0)
     titles = {"spend": "Spend", "paid": "Paid", "organic": "Organic"}
@@ -80,7 +85,7 @@ def _short_fixture() -> GraphReport:
             Breakout(key="channel", label="by channel", op="+", children=("paid", "organic")),
         )
     }
-    return DriverTree(series, titles, breakouts, _FMT, x)
+    return DriverTree(series, titles, breakouts, _FMT, x, events=events)
 
 
 def _broken_fixture() -> GraphReport:
@@ -634,3 +639,18 @@ def test_a_custom_chrome_is_threaded_through_every_card():
     for _node_id, card in report.graph.nodes:
         assert card.chrome == chrome
     assert "font-size:20px" in report.as_raw_html()
+
+
+def test_an_event_affecting_an_unknown_node_is_refused():
+    # A misspelled id would otherwise leave the event on the shared strip while
+    # silently dropping its card marker and caption, reading as missing data.
+    with pytest.raises(SpecError, match="affects unknown nodes"):
+        _fixture(events=(TimelineEvent(at=1.0, label="typo", color="#c33", affects=("nope",)),))
+
+
+def test_an_event_may_target_an_injected_residual():
+    # Residuals join the node set late, so validation must run after they exist.
+    report = _short_fixture(
+        events=(TimelineEvent(at=1.0, label="ok", color="#c33", affects=("resid_spend_channel",)),)
+    )
+    assert report.measure().width > 0

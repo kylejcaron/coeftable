@@ -388,6 +388,24 @@ def _apply_honesty(
     return outcome
 
 
+def _validated_events(
+    events: Sequence[TimelineEvent], *, known: set[str]
+) -> tuple[TimelineEvent, ...]:
+    """Snapshot events and reject references to nodes that do not exist."""
+    canonical = _canonical(events, name="DriverTree.events")
+    result: list[TimelineEvent] = []
+    for index, event in enumerate(canonical):
+        if not isinstance(event, TimelineEvent):
+            raise SpecError(f"DriverTree.events[{index}] must be a TimelineEvent")
+        unknown = sorted(set(event.affects) - known)
+        if unknown:
+            raise SpecError(
+                f"DriverTree.events[{index}] ({event.label!r}) affects unknown nodes {unknown}"
+            )
+        result.append(event)
+    return tuple(result)
+
+
 def _register_residuals(
     topology: _Topology,
     outcome: _HonestyOutcome,
@@ -729,6 +747,12 @@ def DriverTree(
     wires = _build_wires(topology, outcome.residuals, contribution_by_edge, node_role, fmt)
     final_slots = _compute_layout(topology, rep, outcome.residuals)
     rules, select_controls = _build_switcher_state(topology, outcome.residuals, edges)
+
+    # Validate events only now: the node set is not final until residuals have
+    # been registered, and an event may legitimately target one. A misspelled
+    # id would otherwise leave the event on the shared strip while silently
+    # dropping its card marker and caption, which reads as missing data.
+    events = _validated_events(events, known=set(topology.node_order))
 
     cards = [
         _build_card(

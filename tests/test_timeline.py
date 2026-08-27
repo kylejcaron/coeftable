@@ -284,3 +284,27 @@ def test_strip_clips_a_long_title_to_the_declared_width():
     assert rendered != html.escape(long_title)
     budget = strip.width - 2 * _INSET
     assert len(rendered) * _TITLE_FONT_SIZE * _CHAR_WIDTH_RATIO <= budget + _TITLE_FONT_SIZE
+
+
+def test_strip_clips_anchored_tick_labels_on_a_narrow_strip():
+    # Anchoring alone is not enough: a large week index on a narrow strip
+    # overflows even one-sided, so anchored labels are clipped to their budget.
+    width = _MIN_WIDTH + 16
+    strip = timeline_strip(
+        (TimelineEvent(at=999999.0, label="e", color="#c33", affects=("a",)),),
+        x_domain=(999999.0, 1000000.0),
+        width=width,
+        theme=DEFAULT,
+    )
+    ticks = re.findall(r'<text x="([\d.]+)"[^>]*text-anchor="(\w+)">(W[^<]*)</text>', strip.svg)
+    assert ticks
+    for x_text, anchor, label in ticks:
+        span = len(label) * _TICK_FONT_SIZE * _CHAR_WIDTH_RATIO
+        x = float(x_text)
+        low, high = {
+            "start": (x, x + span),
+            "end": (x - span, x),
+            "middle": (x - span / 2, x + span / 2),
+        }[anchor]
+        assert low >= -0.5
+        assert high <= width + 0.5

@@ -234,17 +234,20 @@ def timeline_strip(
         # Multi-digit boundary labels centred on the first or last tick paint
         # past the declared width, so anchor them inward the way event labels
         # already are. Interior ticks stay centred on their own coordinate.
+        # Anchoring alone is not enough: a large week index on a narrow strip
+        # overflows even one-sided, so clip to whichever budget applies.
         tick_half = len(tick_text) * _TICK_FONT_SIZE * _CHAR_WIDTH_RATIO / 2
         if x - tick_half < 0.0:
-            tick_anchor = "start"
+            tick_anchor, tick_budget = "start", float(width) - x
         elif x + tick_half > width:
-            tick_anchor = "end"
+            tick_anchor, tick_budget = "end", x
         else:
-            tick_anchor = "middle"
+            tick_anchor, tick_budget = "middle", 2 * min(x, float(width) - x)
+        tick_text = _clip_label(tick_text, max(tick_budget, 0.0), _TICK_FONT_SIZE)
         parts.append(
             f'<text x="{x:.2f}" y="{spine_y + _TICK_LABEL_OFFSET:.2f}" '
             f'fill="{_esc(theme.axis)}" font-size="{_TICK_FONT_SIZE}" '
-            f'text-anchor="{tick_anchor}">{tick_text}</text>'
+            f'text-anchor="{tick_anchor}">{_esc(tick_text)}</text>'
         )
 
     for index, event in enumerate(events):
