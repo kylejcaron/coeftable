@@ -191,17 +191,23 @@ def _hidden_subtree(
     """Descendants with no live path left once this option hides its siblings.
 
     A node stays visible if it is still reachable from some graph root once
-    only *this* switcher's unselected direct targets are pruned from
-    `parent` -- judging liveness against every surviving path, not just the
-    selected alternative's own closure, is what lets a diamond or an
-    unrelated always-visible branch keep a shared descendant on screen.
+    every unselected alternative's own direct targets (and any injected
+    residual) are cut out of the graph entirely -- not just detached from
+    `parent`, but stripped of their own outgoing edges too, since this
+    option forcibly hides them regardless of how else they're reached.
+    Judging liveness against every surviving path, not just the selected
+    alternative's own closure, is what lets a diamond or an unrelated
+    always-visible branch keep a shared descendant on screen; refusing to
+    walk through a forcibly hidden node is what stops a descendant whose
+    only surviving route runs through one of them from being left behind,
+    visible and orphaned, once that node disappears.
 
     That exemption never applies to an unselected alternative's own direct
-    children (or its injected residual): those define the shared position
-    opposite the selected alternative's own child, so they must always be
-    hidden here regardless of what else can reach them. Sparing one would
-    leave the position with two visible occupants. Only their deeper
-    descendants are eligible for the liveness exemption.
+    children (or its injected residual) themselves: those define the shared
+    position opposite the selected alternative's own child, so they must
+    always be hidden here regardless of what else can reach them. Sparing
+    one would leave the position with two visible occupants. Only their
+    deeper descendants are eligible for the liveness exemption.
     """
     unselected_direct: set[str] = set()
     for other_index, other in enumerate(breakouts):
@@ -213,10 +219,7 @@ def _hidden_subtree(
             unselected_direct.add(resid_id)
 
     pruned_adjacency = {
-        node: tuple(
-            target for target in targets if not (node == parent and target in unselected_direct)
-        )
-        for node, targets in adjacency.items()
+        node: () if node in unselected_direct else targets for node, targets in adjacency.items()
     }
     visible = set(roots)
     for root in roots:
@@ -264,26 +267,32 @@ def _child_closures(
     return closures
 
 
-def _sole_gating_child(node: str, per_child: Mapping[str, frozenset[str]]) -> str | None:
-    """Return the one direct child whose closure reaches `node`, if only one does.
+def _reaching_children(node: str, per_child: Mapping[str, frozenset[str]]) -> frozenset[str]:
+    """Return `node`'s reaching direct children, when only some of them reach it.
 
-    Two or more reaching children cannot be proven to share an option --
-    or to each own a separate one -- without the option groupings
-    themselves, so that case is left alone rather than guessed at.
+    A parent whose children unanimously reach `node` -- or unanimously miss
+    it -- cannot gate it: every option would carry the same verdict, so no
+    selection changes anything. Only a split between reaching and
+    non-reaching children makes the parent a real gate, and every reaching
+    child counts: an option that happens to contribute several of them
+    still excludes `node` in full the moment some other option is selected
+    instead, exactly as a single-child option would.
     """
-    reaching = [child for child, closure in per_child.items() if node in closure]
-    return reaching[0] if len(reaching) == 1 else None
+    reaching = frozenset(child for child, closure in per_child.items() if node in closure)
+    if not reaching or len(reaching) == len(per_child):
+        return frozenset()
+    return reaching
 
 
 def _gating_switchers(
     node: str, closures: Mapping[str, Mapping[str, frozenset[str]]]
-) -> dict[str, str]:
-    """Map every switcher that sole-gates `node` to its one gating child."""
-    gates: dict[str, str] = {}
+) -> dict[str, frozenset[str]]:
+    """Map every switcher that gates `node` to its reaching direct children."""
+    gates: dict[str, frozenset[str]] = {}
     for parent, per_child in closures.items():
-        child = _sole_gating_child(node, per_child)
-        if child is not None:
-            gates[parent] = child
+        reaching = _reaching_children(node, per_child)
+        if reaching:
+            gates[parent] = reaching
     return gates
 
 
@@ -301,12 +310,13 @@ def _reject_orphanable_descendants(
     switcher's alternative happens to be selected, every contributing
     switcher's rule independently declines to hide the descendant, yet the
     combination that excludes all of them at once leaves it with nothing
-    pointing at it. Each contributing switcher is identified by the one
-    direct child of its own that reaches the descendant -- since that
-    child belongs to exactly one of the switcher's two-or-more disjoint
-    options, some other option is guaranteed to exclude it. Pruning
-    exactly those edges and finding the descendant still unreachable from
-    every root proves the orphaning combination is real and selectable.
+    pointing at it. Each contributing switcher is identified at the option
+    level, by every one of its direct children that reaches the
+    descendant: those children all belong to the option(s) a selection
+    would exclude, so pruning all of them together (not just one) is what
+    correctly simulates that exclusion, however many children the option
+    contributes. Finding the descendant still unreachable from every root
+    after pruning proves the orphaning combination is real and selectable.
     """
     closures = _child_closures(parents, adjacency)
     if len(closures) < 2:
@@ -318,7 +328,7 @@ def _reject_orphanable_descendants(
         if len(gates) < 2:
             continue
         pruned = {
-            src: tuple(dst for dst in dsts if dst != gates.get(src))
+            src: tuple(dst for dst in dsts if dst not in gates.get(src, frozenset()))
             for src, dsts in adjacency.items()
         }
         visible = set(roots)

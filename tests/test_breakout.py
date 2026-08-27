@@ -482,3 +482,84 @@ def test_a_direct_child_of_an_unselected_alternative_is_always_hidden():
     wires = tuple(Wire(f"w{i}", src, dst) for i, (src, dst) in enumerate(edges))
     graph = Graph(nodes, Slotted(slots), wires=wires, rules=rules, dom_prefix="brk6")
     assert graph.measure().width > 0
+
+
+def test_a_descendant_reachable_only_through_a_forcibly_hidden_direct_child_is_hidden():
+    # `us` is `region`'s own direct child, always hidden when `drivers` is
+    # selected (see above). `other` sits outside the switcher and also
+    # points at `us`, and `us` has its own further child `us_detail`. The
+    # liveness walk must not treat `us_detail` as reachable just because
+    # `other -> us` keeps `us` itself nominally reachable: `us` disappears
+    # when `drivers` is selected regardless of `other`, so nothing beyond
+    # it survives either, and `us_detail` would be orphaned in the DOM if
+    # left visible.
+    breakouts = _two_way()
+    edges = (
+        ("root", "rev"),
+        ("root", "other"),
+        ("rev", "users"),
+        ("rev", "aov"),
+        ("rev", "us"),
+        ("rev", "eu"),
+        ("other", "us"),
+        ("us", "us_detail"),
+    )
+    rules = partition_rules("rev", "rev_breakout", breakouts, edges)
+    drivers, region = rules
+
+    assert "us" in drivers.hide_cards
+    assert "us_detail" in drivers.hide_cards
+    assert set(drivers.hide_cards) == {"us", "eu", "us_detail"}
+    assert set(region.hide_cards) == {"users", "aov"}
+
+    # The real gate: the graph layer still accepts this topology.
+    control = breakout_control(breakouts, key="rev_breakout")
+    nodes = (
+        ("root", Card("Root", width=140)),
+        ("rev", Card("Rev", content=(control,), width=140)),
+        ("other", Card("Other", width=140)),
+        ("users", Card("Users", width=140)),
+        ("aov", Card("AOV", width=140)),
+        ("us", Card("US", width=140)),
+        ("eu", Card("EU", width=140)),
+        ("us_detail", Card("US Detail", width=140)),
+    )
+    slots = (
+        Slot("root", 0, 0),
+        Slot("rev", 1, 0),
+        Slot("other", 1, 1),
+        Slot("users", 2, 0),
+        Slot("us", 2, 0),
+        Slot("aov", 2, 1),
+        Slot("eu", 2, 1),
+        Slot("us_detail", 3, 0),
+    )
+    wires = tuple(Wire(f"w{i}", src, dst) for i, (src, dst) in enumerate(edges))
+    graph = Graph(nodes, Slotted(slots), wires=wires, rules=rules, dom_prefix="brk7")
+    assert graph.measure().width > 0
+
+
+def test_an_option_contributing_multiple_children_to_a_shared_descendant_still_gates_it():
+    # `a` and `b` are independent switchers. `a`'s first option contributes
+    # *two* children (`a1`, `a2`) that both reach `shared`; its second
+    # option (`a3`, `a4`) reaches nowhere near it. Counting only switchers
+    # where exactly one direct child reaches the descendant would miss `a`
+    # entirely here, even though selecting `a`'s second option excludes
+    # `shared` just as surely as a single-child option would. Combined with
+    # `b` (single-child gating, as in the simpler case above), selecting
+    # `a`'s second option and `b`'s second option together orphans `shared`.
+    edges = (
+        ("root", "a"),
+        ("root", "b"),
+        ("a", "a1"),
+        ("a", "a2"),
+        ("a", "a3"),
+        ("a", "a4"),
+        ("a1", "shared"),
+        ("a2", "shared"),
+        ("b", "b1"),
+        ("b", "b2"),
+        ("b1", "shared"),
+    )
+    with pytest.raises(SpecError, match=r"'shared'.*more than one breakout switcher"):
+        reject_nested_switchers(("a", "b"), edges)
