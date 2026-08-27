@@ -428,3 +428,57 @@ def test_a_descendant_stays_visible_through_an_always_visible_branch_outside_the
     wires = tuple(Wire(f"w{i}", src, dst) for i, (src, dst) in enumerate(edges))
     graph = Graph(nodes, Slotted(slots), wires=wires, rules=rules, dom_prefix="brk5")
     assert graph.measure().width > 0
+
+
+def test_a_direct_child_of_an_unselected_alternative_is_always_hidden():
+    # `us` is `region`'s own direct child -- it defines the shared position
+    # opposite `users` (drivers' equivalent child). `other` sits outside the
+    # switcher entirely and also points straight at `us`, same as the
+    # always-visible-branch case above, except the reachable node here *is*
+    # the position-defining child itself, not a deeper descendant. The
+    # liveness exemption must never spare a breakout's own direct children:
+    # doing so would leave the shared position with two visible occupants
+    # (`users` and `us`) when `drivers` is selected, which the graph layer's
+    # exclusivity proof must reject.
+    breakouts = _two_way()
+    edges = (
+        ("root", "rev"),
+        ("root", "other"),
+        ("rev", "users"),
+        ("rev", "aov"),
+        ("rev", "us"),
+        ("rev", "eu"),
+        ("other", "us"),
+    )
+    rules = partition_rules("rev", "rev_breakout", breakouts, edges)
+    drivers, region = rules
+
+    assert "us" in drivers.hide_cards
+    assert set(drivers.hide_cards) == {"us", "eu"}
+    assert set(region.hide_cards) == {"users", "aov"}
+
+    # The real gate: the graph layer's shared-position proof still accepts
+    # this topology -- each shared position ends with exactly one visible
+    # occupant under every option.
+    control = breakout_control(breakouts, key="rev_breakout")
+    nodes = (
+        ("root", Card("Root", width=140)),
+        ("rev", Card("Rev", content=(control,), width=140)),
+        ("other", Card("Other", width=140)),
+        ("users", Card("Users", width=140)),
+        ("aov", Card("AOV", width=140)),
+        ("us", Card("US", width=140)),
+        ("eu", Card("EU", width=140)),
+    )
+    slots = (
+        Slot("root", 0, 0),
+        Slot("rev", 1, 0),
+        Slot("other", 1, 1),
+        Slot("users", 2, 0),
+        Slot("us", 2, 0),
+        Slot("aov", 2, 1),
+        Slot("eu", 2, 1),
+    )
+    wires = tuple(Wire(f"w{i}", src, dst) for i, (src, dst) in enumerate(edges))
+    graph = Graph(nodes, Slotted(slots), wires=wires, rules=rules, dom_prefix="brk6")
+    assert graph.measure().width > 0

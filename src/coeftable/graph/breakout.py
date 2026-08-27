@@ -195,6 +195,13 @@ def _hidden_subtree(
     `parent` -- judging liveness against every surviving path, not just the
     selected alternative's own closure, is what lets a diamond or an
     unrelated always-visible branch keep a shared descendant on screen.
+
+    That exemption never applies to an unselected alternative's own direct
+    children (or its injected residual): those define the shared position
+    opposite the selected alternative's own child, so they must always be
+    hidden here regardless of what else can reach them. Sparing one would
+    leave the position with two visible occupants. Only their deeper
+    descendants are eligible for the liveness exemption.
     """
     unselected_direct: set[str] = set()
     for other_index, other in enumerate(breakouts):
@@ -220,12 +227,17 @@ def _hidden_subtree(
     for other_index, other in enumerate(breakouts):
         if other_index == selected_index:
             continue
-        closure = _descendant_closure(other.children, adjacency)
+        direct = set(other.children)
         resid_id = residual_children.get(other.key)
+        if resid_id is not None:
+            direct.add(resid_id)
+        closure = _descendant_closure(other.children, adjacency)
         if resid_id is not None:
             closure.add(resid_id)
         for node in closure:
-            if node in visible or node in seen:
+            if node in seen:
+                continue
+            if node not in direct and node in visible:
                 continue
             seen.add(node)
             hidden.append(node)
