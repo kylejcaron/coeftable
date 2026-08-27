@@ -368,12 +368,19 @@ def endpoint_identity_gap(
     judged at the endpoints too, not smoothed away by an in-between average.
     """
     implied = implied_series(children_series, op)
-    for value in (parent_series[0], parent_series[-1]):
+    # Coerced the way `identity_gap` coerces its own parent, so this public
+    # function meets the module's one contract -- only `SpecError` escapes --
+    # for non-numeric input as well as for zero and non-finite input.
+    try:
+        first, last = float(parent_series[0]), float(parent_series[-1])
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise SpecError("decomposition parent values must be finite numbers") from exc
+    for value in (first, last):
         if not math.isfinite(value) or value == 0.0:
             raise SpecError("decomposition parent values must be finite and non-zero")
     return max(
-        abs(parent_series[0] - implied[0]) / abs(parent_series[0]),
-        abs(parent_series[-1] - implied[-1]) / abs(parent_series[-1]),
+        abs(first - implied[0]) / abs(first),
+        abs(last - implied[-1]) / abs(last),
     )
 
 

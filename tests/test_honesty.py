@@ -461,3 +461,24 @@ def test_log_ratio_refuses_a_single_non_positive_operand():
 
 def test_log_ratio_still_accepts_two_positives():
     assert log_ratio(2.0, 1.0) == pytest.approx(math.log(2.0))
+
+
+def test_endpoint_identity_gap_only_ever_raises_spec_error():
+    # It is a public function in a module whose one contract is that nothing
+    # but SpecError escapes. Probe every out-of-contract parent shape rather
+    # than the one that happened to be reported.
+    children = [[1.0, 2.0], [3.0, 4.0]]
+    bad_parents: tuple[object, ...] = (
+        ("x", 10.0),  # non-numeric
+        (0.0, 10.0),  # zero first endpoint
+        (10.0, 0.0),  # zero last endpoint
+        (float("inf"), 10.0),
+        (float("nan"), 10.0),
+        (10**400, 10.0),  # overflows on conversion
+    )
+    for parent in bad_parents:
+        with pytest.raises(SpecError):
+            endpoint_identity_gap(parent, children, "+")  # ty: ignore[invalid-argument-type]
+
+    # A well-formed parent still scores.
+    assert endpoint_identity_gap((4.0, 6.0), children, "+") == pytest.approx(0.0)
