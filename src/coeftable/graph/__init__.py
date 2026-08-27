@@ -11,15 +11,20 @@ from coeftable.graph.model import (
     StateRule,
     Wire,
 )
+from coeftable.graph.report import GraphReport, MeasuredReport
+from coeftable.graph.timeline import TimelineEvent
 
 __all__ = [
     "Atom",
     "ControlRef",
     "Graph",
+    "GraphReport",
     "MeasuredGraph",
+    "MeasuredReport",
     "MetricTree",
     "Slot",
     "Slotted",
     "StateRule",
+    "TimelineEvent",
     "Wire",
 ]
