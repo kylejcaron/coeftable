@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 
 from coeftable.cards import Card
@@ -838,11 +840,12 @@ def test_a_nested_switchers_parent_with_a_second_incoming_edge_is_accepted():
     # `users` is still reachable -- would see `extra -> users` keep `users`
     # nominally live and conclude `revenue`'s gate does not subsume `users`'
     # own gate, wrongly treating `sessions` (a `users` descendant) as gated
-    # by two independent switchers. But `users` is `region`'s own direct
-    # child once `drivers` is unselected, so `revenue`'s rule always hides
-    # it -- and everything beneath it -- regardless of `extra`'s edge,
-    # exactly as `_hidden_subtree` emits. This must not raise, and the
-    # emitted `region` rule must actually hide the whole nested subtree.
+    # by two independent switchers. But `users` is `drivers`'s own direct
+    # child, always hidden once `region` is selected instead, so
+    # `revenue`'s rule always hides it -- and everything beneath it --
+    # regardless of `extra`'s edge, exactly as `_hidden_subtree` emits.
+    # This must not raise, and the emitted `region` rule must actually
+    # hide the whole nested subtree.
     rev_breakouts = (
         Breakout(key="drivers", label="Drivers", op="x", children=("users", "aov")),
         Breakout(key="region", label="Region", op="+", children=("na", "intl")),
@@ -869,3 +872,640 @@ def test_a_nested_switchers_parent_with_a_second_incoming_edge_is_accepted():
     drivers, region = partition_rules("revenue", "rev_breakout", rev_breakouts, edges)
     assert set(region.hide_cards) == {"users", "aov", "sessions", "conv", "us_u", "eu_u"}
     assert set(drivers.hide_cards) == {"na", "intl"}
+
+
+def _rules_for(case: SimpleNamespace) -> tuple:
+    return tuple(
+        rule
+        for parent, breakouts in case.breakout_map.items()
+        for rule in partition_rules(parent, f"{parent}_breakout", breakouts, case.edges)
+    )
+
+
+def _wires_for(edges: tuple[tuple[str, str], ...]) -> tuple[Wire, ...]:
+    return tuple(Wire(f"w{i}", src, dst) for i, (src, dst) in enumerate(edges))
+
+
+_PLAIN_NESTING = SimpleNamespace(
+    id="plain_nesting_nothing_shared",
+    expect="accept",
+    breakout_map={
+        "revenue": _two_way(),
+        "users": (
+            Breakout(key="funnel", label="by funnel", op="x", children=("sessions", "conv")),
+            Breakout(key="country", label="by country", op="+", children=("cohort_a", "cohort_b")),
+        ),
+    },
+    edges=(
+        ("revenue", "users"),
+        ("revenue", "aov"),
+        ("revenue", "us"),
+        ("revenue", "eu"),
+        ("users", "sessions"),
+        ("users", "conv"),
+        ("users", "cohort_a"),
+        ("users", "cohort_b"),
+    ),
+    nodes=(
+        (
+            "revenue",
+            Card(
+                "Revenue",
+                content=(breakout_control(_two_way(), key="revenue_breakout"),),
+                width=140,
+            ),
+        ),
+        (
+            "users",
+            Card(
+                "Users",
+                content=(
+                    breakout_control(
+                        (
+                            Breakout(
+                                key="funnel",
+                                label="by funnel",
+                                op="x",
+                                children=("sessions", "conv"),
+                            ),
+                            Breakout(
+                                key="country",
+                                label="by country",
+                                op="+",
+                                children=("cohort_a", "cohort_b"),
+                            ),
+                        ),
+                        key="users_breakout",
+                    ),
+                ),
+                width=140,
+            ),
+        ),
+        ("aov", Card("AOV", width=140)),
+        ("us", Card("US", width=140)),
+        ("eu", Card("EU", width=140)),
+        ("sessions", Card("Sessions", width=140)),
+        ("conv", Card("Conv", width=140)),
+        ("cohort_a", Card("Cohort A", width=140)),
+        ("cohort_b", Card("Cohort B", width=140)),
+    ),
+    slots=(
+        Slot("revenue", 0, 0),
+        Slot("users", 1, 0),
+        Slot("aov", 1, 1),
+        Slot("us", 1, 0),
+        Slot("eu", 1, 1),
+        Slot("sessions", 2, 0),
+        Slot("conv", 2, 1),
+        Slot("cohort_a", 2, 0),
+        Slot("cohort_b", 2, 1),
+    ),
+    dom_prefix="mtx1",
+)
+
+
+_NESTED_SECOND_INCOMING_EDGE = SimpleNamespace(
+    id="nested_switcher_parent_has_second_incoming_edge",
+    expect="accept",
+    breakout_map={
+        "revenue": (
+            Breakout(key="drivers", label="Drivers", op="x", children=("users", "aov")),
+            Breakout(key="region", label="Region", op="+", children=("na", "intl")),
+        ),
+        "users": (
+            Breakout(key="funnel", label="Funnel", op="x", children=("sessions", "conv")),
+            Breakout(key="country", label="Country", op="+", children=("us_u", "eu_u")),
+        ),
+    },
+    edges=(
+        ("revenue", "users"),
+        ("revenue", "aov"),
+        ("revenue", "na"),
+        ("revenue", "intl"),
+        ("extra", "users"),
+        ("users", "sessions"),
+        ("users", "conv"),
+        ("users", "us_u"),
+        ("users", "eu_u"),
+    ),
+    nodes=(
+        (
+            "revenue",
+            Card(
+                "Revenue",
+                content=(
+                    breakout_control(
+                        (
+                            Breakout(
+                                key="drivers", label="Drivers", op="x", children=("users", "aov")
+                            ),
+                            Breakout(
+                                key="region", label="Region", op="+", children=("na", "intl")
+                            ),
+                        ),
+                        key="revenue_breakout",
+                    ),
+                ),
+                width=140,
+            ),
+        ),
+        ("extra", Card("Extra", width=140)),
+        (
+            "users",
+            Card(
+                "Users",
+                content=(
+                    breakout_control(
+                        (
+                            Breakout(
+                                key="funnel", label="Funnel", op="x", children=("sessions", "conv")
+                            ),
+                            Breakout(
+                                key="country", label="Country", op="+", children=("us_u", "eu_u")
+                            ),
+                        ),
+                        key="users_breakout",
+                    ),
+                ),
+                width=140,
+            ),
+        ),
+        ("aov", Card("AOV", width=140)),
+        ("na", Card("NA", width=140)),
+        ("intl", Card("Intl", width=140)),
+        ("sessions", Card("Sessions", width=140)),
+        ("conv", Card("Conv", width=140)),
+        ("us_u", Card("US Users", width=140)),
+        ("eu_u", Card("EU Users", width=140)),
+    ),
+    slots=(
+        Slot("revenue", 0, 0),
+        Slot("extra", 0, 1),
+        Slot("users", 1, 0),
+        Slot("aov", 1, 1),
+        Slot("na", 1, 0),
+        Slot("intl", 1, 1),
+        Slot("sessions", 2, 0),
+        Slot("conv", 2, 1),
+        Slot("us_u", 2, 0),
+        Slot("eu_u", 2, 1),
+    ),
+    dom_prefix="mtx2",
+)
+
+
+_FORCED_HIDDEN_PLUS_SECOND_SWITCHER = SimpleNamespace(
+    id="forced_hidden_direct_child_plus_second_switcher_and_unconditional_path",
+    expect="accept",
+    breakout_map={
+        "rev": _two_way(),
+        "gate2": (
+            Breakout(key="g1", label="G1", op="+", children=("g1c",)),
+            Breakout(key="g2", label="G2", op="+", children=("g2c",)),
+        ),
+    },
+    edges=(
+        ("root", "rev"),
+        ("root", "other"),
+        ("gate2", "g1c"),
+        ("gate2", "g2c"),
+        ("rev", "users"),
+        ("rev", "aov"),
+        ("rev", "us"),
+        ("rev", "eu"),
+        ("g1c", "us"),
+        ("other", "us"),
+    ),
+    nodes=(
+        ("root", Card("Root", width=140)),
+        (
+            "gate2",
+            Card(
+                "Gate2",
+                content=(
+                    breakout_control(
+                        (
+                            Breakout(key="g1", label="G1", op="+", children=("g1c",)),
+                            Breakout(key="g2", label="G2", op="+", children=("g2c",)),
+                        ),
+                        key="gate2_breakout",
+                    ),
+                ),
+                width=140,
+            ),
+        ),
+        (
+            "rev",
+            Card("Rev", content=(breakout_control(_two_way(), key="rev_breakout"),), width=140),
+        ),
+        ("other", Card("Other", width=140)),
+        ("g1c", Card("G1C", width=140)),
+        ("g2c", Card("G2C", width=140)),
+        ("users", Card("Users", width=140)),
+        ("aov", Card("AOV", width=140)),
+        ("us", Card("US", width=140)),
+        ("eu", Card("EU", width=140)),
+    ),
+    slots=(
+        Slot("root", 0, 0),
+        Slot("gate2", 0, 1),
+        Slot("rev", 1, 0),
+        Slot("other", 1, 1),
+        Slot("g1c", 1, 2),
+        Slot("g2c", 1, 3),
+        Slot("users", 2, 0),
+        Slot("us", 2, 0),
+        Slot("aov", 2, 1),
+        Slot("eu", 2, 1),
+    ),
+    dom_prefix="mtx3",
+)
+
+
+_DIAMOND_ONE_SWITCHER = SimpleNamespace(
+    id="diamond_shared_between_alternatives_of_one_switcher",
+    expect="accept",
+    breakout_map={"revenue": _two_way()},
+    edges=(
+        ("revenue", "users"),
+        ("revenue", "aov"),
+        ("revenue", "us"),
+        ("revenue", "eu"),
+        ("users", "new"),
+        ("users", "total"),
+        ("us", "total"),
+    ),
+    nodes=(
+        (
+            "revenue",
+            Card(
+                "Revenue",
+                content=(breakout_control(_two_way(), key="revenue_breakout"),),
+                width=140,
+            ),
+        ),
+        ("users", Card("Users", width=140)),
+        ("aov", Card("AOV", width=140)),
+        ("us", Card("US", width=140)),
+        ("eu", Card("EU", width=140)),
+        ("new", Card("New", width=140)),
+        ("total", Card("Total", width=140)),
+    ),
+    slots=(
+        Slot("revenue", 0, 0),
+        Slot("users", 1, 0),
+        Slot("aov", 1, 1),
+        Slot("us", 1, 0),
+        Slot("eu", 1, 1),
+        Slot("new", 2, 0),
+        Slot("total", 2, 1),
+    ),
+    dom_prefix="mtx4",
+)
+
+
+_DISJOINT_SWITCHERS = SimpleNamespace(
+    id="two_switchers_in_disjoint_branches",
+    expect="accept",
+    breakout_map={
+        "users": (
+            Breakout(key="new", label="New", op="+", children=("new",)),
+            Breakout(key="old", label="Old", op="+", children=("old",)),
+        ),
+        "aov": (
+            Breakout(key="price", label="Price", op="+", children=("price",)),
+            Breakout(key="volume", label="Volume", op="+", children=("volume",)),
+        ),
+    },
+    edges=(
+        ("root", "users"),
+        ("root", "aov"),
+        ("users", "new"),
+        ("users", "old"),
+        ("aov", "price"),
+        ("aov", "volume"),
+    ),
+    nodes=(
+        ("root", Card("Root", width=140)),
+        (
+            "users",
+            Card(
+                "Users",
+                content=(
+                    breakout_control(
+                        (
+                            Breakout(key="new", label="New", op="+", children=("new",)),
+                            Breakout(key="old", label="Old", op="+", children=("old",)),
+                        ),
+                        key="users_breakout",
+                    ),
+                ),
+                width=140,
+            ),
+        ),
+        (
+            "aov",
+            Card(
+                "AOV",
+                content=(
+                    breakout_control(
+                        (
+                            Breakout(key="price", label="Price", op="+", children=("price",)),
+                            Breakout(key="volume", label="Volume", op="+", children=("volume",)),
+                        ),
+                        key="aov_breakout",
+                    ),
+                ),
+                width=140,
+            ),
+        ),
+        ("new", Card("New", width=140)),
+        ("old", Card("Old", width=140)),
+        ("price", Card("Price", width=140)),
+        ("volume", Card("Volume", width=140)),
+    ),
+    slots=(
+        Slot("root", 0, 0),
+        Slot("users", 1, 0),
+        Slot("aov", 1, 1),
+        Slot("new", 2, 0),
+        Slot("old", 2, 0),
+        Slot("price", 2, 1),
+        Slot("volume", 2, 1),
+    ),
+    dom_prefix="mtx5",
+)
+
+
+def _every_option_reaches_case() -> SimpleNamespace:
+    a_breakouts = (
+        Breakout(key="a_first", label="A first", op="+", children=("a1", "a2")),
+        Breakout(key="a_second", label="A second", op="+", children=("a3", "a4")),
+    )
+    b_breakouts = (
+        Breakout(key="b_first", label="B first", op="+", children=("b1", "b2")),
+        Breakout(key="b_second", label="B second", op="+", children=("b3", "b4")),
+    )
+    edges = (
+        ("root", "a"),
+        ("root", "b"),
+        ("a", "a1"),
+        ("a", "a2"),
+        ("a", "a3"),
+        ("a", "a4"),
+        ("b", "b1"),
+        ("b", "b2"),
+        ("b", "b3"),
+        ("b", "b4"),
+        ("a1", "shared"),
+        ("a3", "shared"),
+        ("b1", "shared"),
+        ("b3", "shared"),
+    )
+    control_a = breakout_control(a_breakouts, key="a_breakout")
+    control_b = breakout_control(b_breakouts, key="b_breakout")
+    nodes = (
+        ("root", Card("Root", width=140)),
+        ("a", Card("A", content=(control_a,), width=140)),
+        ("b", Card("B", content=(control_b,), width=140)),
+        ("a1", Card("A1", width=140)),
+        ("a2", Card("A2", width=140)),
+        ("a3", Card("A3", width=140)),
+        ("a4", Card("A4", width=140)),
+        ("b1", Card("B1", width=140)),
+        ("b2", Card("B2", width=140)),
+        ("b3", Card("B3", width=140)),
+        ("b4", Card("B4", width=140)),
+        ("shared", Card("Shared", width=140)),
+    )
+    slots = (
+        Slot("root", 0, 0),
+        Slot("a", 1, 0),
+        Slot("b", 1, 1),
+        Slot("a1", 2, 0),
+        Slot("a3", 2, 0),
+        Slot("a2", 2, 1),
+        Slot("a4", 2, 1),
+        Slot("b1", 2, 2),
+        Slot("b3", 2, 2),
+        Slot("b2", 2, 3),
+        Slot("b4", 2, 3),
+        Slot("shared", 3, 0),
+    )
+    return SimpleNamespace(
+        id="two_switchers_where_every_option_reaches_the_descendant",
+        expect="accept",
+        breakout_map={"a": a_breakouts, "b": b_breakouts},
+        edges=edges,
+        nodes=nodes,
+        slots=slots,
+        dom_prefix="mtx6",
+    )
+
+
+def _three_level_nesting_case() -> SimpleNamespace:
+    top = (
+        Breakout(key="alt1", label="Alt1", op="+", children=("c1",)),
+        Breakout(key="alt2", label="Alt2", op="+", children=("c2",)),
+    )
+    mid = (
+        Breakout(key="alt1a", label="Alt1a", op="+", children=("c1a",)),
+        Breakout(key="alt1b", label="Alt1b", op="+", children=("c1b",)),
+    )
+    deep = (
+        Breakout(key="alt2a", label="Alt2a", op="+", children=("c1aa",)),
+        Breakout(key="alt2b", label="Alt2b", op="+", children=("c1ab",)),
+    )
+    edges = (
+        ("L0", "c1"),
+        ("L0", "c2"),
+        ("c1", "c1a"),
+        ("c1", "c1b"),
+        ("c1a", "c1aa"),
+        ("c1a", "c1ab"),
+    )
+    nodes = (
+        ("L0", Card("L0", content=(breakout_control(top, key="L0_breakout"),), width=140)),
+        ("c1", Card("C1", content=(breakout_control(mid, key="c1_breakout"),), width=140)),
+        ("c2", Card("C2", width=140)),
+        ("c1a", Card("C1A", content=(breakout_control(deep, key="c1a_breakout"),), width=140)),
+        ("c1b", Card("C1B", width=140)),
+        ("c1aa", Card("C1AA", width=140)),
+        ("c1ab", Card("C1AB", width=140)),
+    )
+    slots = (
+        Slot("L0", 0, 0),
+        Slot("c1", 1, 0),
+        Slot("c2", 1, 0),
+        Slot("c1a", 2, 0),
+        Slot("c1b", 2, 0),
+        Slot("c1aa", 3, 0),
+        Slot("c1ab", 3, 0),
+    )
+    return SimpleNamespace(
+        id="three_level_nesting",
+        expect="accept",
+        breakout_map={"L0": top, "c1": mid, "c1a": deep},
+        edges=edges,
+        nodes=nodes,
+        slots=slots,
+        dom_prefix="mtx7",
+    )
+
+
+_CROSSING_NESTED_AND_SIBLING = SimpleNamespace(
+    id="crossing_reachable_via_nested_branch_and_sibling_alternative",
+    expect="reject",
+    match=r"'shared'.*more than one breakout switcher",
+    breakout_map={
+        "revenue": (
+            Breakout(key="drivers", label="Drivers", op="x", children=("users", "aov")),
+            Breakout(key="region", label="Region", op="+", children=("na", "intl")),
+        ),
+        "users": (
+            Breakout(key="funnel", label="Funnel", op="x", children=("sessions", "conv")),
+            Breakout(key="country", label="Country", op="+", children=("us_u", "eu_u")),
+        ),
+    },
+    edges=(
+        ("revenue", "users"),
+        ("revenue", "aov"),
+        ("revenue", "na"),
+        ("revenue", "intl"),
+        ("users", "sessions"),
+        ("users", "conv"),
+        ("users", "us_u"),
+        ("users", "eu_u"),
+        ("sessions", "shared"),
+        ("intl", "shared"),
+    ),
+)
+
+
+_TWO_SIBLING_SWITCHERS = SimpleNamespace(
+    id="two_sibling_switchers_each_gating_the_descendant",
+    expect="reject",
+    match=r"'shared'.*more than one breakout switcher",
+    breakout_map={
+        "a": (
+            Breakout(key="a1", label="A1", op="+", children=("a1",)),
+            Breakout(key="a2", label="A2", op="+", children=("a2",)),
+        ),
+        "b": (
+            Breakout(key="b1", label="B1", op="+", children=("b1",)),
+            Breakout(key="b2", label="B2", op="+", children=("b2",)),
+        ),
+    },
+    edges=(
+        ("root", "a"),
+        ("root", "b"),
+        ("a", "a1"),
+        ("a", "a2"),
+        ("b", "b1"),
+        ("b", "b2"),
+        ("a1", "shared"),
+        ("b1", "shared"),
+    ),
+)
+
+
+_FOUR_ONE_CHILD_OPTIONS = SimpleNamespace(
+    id="four_one_child_options_only_first_and_third_reach_plus_second_switcher",
+    expect="reject",
+    match=r"'shared'.*more than one breakout switcher",
+    breakout_map={
+        "a": (
+            Breakout(key="a1", label="A1", op="+", children=("a1",)),
+            Breakout(key="a2", label="A2", op="+", children=("a2",)),
+            Breakout(key="a3", label="A3", op="+", children=("a3",)),
+            Breakout(key="a4", label="A4", op="+", children=("a4",)),
+        ),
+        "b": (
+            Breakout(key="b1", label="B1", op="+", children=("b1",)),
+            Breakout(key="b2", label="B2", op="+", children=("b2",)),
+        ),
+    },
+    edges=(
+        ("root", "a"),
+        ("root", "b"),
+        ("a", "a1"),
+        ("a", "a2"),
+        ("a", "a3"),
+        ("a", "a4"),
+        ("b", "b1"),
+        ("b", "b2"),
+        ("a1", "shared"),
+        ("a3", "shared"),
+        ("b1", "shared"),
+    ),
+)
+
+
+_ONE_OPTION_OF_EACH = SimpleNamespace(
+    id="descendant_reachable_only_through_one_option_of_each_of_two_switchers",
+    expect="reject",
+    match=r"'shared'.*more than one breakout switcher",
+    breakout_map={
+        "a": (
+            Breakout(key="a_first", label="A first", op="+", children=("a1", "a2")),
+            Breakout(key="a_second", label="A second", op="+", children=("a3", "a4")),
+        ),
+        "b": (
+            Breakout(key="b1", label="B1", op="+", children=("b1",)),
+            Breakout(key="b2", label="B2", op="+", children=("b2",)),
+        ),
+    },
+    edges=(
+        ("root", "a"),
+        ("root", "b"),
+        ("a", "a1"),
+        ("a", "a2"),
+        ("a", "a3"),
+        ("a", "a4"),
+        ("a1", "shared"),
+        ("a2", "shared"),
+        ("b", "b1"),
+        ("b", "b2"),
+        ("b1", "shared"),
+    ),
+)
+
+
+_CONJUNCTION_TOPOLOGY_CASES = (
+    _PLAIN_NESTING,
+    _NESTED_SECOND_INCOMING_EDGE,
+    _FORCED_HIDDEN_PLUS_SECOND_SWITCHER,
+    _DIAMOND_ONE_SWITCHER,
+    _DISJOINT_SWITCHERS,
+    _every_option_reaches_case(),
+    _three_level_nesting_case(),
+    _CROSSING_NESTED_AND_SIBLING,
+    _TWO_SIBLING_SWITCHERS,
+    _FOUR_ONE_CHILD_OPTIONS,
+    _ONE_OPTION_OF_EACH,
+)
+
+
+@pytest.mark.parametrize(
+    "case", _CONJUNCTION_TOPOLOGY_CASES, ids=[case.id for case in _CONJUNCTION_TOPOLOGY_CASES]
+)
+def test_conjunction_topology_matrix(case: SimpleNamespace) -> None:
+    # One row per point in the accept/reject topology space this module's
+    # invariant governs (see the module docstring): reject only when a
+    # selectable combination of switcher choices leaves some card actually
+    # rendered with every root path closed. Each accept row also builds the
+    # real `Graph` and checks the kernel's own exclusivity proof agrees --
+    # not merely that `reject_switcher_conjunctions` stayed quiet.
+    if case.expect == "reject":
+        with pytest.raises(SpecError, match=case.match):
+            reject_switcher_conjunctions(case.breakout_map, case.edges)
+        return
+    reject_switcher_conjunctions(case.breakout_map, case.edges)  # must not raise
+    graph = Graph(
+        case.nodes,
+        Slotted(case.slots),
+        wires=_wires_for(case.edges),
+        rules=_rules_for(case),
+        dom_prefix=case.dom_prefix,
+    )
+    assert graph.measure().width > 0

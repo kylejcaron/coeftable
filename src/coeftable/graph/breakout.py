@@ -19,6 +19,13 @@ neither one subsumes, whether those two switchers sit in unrelated
 branches or one is nested inside the other but reachable through some
 *other*, non-excluded branch of its ancestor -- a genuine conjunction no
 single switcher's own liveness proof can see.
+
+Invariant: a topology is refused only when some selectable combination of
+switcher choices leaves a card actually rendered -- never force-hidden as
+some switcher's own direct child -- while no path from any graph root to
+that card survives the same combination. A card that disappears together
+with its own unselected alternative is hidden, not orphaned, however many
+other switchers or unconditional branches also happen to reach it.
 """
 
 from __future__ import annotations
@@ -353,14 +360,15 @@ def _prune_gate_edges(
 ) -> dict[str, tuple[str, ...]]:
     """Block traversal through every gate's reaching children.
 
-    A reaching child is a direct child of the option a gate's own switcher
-    would need to select to exclude the node it gates -- the exact
-    position `_hidden_subtree` always force-hides, regardless of any other
-    incoming edge. Zeroing each one's own outgoing edges here, rather than
-    only removing the edge from its switcher parent, is what keeps this
-    reachability model from disagreeing with what `_hidden_subtree`
-    actually emits: a reaching child with a second incoming edge from
-    elsewhere must not read as leaving some still-live path past it.
+    A reaching child is a direct child of the option that keeps the node
+    it gates reachable; leaving that option unselected -- not selecting it
+    -- is what excludes the node, the exact position `_hidden_subtree`
+    always force-hides, regardless of any other incoming edge. Zeroing
+    each one's own outgoing edges here, rather than only removing the edge
+    from its switcher parent, is what keeps this reachability model from
+    disagreeing with what `_hidden_subtree` actually emits: a reaching
+    child with a second incoming edge from elsewhere must not read as
+    leaving some still-live path past it.
     """
     forced_hidden: set[str] = set()
     for reaching in gates.values():
@@ -461,6 +469,18 @@ def _reject_orphanable_descendants(
     surviving gate together and finding the descendant still unreachable
     from every root proves the orphaning combination is real and
     selectable.
+
+    A descendant that is itself a reaching child of one of its own
+    surviving gates is never orphanable by this check, and needs none:
+    that gate's own switcher unconditionally force-hides it, as a direct
+    child, the instant its alternative is unselected -- the same rule
+    `_hidden_subtree` applies -- so it is either hidden outright or
+    visible through its own live, unconditional edge, never left visible
+    with nothing pointing at it. Only a descendant that is *nobody's*
+    direct child -- reachable purely through deeper edges every
+    contributing gate happens to prune -- can end up genuinely
+    unreachable once every surviving gate is pruned together, which is
+    exactly what the reachability check below still catches.
     """
     option_children = _real_option_children(breakout_map)
     if len(option_children) < 2:
@@ -473,9 +493,8 @@ def _reject_orphanable_descendants(
         )
         if len(gates) < 2:
             continue
-        forced_hidden = frozenset().union(*gates.values())
         visible = _visible_from_roots(roots, _prune_gate_edges(adjacency, gates))
-        if node in forced_hidden or node not in visible:
+        if node not in visible:
             switchers = ", ".join(sorted(gates))
             raise SpecError(
                 f"{node!r} visibility depends on more than one breakout switcher: {switchers}"
