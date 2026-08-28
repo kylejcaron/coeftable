@@ -223,6 +223,7 @@ def test_region_errors_surface_at_card_construction():
         lambda: Card("t", width=-1),
         lambda: Card("t", chrome="chrome"),  # ty: ignore[invalid-argument-type]
         lambda: Card("t", theme="theme"),  # ty: ignore[invalid-argument-type]
+        lambda: Card("t", appearance="appearance"),  # ty: ignore[invalid-argument-type]
         lambda: Card("t", content="text"),  # ty: ignore[invalid-argument-type]
         lambda: Card("t", content=[object()]),  # ty: ignore[invalid-argument-type]
     ],
@@ -234,6 +235,7 @@ def test_region_errors_surface_at_card_construction():
         "negative-width",
         "bad-chrome",
         "bad-theme",
+        "bad-appearance",
         "str-content",
         "invalid-content-item",
     ],
