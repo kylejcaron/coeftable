@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 
 from coeftable.cards import Card, CardChrome
@@ -15,8 +16,13 @@ from coeftable.graph.model import (
     Staged,
     StageSlot,
     Wire,
+    _flow_offsets,
+    _resolve_edge_styles,
+    _stage_gap_requirements,
 )
 from coeftable.theme import DEFAULT, Theme
+
+_DEFAULT_STAGE_GAP_FLOOR = 108
 
 
 def _styles(
@@ -52,7 +58,7 @@ def EventFlow(
     chrome: CardChrome = DEFAULT_CHROME,
     dom_prefix: str = "g0",
     gap: int = 36,
-    stage_gap: int = 108,
+    stage_gap: int | None = None,
 ) -> Graph:
     """Build a staged flow with paint-only back edges.
 
@@ -61,13 +67,19 @@ def EventFlow(
     checks exist only to name this builder's own input surface in errors;
     Graph remains the authoritative boundary for any caller that constructs
     staged wires without going through this helper.
+
+    Omitting ``stage_gap`` derives the narrowest gap that still keeps every
+    forward pill, loop pool, and collapsible fold nub disjoint, using the
+    exact same physical planner Graph itself validates an explicit
+    ``stage_gap`` against (see `_stage_gap_requirements`), floored at 108px.
     """
     node_entries = tuple(nodes)
     placement_entries = tuple(placements)
     edge_entries = tuple(edges)
     collapsible_entries = tuple(collapsible)
     layout = Staged(placement_entries)
-    stage_by_id = {slot.card_id: slot.stage for slot in layout.slots}
+    slot_by_id = {slot.card_id: slot for slot in layout.slots}
+    stage_by_id = {card_id: slot.stage for card_id, slot in slot_by_id.items()}
     if len(stage_by_id) != len(layout.slots):
         raise SpecError("EventFlow placements card ids must be unique")
     for index, edge in enumerate(edge_entries):
@@ -93,6 +105,30 @@ def EventFlow(
         )
         for edge in edge_entries
     )
+    edge_style_overrides = _styles(styles)
+    resolved_stage_gap = stage_gap
+    if resolved_stage_gap is None:
+        resolved_styles = _resolve_edge_styles(theme, edge_style_overrides)
+        max_stage = max((slot.stage for slot in layout.slots), default=0)
+        offsets = _flow_offsets(
+            wires,
+            slot_by_id=slot_by_id,
+            collapsible=collapsible_entries,
+            chrome=chrome,
+            styles=resolved_styles,
+        )
+        requirements = _stage_gap_requirements(
+            wires,
+            slot_by_id=slot_by_id,
+            offsets=offsets,
+            collapsible=collapsible_entries,
+            chrome=chrome,
+            styles=resolved_styles,
+            max_stage=max_stage,
+        )
+        resolved_stage_gap = max(
+            _DEFAULT_STAGE_GAP_FLOOR, math.ceil(max(requirements.values(), default=0.0))
+        )
     visibility = tuple(wire.id for wire in wires if wire.kind != "back")
     return Graph(
         nodes=node_entries,
@@ -101,11 +137,11 @@ def EventFlow(
         collapsible=collapsible_entries,
         visibility=visibility,
         gap=gap,
-        layer_gap=stage_gap,
+        layer_gap=resolved_stage_gap,
         dom_prefix=dom_prefix,
         theme=theme,
         chrome=chrome,
-        edge_styles=_styles(styles),
+        edge_styles=edge_style_overrides,
     )
 
 

@@ -45,6 +45,22 @@ def _assert_pill_bounds_inside(graph: Graph) -> None:
         assert py + ph <= measured.height
 
 
+def _painted_pill_rect(
+    rect: tuple[float, float, float, float], graph: Graph
+) -> tuple[float, float, float, float]:
+    """Expand a flow pill's nominal rect by its rendered border halo."""
+    x, y, width, height = rect
+    halo = graph.chrome.border_width / 2
+    return (x - halo, y - halo, width + 2 * halo, height + 2 * halo)
+
+
+def _nub_rect(anchor: tuple[float, float, str]) -> tuple[float, float, float, float]:
+    """Return a staged collapsible card's 18x18 right-edge fold nub rect."""
+    x, y, side = anchor
+    assert side == "right"
+    return (x, y - 9.0, 18.0, 18.0)
+
+
 def _path_points(path_d: str) -> list[tuple[float, float]]:
     """Extract every (x, y) coordinate pair from a rendered SVG path string."""
     numbers = [float(token) for token in re.findall(r"-?\d+(?:\.\d+)?", path_d)]
@@ -378,57 +394,107 @@ def test_back_wire_hides_via_either_collapsed_endpoint():
 
 def test_forward_wire_label_pill_rejected_when_wider_than_layer_gap():
     edges = (FlowEdge("a-b", "a", "b", "forward", "hello"),)
-    # Default chrome: pill width = 2*8 + 5*11*0.6 = 49.0 exactly.
+    # Default chrome: pill half-width = (2*8 + 5*11*0.6)/2 = 24.5, painted +0.5px
+    # border halo = 25.0. No loop pools on either side, so the centered pill
+    # alone drives the requirement: 2*(0 + chip_gap(10) + 25.0) = 70 exactly.
     assert EventFlow(
         (("a", Card("A")), ("b", Card("B"))),
         (StageSlot("a", 0, 0), StageSlot("b", 1, 0)),
         edges,
-        stage_gap=49,
+        stage_gap=70,
     )
     with pytest.raises(
         SpecError,
-        match=re.escape("forward wire label pill requires 49px but Graph.layer_gap is 48px"),
+        match=re.escape(
+            "Graph.layer_gap must be at least 70px between stage 0 and stage 1 but is 69px"
+        ),
     ):
         EventFlow(
             (("a", Card("A")), ("b", Card("B"))),
             (StageSlot("a", 0, 0), StageSlot("b", 1, 0)),
             edges,
-            stage_gap=48,
+            stage_gap=69,
         )
 
 
 def test_forward_wire_label_pill_reserves_extra_width_for_a_collapsible_source():
     edges = (FlowEdge("a-b", "a", "b", "forward", "hello"),)
-    # Pill width 49.0 plus the 36px collapsible-source fold reserve = 85.0 exactly.
+    # A collapsible source stage's right-edge nub reaches the shared
+    # `_NUB_RESERVE` 18px regardless of any loop pool, so the centered pill
+    # must clear whichever of {nub, opposing loop} reaches furthest:
+    # 2*(18 + chip_gap(10) + 25.0) = 106 exactly.
     assert EventFlow(
         (("a", Card("A")), ("b", Card("B"))),
         (StageSlot("a", 0, 0), StageSlot("b", 1, 0)),
         edges,
         collapsible=("a",),
-        stage_gap=85,
+        stage_gap=106,
     )
     with pytest.raises(
         SpecError,
-        match=re.escape("forward wire label pill requires 85px but Graph.layer_gap is 84px"),
+        match=re.escape(
+            "Graph.layer_gap must be at least 106px between stage 0 and stage 1 but is 105px"
+        ),
     ):
         EventFlow(
             (("a", Card("A")), ("b", Card("B"))),
             (StageSlot("a", 0, 0), StageSlot("b", 1, 0)),
             edges,
             collapsible=("a",),
-            stage_gap=84,
+            stage_gap=105,
         )
 
 
-def test_event_flow_default_stage_gap_fits_a_continue_pill_from_a_collapsible_source():
-    # Default chrome pill width for "continue" is 2*8 + 8*11*0.6 = 68.8px, plus the
-    # 36px collapsible-source reserve = 104.8px, comfortably inside the 108px default.
-    assert EventFlow(
+def test_forward_pill_clears_a_sibling_lanes_collapsible_nub():
+    """A stage-wide nub reserve still applies to a pill from a non-collapsible sibling.
+
+    The physical fold nub occupies the gap regardless of which lane's card
+    sourced a given forward pill, so `b`'s outgoing pill must still clear
+    `a`'s nub even though `b` itself is not collapsible — the historical
+    bug only widened the gap for a collapsible wire's *own* pill.
+    """
+    nodes = (("a", Card("A")), ("b", Card("B")), ("c", Card("C")))
+    slots = (StageSlot("a", 0, 0), StageSlot("b", 0, 1), StageSlot("c", 1, 0))
+    edges = (FlowEdge("b-c", "b", "c", "forward", "go"),)
+    # Pill half-width for "go" = (2*8 + 2*11*0.6)/2 = 14.6, painted 15.1.
+    # 2*(18 + 10 + 15.1) = 86.2 exactly.
+    graph = EventFlow(nodes, slots, edges, collapsible=("a",), dom_prefix="sib", stage_gap=87)
+    pill = dict(graph._layout.flow_pills)["b-c"]
+    nub_anchor = dict(graph._layout.nub_anchors)["a"]
+    assert not _rects_overlap(_nub_rect(nub_anchor), _painted_pill_rect(pill, graph))
+    with pytest.raises(
+        SpecError,
+        match=re.escape(
+            "Graph.layer_gap must be at least 86.2px between stage 0 and stage 1 but is 86px"
+        ),
+    ):
+        EventFlow(nodes, slots, edges, collapsible=("a",), dom_prefix="sibbad", stage_gap=86)
+
+
+def test_event_flow_default_stage_gap_derives_enough_room_for_a_collapsible_source_pill():
+    # Pill half-width for "continue" = (2*8 + 8*11*0.6)/2 = 34.4, painted 34.9.
+    # 2*(18 + chip_gap(10) + 34.9) = 125.8, ceiled to 126 and floored at 108
+    # only if smaller — 126 > 108, so the derived default is 126 exactly.
+    graph = EventFlow(
         (("a", Card("A")), ("b", Card("B"))),
         (StageSlot("a", 0, 0), StageSlot("b", 1, 0)),
         (FlowEdge("a-b", "a", "b", "forward", "continue"),),
         collapsible=("a",),
     )
+    assert graph.layer_gap == 126
+    pill = dict(graph._layout.flow_pills)["a-b"]
+    nub_anchor = dict(graph._layout.nub_anchors)["a"]
+    assert not _rects_overlap(_nub_rect(nub_anchor), _painted_pill_rect(pill, graph))
+
+
+def test_event_flow_default_stage_gap_is_never_smaller_than_108():
+    # Nothing occupies the gap, so the planner requires 0 — the floor wins.
+    graph = EventFlow(
+        (("a", Card("A")), ("b", Card("B"))),
+        (StageSlot("a", 0, 0), StageSlot("b", 1, 0)),
+        (FlowEdge("a-b", "a", "b", "forward"),),
+    )
+    assert graph.layer_gap == 108
 
 
 def test_skip_route_offset_beyond_padding_expands_the_canvas():
@@ -668,16 +734,23 @@ def test_stacked_back_tracks_clear_a_taller_intervening_lane():
     _assert_pill_bounds_inside(graph)
 
 
-def test_same_stage_c_loop_pill_rejected_when_wider_than_stage_gap_at_interior_stage():
+def test_same_stage_c_loop_pill_rejected_when_wider_than_an_explicit_stage_gap_at_interior_stage():
     nodes = (("s", Card("S")), ("p", Card("P")), ("q", Card("Q")))
     slots = (StageSlot("s", 0, 0), StageSlot("p", 1, 0), StageSlot("q", 1, 1))
-    with pytest.raises(SpecError, match=re.escape("same-stage back-loop track requires 111.8px")):
-        EventFlow(
-            nodes,
-            slots,
-            (FlowEdge("q-p", "q", "p", "back", "retry payment"),),
-            dom_prefix="long",
-        )
+    edges = (FlowEdge("q-p", "q", "p", "back", "retry payment"),)
+    # A lone left-loop pool has no opposing occupant, so it may touch its own
+    # stage boundary exactly: offset(60.9) + painted half(51.4) = 112.3.
+    # Omitting `stage_gap` would always derive enough room, so this must
+    # pass an explicit, deliberately insufficient gap to trigger rejection.
+    graph = EventFlow(nodes, slots, edges, dom_prefix="ok", stage_gap=113)
+    _assert_pill_bounds_inside(graph)
+    with pytest.raises(
+        SpecError,
+        match=re.escape(
+            "Graph.layer_gap must be at least 112.3px between stage 0 and stage 1 but is 112px"
+        ),
+    ):
+        EventFlow(nodes, slots, edges, dom_prefix="long", stage_gap=112)
 
 
 def test_same_stage_c_loop_exterior_pool_ignores_the_stage_gap_bound():
@@ -694,7 +767,7 @@ def test_same_stage_c_loop_exterior_pool_ignores_the_stage_gap_bound():
 
 
 def test_same_stage_c_loop_accumulated_tracks_exact_boundary_and_rejection():
-    """Two 5-char-labeled tracks in one interior pool reach exactly 118px."""
+    """Two 5-char-labeled tracks in one interior pool reach exactly 118.5px."""
 
     def build(stage_gap: int) -> Graph:
         nodes = (("s", Card("S")), ("p", Card("P")), ("q", Card("Q")), ("r", Card("R")))
@@ -715,10 +788,157 @@ def test_same_stage_c_loop_accumulated_tracks_exact_boundary_and_rejection():
             dom_prefix="acc",
         )
 
-    graph = build(118)
+    graph = build(119)
+    pills = dict(graph._layout.flow_pills)
+    assert not _rects_overlap(
+        _painted_pill_rect(pills["q-p"], graph), _painted_pill_rect(pills["r-q"], graph)
+    )
     _assert_pill_bounds_inside(graph)
-    with pytest.raises(SpecError, match=re.escape("same-stage back-loop track requires 118px")):
-        build(117)
+    with pytest.raises(
+        SpecError,
+        match=re.escape(
+            "Graph.layer_gap must be at least 118.5px between stage 0 and stage 1 but is 118px"
+        ),
+    ):
+        build(118)
+
+
+def _coincident_y_fixture() -> tuple[
+    tuple[tuple[str, Card], ...], tuple[StageSlot, ...], tuple[FlowEdge, ...]
+]:
+    """A forward pill and a right-loop pill share both a src card and a paint y.
+
+    `a` (lane 0) sources both a same-stage right loop to `e` (lane 1) and a
+    forward edge to `f` (lane 1, next stage): lane rows are shared across
+    every stage, so both pills' y — the average of their own lane-0/lane-1
+    endpoints — land on the exact same value, without either route knowing
+    the other exists.
+    """
+    nodes = (("a", Card("A")), ("e", Card("E")), ("f", Card("F")))
+    slots = (StageSlot("a", 0, 0), StageSlot("e", 0, 1), StageSlot("f", 1, 1))
+    edges = (
+        FlowEdge("a-f", "a", "f", "forward", "go now"),
+        FlowEdge("a-e", "a", "e", "back", "retry"),
+    )
+    return nodes, slots, edges
+
+
+def test_default_stage_gap_keeps_a_forward_pill_and_right_loop_disjoint_at_coincident_y():
+    nodes, slots, edges = _coincident_y_fixture()
+    graph = EventFlow(nodes, slots, edges, dom_prefix="coin")
+    # The 196px derived default comes from the exact same private planner
+    # `Graph` itself validates an explicit `stage_gap` against (asserted via
+    # `graph.layer_gap` and the boundary test below, not hand-derived here).
+    pills = dict(graph._layout.flow_pills)
+    forward_pill, loop_pill = pills["a-f"], pills["a-e"]
+    assert forward_pill[1] == loop_pill[1]  # the coincident y this fixture forces
+    assert graph.layer_gap == 196
+    assert not _rects_overlap(
+        _painted_pill_rect(forward_pill, graph), _painted_pill_rect(loop_pill, graph)
+    )
+    _assert_pill_bounds_inside(graph)
+
+
+def test_coincident_y_fixture_explicit_boundary_passes_and_one_pixel_fails():
+    nodes, slots, edges = _coincident_y_fixture()
+    graph = EventFlow(nodes, slots, edges, dom_prefix="coinok", stage_gap=196)
+    assert graph.layer_gap == 196
+    with pytest.raises(
+        SpecError,
+        match=re.escape(
+            "Graph.layer_gap must be at least 195.6px between stage 0 and stage 1 but is 195px"
+        ),
+    ):
+        EventFlow(nodes, slots, edges, dom_prefix="coinbad", stage_gap=195)
+
+
+def test_stage_gap_enforces_chip_gap_between_a_neighboring_stage_nub_and_a_left_loop():
+    """A collapsible source's nub and the *next* stage's own left loop share a gap."""
+    nodes = (("a", Card("A")), ("p", Card("P")), ("q", Card("Q")))
+    slots = (StageSlot("a", 0, 0), StageSlot("p", 1, 0), StageSlot("q", 1, 1))
+    edges = (FlowEdge("q-p", "q", "p", "back", "retry"),)
+    # The 87.5px requirement comes from the exact same private planner
+    # `Graph` itself validates an explicit `stage_gap` against (asserted via
+    # the boundary test below, not hand-derived here).
+    graph = EventFlow(nodes, slots, edges, collapsible=("a",), dom_prefix="nubloop", stage_gap=88)
+    pill = dict(graph._layout.flow_pills)["q-p"]
+    nub_anchor = dict(graph._layout.nub_anchors)["a"]
+    assert not _rects_overlap(_nub_rect(nub_anchor), _painted_pill_rect(pill, graph))
+    with pytest.raises(
+        SpecError,
+        match=re.escape(
+            "Graph.layer_gap must be at least 87.5px between stage 0 and stage 1 but is 87px"
+        ),
+    ):
+        EventFlow(nodes, slots, edges, collapsible=("a",), dom_prefix="nubloopbad", stage_gap=87)
+
+
+def test_stage_gap_enforces_chip_gap_between_opposing_left_and_right_loop_pools():
+    """A left stage's right loop and a right stage's left loop share one gap."""
+    nodes = (("a", Card("A")), ("b", Card("B")), ("c", Card("C")), ("d", Card("D")))
+    slots = (
+        StageSlot("a", 0, 0),
+        StageSlot("b", 0, 1),
+        StageSlot("c", 1, 0),
+        StageSlot("d", 1, 1),
+    )
+    edges = (
+        FlowEdge("b-a", "b", "a", "back", "retry"),
+        FlowEdge("d-c", "d", "c", "back", "retry"),
+    )
+    graph = EventFlow(nodes, slots, edges, dom_prefix="opp", stage_gap=60)
+    pills = dict(graph._layout.flow_pills)
+    assert not _rects_overlap(
+        _painted_pill_rect(pills["b-a"], graph), _painted_pill_rect(pills["d-c"], graph)
+    )
+    with pytest.raises(
+        SpecError,
+        match=re.escape(
+            "Graph.layer_gap must be at least 59.5px between stage 0 and stage 1 but is 59px"
+        ),
+    ):
+        EventFlow(nodes, slots, edges, dom_prefix="oppbad", stage_gap=59)
+
+
+def test_stage_gap_uses_the_furthest_reaching_painted_extent_for_a_thick_labeled_style():
+    """A thick back stroke paints past its own pill, so the stroke half-width wins."""
+    chrome = CardChrome(border_width=8)
+    styles = {"back": EdgeStyle("#000000", width=140.0)}
+    nodes = (
+        ("s", Card("S", chrome=chrome)),
+        ("p", Card("P", chrome=chrome)),
+        ("q", Card("Q", chrome=chrome)),
+    )
+    slots = (StageSlot("s", 0, 0), StageSlot("p", 1, 0), StageSlot("q", 1, 1))
+    edges = (FlowEdge("q-p", "q", "p", "back", "x"),)
+    # Pill half for "x" (1 char) is only (2*8+1*11*0.6)/2 = 11.3, painted with
+    # the inflated 4px halo = 15.3 — dwarfed by half the 140px stroke (70).
+    # offset(21.3) + max(15.3, 70) = 91.3.
+    graph = EventFlow(
+        nodes,
+        slots,
+        edges,
+        styles=styles,  # ty: ignore[invalid-argument-type]
+        chrome=chrome,
+        dom_prefix="thick",
+        stage_gap=92,
+    )
+    _assert_no_wire_samples_enter_any_card(graph)
+    with pytest.raises(
+        SpecError,
+        match=re.escape(
+            "Graph.layer_gap must be at least 91.3px between stage 0 and stage 1 but is 91px"
+        ),
+    ):
+        EventFlow(
+            nodes,
+            slots,
+            edges,
+            styles=styles,  # ty: ignore[invalid-argument-type]
+            chrome=chrome,
+            dom_prefix="thickbad",
+            stage_gap=91,
+        )
 
 
 def _all_wire_samples(graph: Graph) -> dict[str, list[tuple[float, float]]]:

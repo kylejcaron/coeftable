@@ -684,37 +684,6 @@ def _pill_width(label: str, chrome: CardChrome) -> float:
     return 2 * chrome.chip_padding_x + len(label) * chrome.caption_size * chrome.char_width_ratio
 
 
-def _graph_validate_forward_pill_width(
-    wires: tuple[Wire, ...],
-    *,
-    stage_gap: int,
-    chrome: CardChrome,
-    collapsible: tuple[str, ...],
-) -> None:
-    """Reject a labeled forward pill wide enough to overlap the next stage.
-
-    A forward wire always crosses at least one ``stage_gap`` of clear space
-    between adjacent stage columns (a box narrower than its column's widest
-    occupant only widens that gap further), so a pill wider than the gap
-    itself would spill onto a neighboring stage's cards no matter where it
-    lands along the route. A collapsible source card additionally folds a
-    right-edge nub into that same gap, plus matching clearance on either
-    side of it (36px total), so its outgoing forward pills must fit the gap
-    minus that reserve.
-    """
-    for wire in wires:
-        if wire.kind != "forward" or wire.label is None:
-            continue
-        required = _pill_width(wire.label, chrome)
-        if wire.src in collapsible:
-            required += 36
-        if required > stage_gap:
-            raise SpecError(
-                f"forward wire label pill requires {required:g}px but "
-                f"Graph.layer_gap is {stage_gap}px"
-            )
-
-
 def _graph_collapsible(value: object, known_cards: set[str]) -> tuple[str, ...]:
     """Canonicalize and validate collapsible card ids."""
     collapsible = _canonical(value, name="Graph.collapsible")
@@ -1255,6 +1224,15 @@ def _flow_track_extent(
     return styles[cast(EdgeKind, wire.kind)].width / 2
 
 
+_NUB_RESERVE: float = 18.0
+"""Full painted width a collapsible card's right-edge fold nub reserves.
+
+Shared by `_flow_offsets`'s right-loop pool packing and
+`_stage_gap_requirements`'s standalone occupancy floor, so both agree on
+exactly the same reach even when a stage has a nub but no right-loop wire.
+"""
+
+
 def _flow_offsets(
     wires: tuple[Wire, ...],
     *,
@@ -1288,10 +1266,10 @@ def _flow_offsets(
             offset = prev_offset + prev_extent + chrome.chip_gap + extent
         else:
             nub_reservation = (
-                18
+                _NUB_RESERVE
                 if key == f"loop-right-{slot_by_id[wire.src].stage}"
                 and slot_by_id[wire.src].stage in collapsible_stages
-                else 0
+                else 0.0
             )
             offset = nub_reservation + extent + chrome.chip_gap
         tracks[key] = (offset, extent)
@@ -1299,45 +1277,126 @@ def _flow_offsets(
     return offsets
 
 
-def _graph_validate_c_loop_track_width(
+def _painted_extent(
+    wire: Wire,
+    nominal_half: float,
+    *,
+    styles: Mapping[EdgeKind, EdgeStyle],
+    pill_halo: float,
+) -> float:
+    """Return a wire's painted half-extent, including any pill's border halo.
+
+    A labeled wire's rendered pill paints past its nominal rect by half the
+    chrome border width on every side (see `_flow_bounds_extrema`), so its
+    painted extent grows by `pill_halo`; an unlabeled wire has no pill, so
+    its painted extent is just its own nominal half-extent. Either way, the
+    result never undershoots half the wire's own resolved stroke width,
+    since the route's stroke paints that far regardless of any pill.
+    """
+    painted = nominal_half + pill_halo if wire.label is not None else nominal_half
+    return max(painted, styles[cast(EdgeKind, wire.kind)].width / 2)
+
+
+def _stage_gap_requirements(
     wires: tuple[Wire, ...],
     *,
     slot_by_id: Mapping[str, StageSlot],
     offsets: Mapping[str, float],
+    collapsible: tuple[str, ...],
     chrome: CardChrome,
     styles: Mapping[EdgeKind, EdgeStyle],
-    stage_gap: int,
     max_stage: int,
-) -> None:
-    """Reject an interior same-stage C-loop pool wide enough to overlap a neighbor.
+) -> dict[int, float]:
+    """Return each stage boundary's minimum physical gap requirement.
 
-    A same-stage back edge's C-loop pool packed against the first stage's
-    left side or the last stage's right side has open canvas to expand
-    into (see `_graph_measure_staged`'s width/height growth), but a pool
-    packed against any *interior* stage's boundary is bounded on that side
-    by the neighboring stage's own cards. `_flow_offsets` already packs
-    each pool's tracks closest-first, so the last track packed into a pool
-    carries that pool's total reach from the stage boundary; checked here
-    against the one `stage_gap` of clear space actually available there.
+    Up to three occupants can share one physical stage gap, and none of
+    them know each other's actual paint y-coordinate: the left stage's
+    right-loop pool (plus its own collapsible fold nub, which reserves
+    `_NUB_RESERVE` even wireless — see `_flow_offsets`), the right stage's
+    left-loop pool, and any labeled forward pill crossing straight through
+    the gap's own center (`route_across` always anchors it at the exact
+    midpoint between the two stages' outer edges). A lone occupant may
+    still touch its own stage boundary exactly (as before); one `chip_gap`
+    is only owed between two occupants that would otherwise need to share
+    the same space.
+
+    A forward pill's x never shifts off that exact midpoint regardless of
+    how wide the gap is, so an asymmetric pair of loop pools still forces
+    *both* halves of the gap to fit the pill: the minimum gap doubles
+    whichever side's loop pool (plus its own clearance to the pill) reaches
+    furthest. With no pill to center in that gap, two opposing loop pools
+    only need to clear one `chip_gap` directly between themselves, so their
+    reaches add rather than double.
     """
-    reach_by_group: dict[str, float] = {}
+    pill_halo = chrome.border_width / 2
+    collapsible_stages = {slot_by_id[card_id].stage for card_id in collapsible}
+    loop_reach: dict[str, float] = {}
     for wire in wires:
         group = _flow_track_group(wire, slot_by_id=slot_by_id)
         if group is None or group[1] != "width":
             continue
-        stage = slot_by_id[wire.src].stage
-        side = "left" if slot_by_id[wire.dst].lane < slot_by_id[wire.src].lane else "right"
-        if (side == "left" and stage == 0) or (side == "right" and stage == max_stage):
-            continue
         key, _axis = group
-        extent = _flow_track_extent(wire, axis="width", chrome=chrome, styles=styles)
+        nominal = _flow_track_extent(wire, axis="width", chrome=chrome, styles=styles)
+        extent = _painted_extent(wire, nominal, styles=styles, pill_halo=pill_halo)
         reach = offsets[wire.id] + extent
-        reach_by_group[key] = max(reach_by_group.get(key, 0.0), reach)
-    for reach in reach_by_group.values():
-        if reach > stage_gap:
+        loop_reach[key] = max(loop_reach.get(key, 0.0), reach)
+    centered_reach: dict[int, float] = {}
+    for wire in wires:
+        if wire.kind != "forward" or wire.label is None:
+            continue
+        nominal = _pill_width(wire.label, chrome) / 2
+        half = _painted_extent(wire, nominal, styles=styles, pill_halo=pill_halo)
+        stage = slot_by_id[wire.src].stage
+        centered_reach[stage] = max(centered_reach.get(stage, 0.0), half)
+    requirements: dict[int, float] = {}
+    for stage in range(max_stage):
+        left = loop_reach.get(f"loop-right-{stage}", 0.0)
+        if stage in collapsible_stages:
+            left = max(left, _NUB_RESERVE)
+        right = loop_reach.get(f"loop-left-{stage + 1}", 0.0)
+        centered = centered_reach.get(stage, 0.0)
+        if centered > 0:
+            required = 2 * (max(left, right) + chrome.chip_gap + centered)
+        elif left > 0 and right > 0:
+            required = left + chrome.chip_gap + right
+        else:
+            required = max(left, right)
+        requirements[stage] = required
+    return requirements
+
+
+def _graph_validate_stage_gap(
+    wires: tuple[Wire, ...],
+    *,
+    slot_by_id: Mapping[str, StageSlot],
+    offsets: Mapping[str, float],
+    collapsible: tuple[str, ...],
+    chrome: CardChrome,
+    styles: Mapping[EdgeKind, EdgeStyle],
+    max_stage: int,
+    stage_gap: int,
+) -> None:
+    """Reject a `Graph.layer_gap` too narrow for any stage boundary's occupants.
+
+    `_stage_gap_requirements` names the exact same physical gap that both
+    this direct validation and `EventFlow`'s derived default rely on, so an
+    explicit `layer_gap` and the derived default share one contract instead
+    of drifting apart across independent checks.
+    """
+    requirements = _stage_gap_requirements(
+        wires,
+        slot_by_id=slot_by_id,
+        offsets=offsets,
+        collapsible=collapsible,
+        chrome=chrome,
+        styles=styles,
+        max_stage=max_stage,
+    )
+    for stage, required in requirements.items():
+        if required > stage_gap:
             raise SpecError(
-                f"same-stage back-loop track requires {reach:g}px but "
-                f"Graph.layer_gap is {stage_gap}px"
+                f"Graph.layer_gap must be at least {required:g}px between stage {stage} "
+                f"and stage {stage + 1} but is {stage_gap}px"
             )
 
 
@@ -1461,7 +1520,7 @@ def _graph_measure_staged(
     last_stage = max(slot.stage for slot in slots)
     for card_id, (x, _y, box_width, _height) in boxes:
         if card_id in collapsible and slot_by_id[card_id].stage == last_stage:
-            width = max(width, x + box_width + 18)
+            width = max(width, x + box_width + int(_NUB_RESERVE))
 
     if not wires:
         nub_anchors = tuple(
@@ -1482,14 +1541,15 @@ def _graph_measure_staged(
         chrome=chrome,
         styles=styles,
     )
-    _graph_validate_c_loop_track_width(
+    _graph_validate_stage_gap(
         wires,
         slot_by_id=slot_by_id,
         offsets=offsets,
+        collapsible=collapsible,
         chrome=chrome,
         styles=styles,
-        stage_gap=stage_gap,
         max_stage=last_stage,
+        stage_gap=stage_gap,
     )
     boxes_by_id = dict(boxes)
     routes, pills = _flow_geometry(wires, boxes_by_id, slot_by_id, offsets, chrome)
@@ -1582,9 +1642,6 @@ class Graph:
             layers_by_id = {slot.card_id: slot.layer for slot in slots}
             _graph_validate_wire_layers(wires, layers_by_id=layers_by_id)
         _graph_validate_flow_geometry(self.layout, wires)
-        _graph_validate_forward_pill_width(
-            wires, stage_gap=self.layer_gap, chrome=self.chrome, collapsible=collapsible
-        )
         # Back edges are paint-only: they never enter visibility topology,
         # blocker families, or derived/injected hide rules; only forward and
         # skip wires ("topology_wires") do.
