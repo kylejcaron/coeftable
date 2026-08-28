@@ -4,7 +4,7 @@ import re
 
 import pytest
 
-from coeftable.cards import Card
+from coeftable.cards import Card, TextBlock
 from coeftable.errors import SpecError
 from coeftable.graph import Graph, Staged, StageSlot, Wire
 
@@ -65,3 +65,16 @@ def test_staged_layout_adds_nub_overhang_only_for_last_lane_collapsible_cards():
 
     assert upper_lane_height == base_height
     assert last_lane_height == base_height + 2
+
+
+def test_staged_layout_short_final_lane_nub_uses_actual_box_bottom():
+    layout = Staged((StageSlot("short", 0, 0), StageSlot("tall", 1, 0)))
+    nodes = (
+        ("short", Card("Short")),
+        ("tall", Card("Tall", content=(TextBlock("First"), TextBlock("Second")))),
+    )
+    base = Graph(nodes, layout).measure()
+    _x, y, _width, box_height = dict(base.boxes)["short"]
+
+    assert y + box_height + 18 <= base.height
+    assert Graph(nodes, layout, collapsible=("short",)).measure().height == base.height

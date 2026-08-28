@@ -920,11 +920,11 @@ def _graph_measure_staged(
         )
         for card_id, (_x, _y, box_width, box_height) in boxes
     )
-    last_lane = max(slot.lane for slot in slots)
-    if any(slot.lane == last_lane and slot.card_id in collapsible for slot in slots):
-        # Reserve room for the fold-nub triangle beneath the last lane; Staged
-        # has no layer bands to absorb it like the R5 vertical layouts do.
-        height += max(0, 18 - padding)
+    # Reserve room from each card's actual bottom for its circular fold nub;
+    # lane gaps and taller same-lane siblings already absorb that footprint.
+    for card_id, (_x, y, _width, box_height) in boxes:
+        if card_id in collapsible:
+            height = max(height, y + box_height + 18)
     return _GraphLayout(MeasuredGraph(width, height, boxes), anchors, ())
 
 
