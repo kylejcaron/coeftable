@@ -895,6 +895,7 @@ def _graph_measure_staged(
     lane_gap: int,
     stage_gap: int,
     padding: int,
+    collapsible: tuple[str, ...],
 ) -> _GraphLayout:
     """Measure rebound cards once and resolve their staged border boxes."""
     measured = {card_id: card.measure() for card_id, card in nodes}
@@ -919,6 +920,10 @@ def _graph_measure_staged(
         )
         for card_id, (_x, _y, box_width, box_height) in boxes
     )
+    if collapsible:
+        # Reserve room for the fold-nub triangle beneath the last row; Staged
+        # has no layer bands to absorb it like the R5 vertical layouts do.
+        height += max(0, 18 - padding)
     return _GraphLayout(MeasuredGraph(width, height, boxes), anchors, ())
 
 
@@ -951,7 +956,14 @@ class Graph:
         node_ids = tuple(node_id for node_id, _ in nodes)
         known_cards = set(node_ids)
         wires = _graph_wires(self.wires, known_cards=known_cards)
+        collapsible = _graph_collapsible(self.collapsible, known_cards)
         if isinstance(self.layout, Staged):
+            if wires:
+                raise SpecError("Graph.wires require EventFlow routing for a Staged layout")
+            if collapsible and self.gap < 18:
+                raise SpecError(
+                    "Graph.gap must be at least 18 when staged collapsible cards are present"
+                )
             staged_slots = self.layout.slots
             _graph_validate_staged(staged_slots, known_cards)
             slots: tuple[Slot, ...] = ()
@@ -962,7 +974,6 @@ class Graph:
             layers_by_id = {slot.card_id: slot.layer for slot in slots}
             _graph_validate_wire_layers(wires, layers_by_id=layers_by_id)
         wire_ids = tuple(wire.id for wire in wires)
-        collapsible = _graph_collapsible(self.collapsible, known_cards)
         label_offset = self.chrome.caption_size + 2
         labeled_layer_gap = label_offset + self.chrome.caption_size + 4
         if not isinstance(self.layout, Staged):
@@ -1044,6 +1055,7 @@ class Graph:
                 lane_gap=self.gap,
                 stage_gap=self.layer_gap,
                 padding=self.chrome.padding,
+                collapsible=collapsible,
             )
         else:
             layout = _graph_measure(

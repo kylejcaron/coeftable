@@ -1,10 +1,12 @@
 """Contract tests for the staged graph layout's exact box placement."""
 
+import re
+
 import pytest
 
 from coeftable.cards import Card
 from coeftable.errors import SpecError
-from coeftable.graph import Graph, Staged, StageSlot
+from coeftable.graph import Graph, Staged, StageSlot, Wire
 
 
 def test_staged_layout_places_cards_left_to_right_and_top_to_bottom():
@@ -32,3 +34,31 @@ def test_staged_layout_places_cards_left_to_right_and_top_to_bottom():
 def test_staged_layout_rejects_invalid_positions(slots, message):
     with pytest.raises(SpecError, match=message):
         Graph((("a", Card("A")), ("b", Card("B"))), Staged(slots))
+
+
+def test_staged_layout_rejects_non_empty_wires_at_construction():
+    """Staged has no wire geometry yet; construction must reject, not render-crash."""
+    with pytest.raises(SpecError, match="EventFlow routing"):
+        Graph(
+            (("a", Card("A")), ("b", Card("B"))),
+            Staged((StageSlot("a", 0, 0), StageSlot("b", 1, 0))),
+            wires=(Wire("a-b", "a", "b"),),
+        )
+
+
+def test_staged_layout_requires_minimum_gap_for_collapsible_cards():
+    with pytest.raises(SpecError, match=re.escape("Graph.gap must be at least 18")):
+        Graph(
+            (("a", Card("A")), ("b", Card("B"))),
+            Staged((StageSlot("a", 0, 0), StageSlot("b", 1, 0))),
+            collapsible=("a",),
+            gap=17,
+        )
+
+
+def test_staged_layout_collapsible_adds_fold_nub_height_overhang():
+    layout = Staged((StageSlot("a", 0, 0), StageSlot("b", 1, 0)))
+    nodes = (("a", Card("A")), ("b", Card("B")))
+    base_height = Graph(nodes, layout).measure().height
+    folded_height = Graph(nodes, layout, collapsible=("a",)).measure().height
+    assert folded_height == base_height + 2
