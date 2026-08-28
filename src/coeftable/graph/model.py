@@ -1097,14 +1097,26 @@ def _flow_route(
 ) -> Route:
     """Choose the graph-integrated route for one flow wire by kind and placement."""
     if wire.kind == "forward":
-        return route_across(src_box, dst_box)
+        return route_across(
+            src_box,
+            dst_box,
+            src_edge=stage_extents[src_stage][1],
+            dst_edge=stage_extents[dst_stage][0],
+        )
     low_stage, high_stage = min(src_stage, dst_stage), max(src_stage, dst_stage)
     if wire.kind == "skip":
         top = min(stage_vertical_extents[stage][0] for stage in range(low_stage, high_stage + 1))
         src_gate = _stage_gap_midpoint(stage_extents, src_stage, src_stage + 1)
         dst_gate = _stage_gap_midpoint(stage_extents, dst_stage - 1, dst_stage)
         return route_skip_bow(
-            src_box, dst_box, offset=offset, bound=top, src_gate=src_gate, dst_gate=dst_gate
+            src_box,
+            dst_box,
+            offset=offset,
+            bound=top,
+            src_gate=src_gate,
+            dst_gate=dst_gate,
+            src_edge=stage_extents[src_stage][1],
+            dst_edge=stage_extents[dst_stage][0],
         )
     if dst_stage < src_stage:
         bottom = max(
@@ -1113,7 +1125,14 @@ def _flow_route(
         src_gate = _stage_gap_midpoint(stage_extents, src_stage - 1, src_stage)
         dst_gate = _stage_gap_midpoint(stage_extents, dst_stage, dst_stage + 1)
         return route_back_sag(
-            src_box, dst_box, offset=offset, bound=bottom, src_gate=src_gate, dst_gate=dst_gate
+            src_box,
+            dst_box,
+            offset=offset,
+            bound=bottom,
+            src_gate=src_gate,
+            dst_gate=dst_gate,
+            src_edge=stage_extents[src_stage][0],
+            dst_edge=stage_extents[dst_stage][1],
         )
     side: Literal["left", "right"] = "left" if dst_lane < src_lane else "right"
     left_edge, right_edge = stage_extents[src_stage]

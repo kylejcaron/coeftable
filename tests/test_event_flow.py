@@ -22,8 +22,8 @@ from coeftable.graph import (
     StateRule,
     Wire,
 )
-from coeftable.graph._routes import route_back_sag
-from coeftable.graph.model import _stage_vertical_extents
+from coeftable.graph._routes import route_across, route_back_sag, route_skip_bow
+from coeftable.graph.model import _stage_extents, _stage_gap_midpoint, _stage_vertical_extents
 
 
 def _rects_overlap(
@@ -876,3 +876,216 @@ def test_multiple_packed_tracks_gated_routes_clear_every_card_and_stay_disjoint(
     pills = dict(graph._layout.flow_pills)
     assert not _rects_overlap(pills["c-a"], pills["b0-a"])
     _assert_pill_bounds_inside(graph)
+
+
+def _left_anchor(box: tuple[float, float, float, float]) -> tuple[float, float]:
+    x, y, _width, height = box
+    return (float(x), y + height / 2)
+
+
+def _right_anchor(box: tuple[float, float, float, float]) -> tuple[float, float]:
+    x, y, width, height = box
+    return (float(x + width), y + height / 2)
+
+
+def _assert_horizontal_destination_tangent(
+    points: list[tuple[float, float]], dst_anchor: tuple[float, float]
+) -> None:
+    """A route's final approach into its destination anchor is (near-)flat.
+
+    Every gated route's last real segment either is a straight horizontal
+    line into the anchor (a trailing stage-edge run) or a cubic whose own
+    final control point shares the anchor's own y — so its last sampled
+    point before the anchor itself sits far closer to the anchor's own y
+    than its x, proving a horizontal, not oblique, arrival.
+    """
+    dst_x, dst_y = dst_anchor
+    assert points[-1] == pytest.approx((dst_x, dst_y))
+    prev_x, prev_y = points[-2]
+    if (prev_x, prev_y) == pytest.approx((dst_x, dst_y)):
+        prev_x, prev_y = points[-3]
+    assert abs(prev_y - dst_y) < 0.5
+    assert abs(prev_x - dst_x) > abs(prev_y - dst_y)
+
+
+def _assert_flow_geometry_gated_at_stage_edges(
+    graph: Graph, wire_dst_anchors: dict[str, tuple[float, float]]
+) -> None:
+    """Assert every universal stage-gate guarantee for a graph's flow wires.
+
+    No sampled curve point enters any card or any collapsible card's nub,
+    no pill overlaps any card, any nub, or any other pill, every wire
+    arrives at its own destination anchor with a horizontal tangent, and
+    every pill sits fully inside the measured canvas.
+    """
+    boxes = dict(graph.measure().boxes)
+    nub_boxes = {
+        card_id: (nx, ny - 9.0, 18.0, 18.0)
+        for card_id, (nx, ny, _side) in graph._layout.nub_anchors
+    }
+    pills = dict(graph._layout.flow_pills)
+    for wire_id, points in _all_wire_samples(graph).items():
+        for card_id, box in boxes.items():
+            for point in points:
+                assert not _point_inside_box(point, box), (
+                    f"wire {wire_id!r} sample {point} enters card {card_id!r} box {box}"
+                )
+        for nub_owner, nub in nub_boxes.items():
+            for point in points:
+                assert not _point_inside_box(point, nub), (
+                    f"wire {wire_id!r} sample {point} enters {nub_owner!r}'s nub {nub}"
+                )
+        _assert_horizontal_destination_tangent(points, wire_dst_anchors[wire_id])
+    pill_ids = list(pills)
+    for index, wire_id in enumerate(pill_ids):
+        pill = pills[wire_id]
+        for box in boxes.values():
+            assert not _rects_overlap(pill, box)
+        for nub in nub_boxes.values():
+            assert not _rects_overlap(pill, nub)
+        for other_id in pill_ids[index + 1 :]:
+            assert not _rects_overlap(pill, pills[other_id])
+    _assert_pill_bounds_inside(graph)
+
+
+def test_forward_and_skip_gated_routes_clear_a_wider_source_stage_sibling():
+    """A forward or skip wire's source card can be far narrower than a
+    sibling sharing its own stage on another lane. Without a flat run out
+    to the stage's own outer edge first, the route's curve — still inside
+    that stage's occupied column — drifts toward the destination's own
+    height and grazes the wider sibling long before reaching the physical
+    inter-stage gap.
+    """
+    wide = Card("Wide", width=280)
+    narrow = Card("Narrow", width=60)
+    midf = Card("MidF")
+    end = Card("End")
+    nodes = (("wide", wide), ("narrow", narrow), ("midf", midf), ("end", end))
+    slots = (
+        StageSlot("wide", 0, 0),
+        StageSlot("narrow", 0, 1),
+        StageSlot("midf", 1, 0),
+        StageSlot("end", 2, 0),
+    )
+    graph = EventFlow(
+        nodes,
+        slots,
+        (
+            FlowEdge("narrow-midf", "narrow", "midf", "forward", "go"),
+            FlowEdge("narrow-end", "narrow", "end", "skip", "jump"),
+        ),
+        collapsible=("wide",),
+        dom_prefix="wsib",
+    )
+    boxes = dict(graph.measure().boxes)
+    _assert_flow_geometry_gated_at_stage_edges(
+        graph,
+        {
+            "narrow-midf": _left_anchor(boxes["midf"]),
+            "narrow-end": _left_anchor(boxes["end"]),
+        },
+    )
+
+    # Confirm the graze this fix eliminates was real: reconstruct the prior
+    # (gated-but-not-edge-anchored) shape from the same resolved boxes and
+    # prove it actually enters the wide sibling.
+    wide_box = boxes["wide"]
+    pure_forward = route_across(boxes["narrow"], boxes["midf"])
+    forward_hits = [
+        point
+        for point in _sample_path_points(pure_forward.path)
+        if _point_inside_box(point, wide_box)
+    ]
+    assert forward_hits, "expected the ungated forward cubic to graze the wider sibling"
+    pure_skip = route_skip_bow(boxes["narrow"], boxes["end"], offset=24, bound=wide_box[1])
+    skip_hits = [
+        point
+        for point in _sample_path_points(pure_skip.path)
+        if _point_inside_box(point, wide_box)
+    ]
+    assert skip_hits, "expected the ungated skip bow to graze the wider sibling"
+
+
+def test_back_gated_route_clears_a_wider_destination_stage_sibling():
+    """A back wire's destination card can be far narrower than a sibling
+    sharing its own stage on another lane. The sag's final approach must
+    reach the stage's own outer edge before turning in, or it grazes the
+    wider sibling while still inside that stage's occupied column.
+    """
+    narrow = Card("Narrow", width=60)
+    wide = Card("Wide", width=280)
+    mid = Card("Mid")
+    src = Card("Src")
+    nodes = (("narrow", narrow), ("wide", wide), ("mid", mid), ("src", src))
+    slots = (
+        StageSlot("narrow", 0, 0),
+        StageSlot("wide", 0, 1),
+        StageSlot("mid", 1, 0),
+        StageSlot("src", 2, 0),
+    )
+    graph = EventFlow(
+        nodes,
+        slots,
+        (FlowEdge("src-narrow", "src", "narrow", "back", "retry"),),
+        collapsible=("wide",),
+        dom_prefix="bsib",
+    )
+    boxes = dict(graph.measure().boxes)
+    _assert_flow_geometry_gated_at_stage_edges(
+        graph, {"src-narrow": _right_anchor(boxes["narrow"])}
+    )
+
+    wide_box = boxes["wide"]
+    slot_by_id = {slot.card_id: slot for slot in slots}
+    stage_extents = _stage_extents(boxes, slot_by_id)
+    src_gate = _stage_gap_midpoint(stage_extents, 1, 2)
+    dst_gate = _stage_gap_midpoint(stage_extents, 0, 1)
+    gated_no_edges = route_back_sag(
+        boxes["src"],
+        boxes["narrow"],
+        offset=24,
+        bound=wide_box[1] + wide_box[3],
+        src_gate=src_gate,
+        dst_gate=dst_gate,
+    )
+    hits = [
+        point
+        for point in _sample_path_points(gated_no_edges.path)
+        if _point_inside_box(point, wide_box)
+    ]
+    assert hits, "expected the edge-less gated sag to still graze the wider sibling"
+
+
+def test_c_loop_gated_route_clears_a_wider_intervening_lane_sibling():
+    """A same-stage back loop's own two endpoints can both be far narrower
+    than a third card sharing the same stage between them on another
+    lane. Both endpoint runs must reach the stage's own outer edge before
+    the turning cubic, whose own hull must then stay entirely outside it.
+    """
+    a = Card("A", width=60)
+    wide = Card("Wide", width=280)
+    b = Card("B", width=60)
+    nxt = Card("Next")
+    nodes = (("a", a), ("wide", wide), ("b", b), ("nxt", nxt))
+    slots = (
+        StageSlot("a", 0, 0),
+        StageSlot("wide", 0, 1),
+        StageSlot("b", 0, 2),
+        StageSlot("nxt", 1, 0),
+    )
+    graph = EventFlow(
+        nodes,
+        slots,
+        (FlowEdge("a-b", "a", "b", "back", "loop"),),
+        dom_prefix="csib",
+    )
+    boxes = dict(graph.measure().boxes)
+    _assert_flow_geometry_gated_at_stage_edges(graph, {"a-b": _right_anchor(boxes["b"])})
+
+    wide_box = boxes["wide"]
+    corridor = boxes["wide"][0] + boxes["wide"][2] + 24
+    sx, sy = _right_anchor(boxes["a"])
+    dx, dy = _right_anchor(boxes["b"])
+    old_path = f"M{sx:g},{sy:g} C{corridor:g},{sy:g} {corridor:g},{dy:g} {dx:g},{dy:g}"
+    hits = [point for point in _sample_path_points(old_path) if _point_inside_box(point, wide_box)]
+    assert hits, "expected the old single-cubic loop to graze the wider intervening sibling"
