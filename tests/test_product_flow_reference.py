@@ -1,11 +1,11 @@
-"""Public reference reconstruction of ``docs/prototype_productflow.py``.
+"""Public checkout-funnel reference for ProductFlow.
 
-The prototype's checkout funnel has 5 stages, 9 steps, 12 flows (5 of them
-labeled), one decision, one terminal, one muted event, and 7 cards that
-originate a forward/skip edge (so get a downstream fold nub). This module
-builds that exact topology through the public ``ProductStep``/``FlowEdge``/
-``ProductFlow`` contracts only -- no prototype import, no graph internals in
-the construction path -- and pins the resulting census and semantics.
+The canonical reference has 5 stages, 9 steps, 12 flows (5 labeled), one
+decision, one terminal, one muted event, and 7 cards that originate a
+forward/skip edge. This module keeps that auditable data and builds it through
+the public ``ProductStep``/``FlowEdge``/``ProductFlow`` contracts only -- no
+graph internals in the construction path -- then pins the resulting census
+and semantics.
 """
 
 from __future__ import annotations
