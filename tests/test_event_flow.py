@@ -1244,6 +1244,8 @@ def test_pooled_back_tracks_share_one_datum_across_different_stage_subsets():
     pills = dict(graph._layout.flow_pills)
     assert not _rects_overlap(pills["d-b"], pills["b-a"])
     assert wire_geometry["d-b"][1][1] != wire_geometry["b-a"][1][1]
+    # Packed `_flow_offsets` spacing is +28; per-wire bases inverted it to -94.
+    assert wire_geometry["b-a"][1][1] - wire_geometry["d-b"][1][1] == 28.0
     _assert_pill_bounds_inside(graph)
 
 
