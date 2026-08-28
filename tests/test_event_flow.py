@@ -247,6 +247,33 @@ def test_event_flow_rejects_kind_geometry_mismatch():
         _flow(FlowEdge("a-b", "a", "b", "skip"))
 
 
+@pytest.mark.parametrize(
+    ("argument", "error_name"),
+    [
+        ("nodes", "EventFlow.nodes"),
+        ("placements", "EventFlow.placements"),
+        ("edges", "EventFlow.edges"),
+    ],
+)
+def test_event_flow_rejects_non_iterable_collection_inputs(argument, error_name):
+    nodes: object = (("a", Card("A")), ("b", Card("B")))
+    placements: object = (StageSlot("a", 0, 0), StageSlot("b", 1, 0))
+    edges: object = (FlowEdge("a-b", "a", "b", "forward"),)
+    if argument == "nodes":
+        nodes = object()
+    elif argument == "placements":
+        placements = object()
+    else:
+        edges = object()
+
+    with pytest.raises(SpecError, match=rf"^{re.escape(error_name)} must be a sequence$"):
+        EventFlow(
+            cast(tuple[tuple[str, Card], ...], nodes),
+            cast(tuple[StageSlot, ...], placements),
+            cast(tuple[FlowEdge, ...], edges),
+        )
+
+
 def test_event_flow_rejects_a_non_string_collapsible_entry():
     with pytest.raises(SpecError, match="must be a non-empty str"):
         EventFlow(

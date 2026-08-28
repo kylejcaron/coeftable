@@ -98,9 +98,11 @@ def EventFlow(
     exact same physical planner Graph itself validates an explicit
     ``stage_gap`` against (see `_stage_gap_requirements`), floored at 108px.
     """
-    node_entries = tuple(nodes)
-    placement_entries = tuple(placements)
-    edge_entries = tuple(edges)
+    node_entries = cast(tuple[tuple[str, Card], ...], _canonical(nodes, name="EventFlow.nodes"))
+    placement_entries = cast(
+        tuple[StageSlot, ...], _canonical(placements, name="EventFlow.placements")
+    )
+    edge_entries = cast(tuple[FlowEdge, ...], _canonical(edges, name="EventFlow.edges"))
     layout = Staged(placement_entries)
     slot_by_id = {slot.card_id: slot for slot in layout.slots}
     stage_by_id = {card_id: slot.stage for card_id, slot in slot_by_id.items()}
