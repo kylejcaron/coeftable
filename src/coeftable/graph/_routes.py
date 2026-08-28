@@ -48,13 +48,13 @@ def route_skip_bow(src: Box, dst: Box, *, offset: int) -> Route:
     path = (
         f"M{_n(sx)},{_n(sy)} C{_n(sx + offset)},{_n(sy)} "
         f"{_n(sx + offset)},{_n(corridor)} {_n(middle)},{_n(corridor)} "
-        f"S{_n(dx - offset)},{_n(corridor)} {_n(dx - offset)},{_n(dy)} "
-        f"S{_n(dx)},{_n(dy)} {_n(dx)},{_n(dy)}"
+        f"S{_n(dx - offset)},{_n(dy)} {_n(dx)},{_n(dy)}"
     )
+    xs = (sx, sx + offset, dx - offset, dx)
     return Route(
         path,
         (middle, corridor),
-        (min(sx, dx), min(corridor, sy, dy), max(sx, dx), max(corridor, sy, dy)),
+        (min(xs), min(corridor, sy, dy), max(xs), max(corridor, sy, dy)),
     )
 
 
@@ -66,10 +66,10 @@ def route_back_sag(src: Box, dst: Box, *, offset: int) -> Route:
     path = (
         f"M{_n(sx)},{_n(sy)} C{_n(sx - offset)},{_n(sy)} "
         f"{_n(sx - offset)},{_n(corridor)} {_n(middle)},{_n(corridor)} "
-        f"S{_n(dx + offset)},{_n(corridor)} {_n(dx + offset)},{_n(dy)} "
-        f"S{_n(dx)},{_n(dy)} {_n(dx)},{_n(dy)}"
+        f"S{_n(dx + offset)},{_n(dy)} {_n(dx)},{_n(dy)}"
     )
-    return Route(path, (middle, corridor), (min(sx, dx), min(sy, dy), max(sx, dx), corridor))
+    xs = (sx, sx - offset, dx + offset, dx)
+    return Route(path, (middle, corridor), (min(xs), min(sy, dy), max(xs), corridor))
 
 
 def route_c_loop(src: Box, dst: Box, *, offset: int, side: Literal["left", "right"]) -> Route:
