@@ -5,10 +5,11 @@ from __future__ import annotations
 import html
 from typing import TYPE_CHECKING
 
+from coeftable.graph.model import EdgeStyle
 from coeftable.theme import Theme
 
 if TYPE_CHECKING:
-    from coeftable.graph.model import Graph, _GraphLayout
+    from coeftable.graph.model import EdgeKind, Graph, _GraphLayout
     from coeftable.graph.state import _CompiledState
     from coeftable.theme import Role
 
@@ -32,13 +33,40 @@ def _label_color(theme: Theme, label_role: Role | None, label_color: str | None)
     return theme.muted
 
 
+def _edge_styles(graph: Graph) -> dict[EdgeKind, EdgeStyle]:
+    """Resolve default plus overridden per-kind styles against the current theme."""
+    styles: dict[EdgeKind, EdgeStyle] = {
+        "forward": EdgeStyle(graph.theme.axis),
+        "skip": EdgeStyle(graph.theme.muted, dash=(5.0, 3.0)),
+        "back": EdgeStyle(graph.theme.muted, dash=(2.0, 3.0)),
+    }
+    styles.update(dict(graph.edge_styles))
+    return styles
+
+
 def _wire_svg(graph: Graph, layout: _GraphLayout, compiled: _CompiledState) -> str:
     """Render the underlay SVG from the graph's cached geometry."""
     measured = layout.measured
     geometry = dict(layout.wire_geometry)
+    pills = dict(layout.flow_pills)
     axis = _esc(graph.theme.axis)
     surface = _esc(graph.theme.surface)
     marker_id = f"{graph.dom_prefix}-arrow"
+    styles = _edge_styles(graph)
+    used_kinds = sorted({wire.kind for wire in graph.wires if wire.kind is not None})
+    kind_markers = {kind: f"{marker_id}-{kind}" for kind in used_kinds}
+    defs = [
+        f'<marker id="{marker_id}" markerWidth="8" markerHeight="8" '
+        f'refX="6" refY="3" orient="auto" markerUnits="strokeWidth">'
+        f'<path d="M 0 0 L 6 3 L 0 6 z" fill="{axis}"/></marker>'
+    ]
+    for kind in used_kinds:
+        stroke = _esc(styles[kind].stroke)
+        defs.append(
+            f'<marker id="{kind_markers[kind]}" markerWidth="8" markerHeight="8" '
+            f'refX="6" refY="3" orient="auto" markerUnits="strokeWidth">'
+            f'<path d="M 0 0 L 6 3 L 0 6 z" fill="{stroke}"/></marker>'
+        )
     fragments = [
         (
             f'<svg width="{measured.width}" height="{measured.height}" '
@@ -46,27 +74,46 @@ def _wire_svg(graph: Graph, layout: _GraphLayout, compiled: _CompiledState) -> s
             f'style="position:absolute;left:0;top:0;width:{measured.width}px;'
             f'height:{measured.height}px;margin:0;padding:0;overflow:visible" '
             f'xmlns="http://www.w3.org/2000/svg">'
-            f'<defs><marker id="{marker_id}" markerWidth="8" markerHeight="8" '
-            f'refX="6" refY="3" orient="auto" markerUnits="strokeWidth">'
-            f'<path d="M 0 0 L 6 3 L 0 6 z" fill="{axis}"/></marker></defs>'
+            f"<defs>{''.join(defs)}</defs>"
         )
     ]
     for wire, wire_dom_id in zip(graph.wires, compiled.wire_dom_ids, strict=True):
         path_d, label_anchor = geometry[wire.id]
         label_x, label_y = label_anchor
-        path = (
-            f'<path d="{path_d}" '
-            f'fill="none" stroke="{axis}" stroke-width="1.5" marker-end="url(#{marker_id})"/>'
-        )
-        label = ""
-        if wire.label is not None:
-            label = (
-                f'<text x="{_number(label_x)}" y="{_number(label_y)}" text-anchor="middle" '
-                f'fill="{_esc(_label_color(graph.theme, wire.label_role, wire.label_color))}" '
-                f'style="font-size:{graph.chrome.caption_size}px;'
-                f"paint-order:stroke;stroke:{surface};stroke-width:4px;"
-                f'stroke-linejoin:round">{_esc(wire.label)}</text>'
+        if wire.kind is None:
+            path = (
+                f'<path d="{path_d}" '
+                f'fill="none" stroke="{axis}" stroke-width="1.5" marker-end="url(#{marker_id})"/>'
             )
+            label = ""
+            if wire.label is not None:
+                label = (
+                    f'<text x="{_number(label_x)}" y="{_number(label_y)}" text-anchor="middle" '
+                    f'fill="{_esc(_label_color(graph.theme, wire.label_role, wire.label_color))}" '
+                    f'style="font-size:{graph.chrome.caption_size}px;'
+                    f"paint-order:stroke;stroke:{surface};stroke-width:4px;"
+                    f'stroke-linejoin:round">{_esc(wire.label)}</text>'
+                )
+        else:
+            style = styles[wire.kind]
+            stroke = _esc(style.stroke)
+            dash_values = " ".join(_number(value) for value in style.dash)
+            dash = "" if not dash_values else f' stroke-dasharray="{dash_values}"'
+            path = (
+                f'<path d="{path_d}" fill="none" stroke="{stroke}" '
+                f'stroke-width="{_number(style.width)}"{dash} '
+                f'marker-end="url(#{kind_markers[wire.kind]})"/>'
+            )
+            label = ""
+            if wire.label is not None:
+                px, py, pw, ph = pills[wire.id]
+                label = (
+                    f'<rect x="{_number(px)}" y="{_number(py)}" width="{_number(pw)}" '
+                    f'height="{_number(ph)}" fill="{surface}" stroke="{stroke}"/>'
+                    f'<text x="{_number(px + pw / 2)}" y="{_number(py + ph / 2)}" '
+                    f'text-anchor="middle" dominant-baseline="middle" fill="{stroke}">'
+                    f"{_esc(wire.label)}</text>"
+                )
         fragments.append(f'<g id="{wire_dom_id}">{path}{label}</g>')
     fragments.append("</svg>")
     return "".join(fragments)
@@ -78,12 +125,18 @@ def _nub_markup(
     """Render each checkbox nub for its card and its sibling glyph rules."""
     markup: dict[str, str] = {}
     rules: list[str] = []
+    right_edge_cards = {card_id for card_id, _anchor in layout.nub_anchors}
     for card_id, nub_id in compiled.nub_dom_ids.items():
+        position = (
+            "left:100%;top:50%;transform:translateY(-50%)"
+            if card_id in right_edge_cards
+            else "left:50%;transform:translateX(-50%);top:100%"
+        )
         markup[card_id] = (
             f'<input type="checkbox" id="{nub_id}" aria-label="Toggle downstream visibility" '
             f'style="position:absolute;width:1px;height:1px;margin:-1px;clip-path:inset(50%);opacity:0">'
-            f'<label for="{nub_id}" style="position:absolute;left:50%;transform:translateX(-50%);'
-            f"top:100%;width:18px;height:18px;box-sizing:border-box;"
+            f'<label for="{nub_id}" style="position:absolute;{position};'
+            f"width:18px;height:18px;box-sizing:border-box;"
             f"display:flex;align-items:center;justify-content:center;border:1px solid "
             f"{_esc(graph.theme.axis)};border-radius:50%;background:{_esc(graph.theme.surface)};"
             f'color:{_esc(graph.theme.axis)};font-size:13px;line-height:16px;cursor:pointer">'

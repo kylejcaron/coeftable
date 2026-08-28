@@ -162,6 +162,7 @@ def _compile_state(
     *,
     nodes: Sequence[tuple[str, object]],
     wires: Sequence[Wire],
+    topology_wires: Sequence[Wire],
     collapsible: Iterable[str],
     blockers: Mapping[str, frozenset[frozenset[str]]],
     rules: Sequence[StateRule],
@@ -171,6 +172,7 @@ def _compile_state(
     """Compile validated graph values into the renderer's state contract."""
     node_values = tuple(nodes)
     wire_values = tuple(wires)
+    topology_wire_values = tuple(topology_wires)
     collapsible_set = frozenset(collapsible)
     card_dom_ids = tuple(f"{dom_prefix}-card-{index}" for index, _ in enumerate(node_values))
     wire_dom_ids = tuple(f"{dom_prefix}-edge-{index}" for index, _ in enumerate(wire_values))
@@ -197,7 +199,7 @@ def _compile_state(
     frozen_nub_ids = MappingProxyType(nub_dom_ids)
     compiled_rules = _emit_rules(
         nodes=node_values,
-        wires=wire_values,
+        wires=topology_wire_values,
         collapsible=collapsible_set,
         blockers=blockers,
         injected=tuple(rules),

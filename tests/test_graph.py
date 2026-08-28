@@ -249,6 +249,10 @@ def test_graph_export_surface_is_exact_and_top_level_excludes_graph():
         "CausalGraph",
         "ControlRef",
         "DriverTree",
+        "EdgeKind",
+        "EdgeStyle",
+        "EventFlow",
+        "FlowEdge",
         "Graph",
         "GraphReport",
         "LayeredDag",
@@ -263,7 +267,7 @@ def test_graph_export_surface_is_exact_and_top_level_excludes_graph():
         "TimelineEvent",
         "Wire",
     }
-    assert len(coeftable.graph.__all__) == 18
+    assert len(coeftable.graph.__all__) == 22
     assert set(coeftable.graph.__all__) == expected
     for name in expected:
         assert hasattr(coeftable.graph, name)
