@@ -1168,9 +1168,9 @@ def DriverTree(
         topology = _build_topology(breakout_map)
     edges = _raw_edges(topology)
 
-    # Cheapest possible failure first: the layered-barycenter layout below
-    # walks parent chains recursively and never terminates on a cycle, so
-    # this must run before any statistics or layout work touches `edges`.
+    # Keep this check ahead of switcher and statistical validation so a cyclic
+    # raw topology reports its direct diagnostic first. `layered_positions`
+    # also checks acyclicity later, once the layout edges have been collapsed.
     check_acyclic(topology.node_order, edges)
 
     # `reject_switcher_conjunctions` runs before any honesty arithmetic, so
