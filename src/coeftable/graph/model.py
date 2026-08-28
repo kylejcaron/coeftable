@@ -1203,6 +1203,7 @@ def _flow_vertical_bases(
     *,
     slot_by_id: Mapping[str, StageSlot],
     stage_vertical_extents: Mapping[int, tuple[float, float]],
+    header_height: float = 0.0,
 ) -> tuple[float, float]:
     """Return the flow's shared skip-top and cross-stage-back-bottom bases.
 
@@ -1217,6 +1218,13 @@ def _flow_vertical_bases(
     built to guarantee. Pooling to one base — the minimum top (skip) or
     maximum bottom (back) across every stage *any* pool member spans —
     keeps every wire in a pool on the one shared datum its offset assumes.
+
+    `header_height` treats a `Staged` graph's reserved label band as
+    occupied geometry: it is subtracted from the skip pool's top datum so
+    a skip bow (and its pill) shifts above the whole band, not only the
+    cards below it. It never affects `back_base` — the header only
+    reserves space above the top row. Zero (the unlabeled/non-staged
+    default) is a no-op, so every existing caller stays byte-identical.
     """
     skip_stages: set[int] = set()
     back_stages: set[int] = set()
@@ -1232,7 +1240,9 @@ def _flow_vertical_bases(
     # (`_flow_route` only reads it for a wire that is itself in the pool),
     # so 0.0 is an inert placeholder, never an actual corridor.
     skip_base = (
-        min(stage_vertical_extents[stage][0] for stage in skip_stages) if skip_stages else 0.0
+        min(stage_vertical_extents[stage][0] for stage in skip_stages) - header_height
+        if skip_stages
+        else 0.0
     )
     back_base = (
         max(stage_vertical_extents[stage][1] for stage in back_stages) if back_stages else 0.0
@@ -1510,12 +1520,16 @@ def _flow_geometry(
     slot_by_id: dict[str, StageSlot],
     offsets: Mapping[str, float],
     chrome: CardChrome,
+    header_height: float = 0.0,
 ) -> tuple[dict[str, Route], dict[str, tuple[float, float, float, float]]]:
     """Resolve every wire's route and each labeled wire's pill bounds."""
     stage_extents = _stage_extents(boxes_by_id, slot_by_id)
     stage_vertical_extents = _stage_vertical_extents(boxes_by_id, slot_by_id)
     skip_base, back_base = _flow_vertical_bases(
-        wires, slot_by_id=slot_by_id, stage_vertical_extents=stage_vertical_extents
+        wires,
+        slot_by_id=slot_by_id,
+        stage_vertical_extents=stage_vertical_extents,
+        header_height=header_height,
     )
     routes: dict[str, Route] = {}
     for wire in wires:
@@ -1682,8 +1696,9 @@ def _graph_measure_staged(
         )
         for card_id, _ in nodes
     )
+    stage_header_height = line_height(chrome.caption_size, chrome) + 2 * chrome.gap
+    header_height = stage_header_height if labels else 0.0
     if labels:
-        stage_header_height = line_height(chrome.caption_size, chrome) + 2 * chrome.gap
         width, height, boxes = staged_boxes(
             entries,
             lane_gap=lane_gap,
@@ -1742,7 +1757,9 @@ def _graph_measure_staged(
         stage_gap=stage_gap,
     )
     boxes_by_id = dict(boxes)
-    routes, pills = _flow_geometry(wires, boxes_by_id, slot_by_id, offsets, chrome)
+    routes, pills = _flow_geometry(
+        wires, boxes_by_id, slot_by_id, offsets, chrome, header_height=header_height
+    )
 
     min_x0, min_y0, _max_x0, _max_y0 = _flow_bounds_extrema(
         wires, routes, pills, styles=styles, pill_halo=pill_halo
@@ -1759,7 +1776,9 @@ def _graph_measure_staged(
         boxes_by_id = dict(boxes)
         width += shift_x
         height += shift_y
-        routes, pills = _flow_geometry(wires, boxes_by_id, slot_by_id, offsets, chrome)
+        routes, pills = _flow_geometry(
+            wires, boxes_by_id, slot_by_id, offsets, chrome, header_height=header_height
+        )
 
     routes, pills = _pack_forward_pills(wires, routes, pills, slot_by_id, chrome)
 

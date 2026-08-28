@@ -1905,3 +1905,72 @@ def test_event_flow_stage_labels_pass_through_to_staged_and_render():
     html = graph.as_raw_html()
     assert ">DISCOVER<" in html and ">CONVERT<" in html
     assert html.index("flowlabels-stage-0") < html.index("<svg") < html.index("flowlabels-card-0")
+
+
+def test_staged_labels_keep_skip_route_and_pill_clear_of_the_header_band():
+    """A skip edge's bow and its opaque label pill must clear the *entire*
+    reserved header band, not merely the cards sitting below it.
+
+    The header is occupied geometry from a routing perspective: a skip
+    bow that would otherwise dodge into the plain top padding above an
+    unlabeled row must instead dodge above the whole header, so a labeled
+    staged graph needs strictly more canvas growth than the identical
+    unlabeled one — exactly one header height's worth, never less.
+    """
+    nodes = (("a", Card("A")), ("b", Card("B")), ("c", Card("C")))
+    slots = (StageSlot("a", 0, 0), StageSlot("b", 1, 0), StageSlot("c", 2, 0))
+    edges = (
+        FlowEdge("a-b", "a", "b", "forward"),
+        FlowEdge("a-c", "a", "c", "skip", "skip-it"),
+    )
+    labeled = EventFlow(
+        nodes,
+        slots,
+        edges,
+        gap=18,
+        stage_gap=18,
+        dom_prefix="hdrskip",
+        stage_labels=["Browse", "Cart", "Done"],
+    )
+    unlabeled = EventFlow(nodes, slots, edges, gap=18, stage_gap=18, dom_prefix="base")
+    explicit_empty = EventFlow(
+        nodes, slots, edges, gap=18, stage_gap=18, dom_prefix="base", stage_labels=()
+    )
+    assert explicit_empty.measure() == unlabeled.measure()
+    assert explicit_empty.as_raw_html() == unlabeled.as_raw_html()
+
+    layout = labeled._layout
+    header_height = (
+        line_height(DEFAULT_CHROME.caption_size, DEFAULT_CHROME) + 2 * DEFAULT_CHROME.gap
+    )
+    assert layout.measured.height == unlabeled._layout.measured.height + header_height
+
+    boxes = dict(layout.measured.boxes)
+    top_row_y = min(y for _x, y, _w, _h in boxes.values())
+    label_boxes = []
+    for _label, left, width, header_top in layout.stage_columns:
+        # `header_top` must reflect the *final* shift wire routing applied,
+        # not the pre-shift padding: cards always sit exactly one header
+        # height below their own stage's header top.
+        assert header_top == top_row_y - header_height
+        caption_top = header_top + DEFAULT_CHROME.gap
+        caption_height = line_height(DEFAULT_CHROME.caption_size, DEFAULT_CHROME)
+        label_boxes.append((left, caption_top, width, caption_height))
+    assert len(label_boxes) == 3
+
+    pill_halo = labeled.chrome.border_width / 2
+    for wire_id, pill in layout.flow_pills:
+        painted = _model_painted_pill_rect(pill, pill_halo)
+        for label_box in label_boxes:
+            assert not _rects_overlap(painted, label_box), (
+                f"pill for wire {wire_id!r} {painted} overlaps label box {label_box}"
+            )
+
+    for wire_id, points in _all_wire_samples(labeled).items():
+        for label_box in label_boxes:
+            for point in points:
+                assert not _point_inside_box(point, label_box), (
+                    f"wire {wire_id!r} sample {point} enters label box {label_box}"
+                )
+    _assert_no_wire_samples_enter_any_card(labeled)
+    _assert_pill_bounds_inside(labeled)
