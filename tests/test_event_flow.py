@@ -56,9 +56,12 @@ def test_staged_layout_requires_minimum_gap_for_collapsible_cards():
         )
 
 
-def test_staged_layout_collapsible_adds_fold_nub_height_overhang():
-    layout = Staged((StageSlot("a", 0, 0), StageSlot("b", 1, 0)))
-    nodes = (("a", Card("A")), ("b", Card("B")))
+def test_staged_layout_adds_nub_overhang_only_for_last_lane_collapsible_cards():
+    layout = Staged((StageSlot("a", 0, 0), StageSlot("b", 1, 0), StageSlot("c", 1, 1)))
+    nodes = (("a", Card("A")), ("b", Card("B")), ("c", Card("C")))
     base_height = Graph(nodes, layout).measure().height
-    folded_height = Graph(nodes, layout, collapsible=("a",)).measure().height
-    assert folded_height == base_height + 2
+    upper_lane_height = Graph(nodes, layout, collapsible=("a", "b")).measure().height
+    last_lane_height = Graph(nodes, layout, collapsible=("c",)).measure().height
+
+    assert upper_lane_height == base_height
+    assert last_lane_height == base_height + 2
