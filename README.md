@@ -824,8 +824,9 @@ Forward edges advance one stage and skip edges cross two or more; together
 they define downstream visibility. Back edges return to the same or an earlier
 stage but are paint-only: they never change which cards are visible. A card
 listed in `collapsible` gets a right-edge fold nub that hides downstream
-cards and every wire touching them, back edges included. Per-kind `EdgeStyle`
-values override the default stroke, width, and dash. Omitting `stage_gap`, as
+cards, every wire touching them, and every wire leaving the folded card, back
+edges included. Per-kind `EdgeStyle` values override the default stroke,
+width, and dash. Omitting `stage_gap`, as
 above, derives a safe gap for labels, routes, and fold nubs, never narrower
 than 108px. Rendering and folding use HTML and CSS with zero JavaScript.
 
