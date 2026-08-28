@@ -21,6 +21,7 @@ from coeftable.graph.model import (
     StateRule,
     Wire,
 )
+from coeftable.graph.product_flow import ProductFlow, ProductStep, ProductStepKind
 from coeftable.graph.report import GraphReport, MeasuredReport
 from coeftable.graph.timeline import TimelineEvent
 
@@ -40,6 +41,9 @@ __all__ = [
     "MeasuredGraph",
     "MeasuredReport",
     "MetricTree",
+    "ProductFlow",
+    "ProductStep",
+    "ProductStepKind",
     "Slot",
     "Slotted",
     "StageSlot",

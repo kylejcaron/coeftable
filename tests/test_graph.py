@@ -330,6 +330,9 @@ def test_graph_export_surface_is_exact_and_top_level_excludes_graph():
         "MeasuredGraph",
         "MeasuredReport",
         "MetricTree",
+        "ProductFlow",
+        "ProductStep",
+        "ProductStepKind",
         "Slot",
         "Slotted",
         "Staged",
@@ -338,7 +341,7 @@ def test_graph_export_surface_is_exact_and_top_level_excludes_graph():
         "TimelineEvent",
         "Wire",
     }
-    assert len(coeftable.graph.__all__) == 22
+    assert len(coeftable.graph.__all__) == 25
     assert set(coeftable.graph.__all__) == expected
     for name in expected:
         assert hasattr(coeftable.graph, name)
