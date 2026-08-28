@@ -1,6 +1,7 @@
 """Experimental graph value types."""
 
 from coeftable.graph.breakout import Breakout
+from coeftable.graph.causal_graph import CausalGraph
 from coeftable.graph.driver_tree import DriverTree
 from coeftable.graph.metric_tree import MetricTree
 from coeftable.graph.model import (
@@ -20,6 +21,7 @@ from coeftable.graph.timeline import TimelineEvent
 __all__ = [
     "Atom",
     "Breakout",
+    "CausalGraph",
     "ControlRef",
     "DriverTree",
     "Graph",

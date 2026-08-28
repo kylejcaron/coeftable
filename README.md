@@ -585,6 +585,42 @@ CSS and no JavaScript.
 A `MetricTree` left as the last notebook expression renders itself via
 `_repr_html_`; `with_theme()` follows the same conventions as cards.
 
+## Causal graphs (experimental)
+
+`coeftable.graph.CausalGraph` is a thin builder over the same `Graph` kernel
+as `MetricTree`: it takes cards the caller has already prepared, wires them
+into a DAG, and derives a deterministic layered layout instead of a
+caller-specified `Slotted` one. Every node that is a wire source is
+collapsible. The API is experimental and may change; it is deliberately not
+exported from the top-level `coeftable` namespace yet.
+
+```python
+from coeftable.cards import Card
+from coeftable.graph import CausalGraph, Wire
+
+causal = CausalGraph(
+    nodes=(
+        ("treatment", Card("Treatment")),
+        ("mediator", Card("Mediator")),
+        ("outcome", Card("Outcome")),
+    ),
+    wires=(
+        Wire("t-m", "treatment", "mediator"),
+        Wire("m-y", "mediator", "outcome"),
+        Wire("t-y", "treatment", "outcome"),
+    ),
+    dom_prefix="causal-example",
+)
+causal
+```
+
+`CausalGraph` does not build cards itself; the caller prepares each `Card`
+before wiring it in. Layout is deterministic: nodes are placed by longest
+path from any root, so `treatment`, `mediator`, and `outcome` land on their
+own layers and the direct `treatment -> outcome` wire spans two layers
+alongside the mediated path. Like `MetricTree`, the graph API remains
+experimental.
+
 ## Driver-tree reports (experimental)
 
 `coeftable.graph.DriverTree` is the composition root over the metric-tree
