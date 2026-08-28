@@ -111,7 +111,8 @@ def _wire_svg(graph: Graph, layout: _GraphLayout, compiled: _CompiledState) -> s
                     f'<rect x="{_number(px)}" y="{_number(py)}" width="{_number(pw)}" '
                     f'height="{_number(ph)}" fill="{surface}" stroke="{stroke}"/>'
                     f'<text x="{_number(px + pw / 2)}" y="{_number(py + ph / 2)}" '
-                    f'text-anchor="middle" dominant-baseline="middle" fill="{stroke}">'
+                    f'text-anchor="middle" dominant-baseline="middle" fill="{stroke}" '
+                    f'style="font-size:{graph.chrome.caption_size}px">'
                     f"{_esc(wire.label)}</text>"
                 )
         fragments.append(f'<g id="{wire_dom_id}">{path}{label}</g>')

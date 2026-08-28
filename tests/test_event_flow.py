@@ -187,7 +187,10 @@ def test_event_flow_renders_styles_pills_and_right_edge_nubs():
         FlowEdge("b-c", "b", "c", "back", "retry"),
     )
     html = graph.as_raw_html()
-    assert ">continue</text>" in html
+    assert (
+        f'text-anchor="middle" dominant-baseline="middle" fill="{graph.theme.axis}" '
+        f'style="font-size:{graph.chrome.caption_size}px">continue</text>'
+    ) in html
     assert ">retry</text>" in html
     assert 'stroke-dasharray="2 3"' in html
     assert "left:100%;top:50%;transform:translateY(-50%)" in html
