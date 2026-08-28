@@ -1174,6 +1174,15 @@ def _pill_bounds(
     return (x - width / 2, y - height / 2, width, height)
 
 
+def _rects_intersect(
+    a: tuple[float, float, float, float], b: tuple[float, float, float, float]
+) -> bool:
+    """Return whether two (x, y, width, height) rects share any interior area."""
+    ax, ay, aw, ah = a
+    bx, by, bw, bh = b
+    return ax < bx + bw and bx < ax + aw and ay < by + bh and by < ay + ah
+
+
 type _TrackAxis = Literal["height", "width"]
 
 
@@ -1233,50 +1242,6 @@ exactly the same reach even when a stage has a nub but no right-loop wire.
 """
 
 
-def _flow_offsets(
-    wires: tuple[Wire, ...],
-    *,
-    slot_by_id: Mapping[str, StageSlot],
-    collapsible: tuple[str, ...],
-    chrome: CardChrome,
-    styles: Mapping[EdgeKind, EdgeStyle],
-) -> dict[str, float]:
-    """Pack every exterior route into its own track pool, closest-first.
-
-    Tracks pack independently per corridor key (`_flow_track_group`) in wire
-    declaration order. A pool's first track clears its own half-extent plus
-    one `chip_gap` from the stage boundary, so even a single loop pill sits
-    fully outside its stage's cards. A right-loop pool in a stage containing
-    any collapsible card first reserves the nub's 18px width. Each later track
-    in the same pool clears the prior track's half-extent, its own half-extent,
-    and one more `chip_gap`, so consecutive pills (or bare strokes, for
-    unlabeled wires) never overlap.
-    """
-    offsets: dict[str, float] = {}
-    collapsible_stages = {slot_by_id[card_id].stage for card_id in collapsible}
-    tracks: dict[str, tuple[float, float]] = {}
-    for wire in wires:
-        group = _flow_track_group(wire, slot_by_id=slot_by_id)
-        if group is None:
-            continue
-        key, axis = group
-        extent = _flow_track_extent(wire, axis=axis, chrome=chrome, styles=styles)
-        if key in tracks:
-            prev_offset, prev_extent = tracks[key]
-            offset = prev_offset + prev_extent + chrome.chip_gap + extent
-        else:
-            nub_reservation = (
-                _NUB_RESERVE
-                if key == f"loop-right-{slot_by_id[wire.src].stage}"
-                and slot_by_id[wire.src].stage in collapsible_stages
-                else 0.0
-            )
-            offset = nub_reservation + extent + chrome.chip_gap
-        tracks[key] = (offset, extent)
-        offsets[wire.id] = offset
-    return offsets
-
-
 def _painted_extent(
     wire: Wire,
     nominal_half: float,
@@ -1295,6 +1260,57 @@ def _painted_extent(
     """
     painted = nominal_half + pill_halo if wire.label is not None else nominal_half
     return max(painted, styles[cast(EdgeKind, wire.kind)].width / 2)
+
+
+def _flow_offsets(
+    wires: tuple[Wire, ...],
+    *,
+    slot_by_id: Mapping[str, StageSlot],
+    collapsible: tuple[str, ...],
+    chrome: CardChrome,
+    styles: Mapping[EdgeKind, EdgeStyle],
+) -> dict[str, float]:
+    """Pack every exterior route into its own track pool, closest-first.
+
+    Tracks pack independently per corridor key (`_flow_track_group`) in wire
+    declaration order, spaced by each wire's own *painted* half-extent
+    (`_painted_extent`) rather than its bare nominal one, so a thick custom
+    stroke or a pill's own border halo can never eat into a neighboring
+    track's reserved room. A pool's first track clears its own painted
+    half-extent plus one `chip_gap` from the stage boundary, so even a
+    single loop pill sits fully outside its stage's cards with real paint
+    to spare. A right-loop pool in a stage containing any collapsible card
+    first reserves the nub's 18px width. Each later track in the same pool
+    clears the prior track's painted half-extent, its own painted
+    half-extent, and one more `chip_gap`, so consecutive pills (or bare
+    strokes, for unlabeled wires) are truly disjoint, not merely nominally
+    spaced.
+    """
+    offsets: dict[str, float] = {}
+    collapsible_stages = {slot_by_id[card_id].stage for card_id in collapsible}
+    pill_halo = chrome.border_width / 2
+    tracks: dict[str, tuple[float, float]] = {}
+    for wire in wires:
+        group = _flow_track_group(wire, slot_by_id=slot_by_id)
+        if group is None:
+            continue
+        key, axis = group
+        nominal = _flow_track_extent(wire, axis=axis, chrome=chrome, styles=styles)
+        extent = _painted_extent(wire, nominal, styles=styles, pill_halo=pill_halo)
+        if key in tracks:
+            prev_offset, prev_extent = tracks[key]
+            offset = prev_offset + prev_extent + chrome.chip_gap + extent
+        else:
+            nub_reservation = (
+                _NUB_RESERVE
+                if key == f"loop-right-{slot_by_id[wire.src].stage}"
+                and slot_by_id[wire.src].stage in collapsible_stages
+                else 0.0
+            )
+            offset = nub_reservation + extent + chrome.chip_gap
+        tracks[key] = (offset, extent)
+        offsets[wire.id] = offset
+    return offsets
 
 
 def _stage_gap_requirements(
@@ -1434,6 +1450,48 @@ def _flow_geometry(
     return routes, pills
 
 
+def _pack_forward_pills(
+    wires: tuple[Wire, ...],
+    routes: dict[str, Route],
+    pills: dict[str, tuple[float, float, float, float]],
+    slot_by_id: Mapping[str, StageSlot],
+    chrome: CardChrome,
+) -> tuple[dict[str, Route], dict[str, tuple[float, float, float, float]]]:
+    """Stack a stage gap's labeled forward pills so a later one never collides.
+
+    A forward wire's pill always centers on the exact physical midpoint
+    between its two stages (`route_across`'s fixed anchor), so two forward
+    wires sharing a source stage — and therefore the same physical gap —
+    can land at an identical pill x, and even the same y whenever their
+    endpoints happen to sit at equal painted heights. Declaration order
+    breaks the tie: each pill keeps its own gap-midpoint x exactly and,
+    only if it actually intersects an earlier pill already packed into
+    that same stage gap, shifts straight down by one pill height plus one
+    `chrome.chip_gap` at a time until it clears every one of them. Only
+    forward pills are packed here; every other wire kind already reserves
+    its own exterior track pool in `_flow_offsets`.
+    """
+    packed_routes = dict(routes)
+    packed_pills = dict(pills)
+    placed_by_gap: dict[int, list[tuple[float, float, float, float]]] = {}
+    for wire in wires:
+        if wire.kind != "forward" or wire.label is None:
+            continue
+        gap = slot_by_id[wire.src].stage
+        placed = placed_by_gap.setdefault(gap, [])
+        x, y, width, height = packed_pills[wire.id]
+        while any(_rects_intersect((x, y, width, height), other) for other in placed):
+            y += height + chrome.chip_gap
+        rect = (x, y, width, height)
+        if rect != packed_pills[wire.id]:
+            packed_pills[wire.id] = rect
+            route = packed_routes[wire.id]
+            anchor_x, _anchor_y = route.label_anchor
+            packed_routes[wire.id] = replace(route, label_anchor=(anchor_x, y + height / 2))
+        placed.append(rect)
+    return packed_routes, packed_pills
+
+
 def _flow_bounds_extrema(
     wires: tuple[Wire, ...],
     routes: Mapping[str, Route],
@@ -1570,6 +1628,8 @@ def _graph_measure_staged(
         width += shift_x
         height += shift_y
         routes, pills = _flow_geometry(wires, boxes_by_id, slot_by_id, offsets, chrome)
+
+    routes, pills = _pack_forward_pills(wires, routes, pills, slot_by_id, chrome)
 
     _min_x1, _min_y1, max_x, max_y = _flow_bounds_extrema(
         wires, routes, pills, styles=styles, pill_halo=pill_halo

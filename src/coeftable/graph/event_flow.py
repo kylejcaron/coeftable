@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping, Sequence
+from typing import cast
 
 from coeftable.cards import Card, CardChrome
 from coeftable.cards.chrome import DEFAULT_CHROME
@@ -16,7 +17,9 @@ from coeftable.graph.model import (
     Staged,
     StageSlot,
     Wire,
+    _canonical,
     _flow_offsets,
+    _non_empty_str,
     _resolve_edge_styles,
     _stage_gap_requirements,
 )
@@ -45,6 +48,28 @@ def _styles(
     if any(kind not in kinds for kind in overrides):
         raise SpecError("EventFlow.styles keys must be valid edge kinds")
     return tuple(result)
+
+
+def _collapsible_entries(
+    value: Sequence[str], *, stage_by_id: Mapping[str, int]
+) -> tuple[str, ...]:
+    """Canonicalize and validate collapsible card ids against placements.
+
+    Both `_flow_offsets` and `_stage_gap_requirements` index `stage_by_id`
+    by every collapsible entry to derive its stage before `Graph` itself
+    ever runs its own `known_cards` check, so a bad type, a duplicate, or
+    an id missing from `placements` must be rejected here first — with a
+    named `SpecError` — rather than surfacing as a raw `KeyError` deep
+    inside either private geometry helper.
+    """
+    collapsible = _canonical(value, name="EventFlow.collapsible")
+    for index, card_id in enumerate(collapsible):
+        _non_empty_str(card_id, name=f"EventFlow.collapsible[{index}]")
+    if len(set(collapsible)) != len(collapsible):
+        raise SpecError("EventFlow.collapsible entries must be unique")
+    if any(card_id not in stage_by_id for card_id in collapsible):
+        raise SpecError("EventFlow.collapsible references an unplaced card")
+    return cast(tuple[str, ...], collapsible)
 
 
 def EventFlow(
@@ -76,12 +101,12 @@ def EventFlow(
     node_entries = tuple(nodes)
     placement_entries = tuple(placements)
     edge_entries = tuple(edges)
-    collapsible_entries = tuple(collapsible)
     layout = Staged(placement_entries)
     slot_by_id = {slot.card_id: slot for slot in layout.slots}
     stage_by_id = {card_id: slot.stage for card_id, slot in slot_by_id.items()}
     if len(stage_by_id) != len(layout.slots):
         raise SpecError("EventFlow placements card ids must be unique")
+    collapsible_entries = _collapsible_entries(collapsible, stage_by_id=stage_by_id)
     for index, edge in enumerate(edge_entries):
         if not isinstance(edge, FlowEdge):
             raise SpecError(f"EventFlow.edges[{index}] must be a FlowEdge")
