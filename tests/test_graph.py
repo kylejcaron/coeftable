@@ -23,6 +23,8 @@ from coeftable.graph import (
     MetricTree,
     Slot,
     Slotted,
+    Staged,
+    StageSlot,
     StateRule,
     Wire,
 )
@@ -111,6 +113,21 @@ from coeftable.theme import DEFAULT, Direction
         (lambda: Slot("card", 0, -1), "Slot.slot must be a non-negative int"),
         (lambda: Slotted(()), "Slotted.slots must not be empty"),
         (lambda: Slotted((cast(Slot, 7),)), "Slotted.slots[0] must be a Slot"),
+        (lambda: StageSlot("", 0, 0), "StageSlot.card_id must be a non-empty str"),
+        (
+            lambda: StageSlot("card", cast(int, 1.5), 0),
+            "StageSlot.stage must be a non-negative int",
+        ),
+        (lambda: StageSlot("card", True, 0), "StageSlot.stage must be a non-negative int"),
+        (lambda: StageSlot("card", -1, 0), "StageSlot.stage must be a non-negative int"),
+        (
+            lambda: StageSlot("card", 0, cast(int, 1.5)),
+            "StageSlot.lane must be a non-negative int",
+        ),
+        (lambda: StageSlot("card", 0, True), "StageSlot.lane must be a non-negative int"),
+        (lambda: StageSlot("card", 0, -1), "StageSlot.lane must be a non-negative int"),
+        (lambda: Staged(()), "Staged.slots must not be empty"),
+        (lambda: Staged((cast(StageSlot, 7),)), "Staged.slots[0] must be a StageSlot"),
         (lambda: Wire("", "a", "b"), "Wire.id must be a non-empty str"),
         (lambda: Wire("w", "", "b"), "Wire.src must be a non-empty str"),
         (lambda: Wire("w", "a", ""), "Wire.dst must be a non-empty str"),
@@ -198,6 +215,8 @@ def test_valid_leaf_values_and_optional_wire_labels():
     assert Atom(ControlRef("card", key="mode"), "option_checked", option="compact")
     assert Atom(ControlRef("card", key="mode"), "option_checked", option="")
     assert StateRule((Atom(ControlRef("card"), "checked"),), hide_cards=("other",))
+    assert StageSlot("card", 0, 0)
+    assert Staged((StageSlot("card", 0, 0),))
     assert Wire("w", "a", "b")
     assert Wire("w", "a", "b", label="estimate", label_role="favorable")
     assert Wire("w", "a", "b", label="estimate", label_color="#abc")
@@ -210,6 +229,8 @@ def test_every_leaf_is_frozen_slotted_and_without_dict():
         StateRule((Atom(ControlRef("card"), "checked"),), hide_cards=("other",)),
         Slot("card", 0, 0),
         Slotted((Slot("card", 0, 0),)),
+        StageSlot("card", 0, 0),
+        Staged((StageSlot("card", 0, 0),)),
         Wire("wire", "card", "other"),
     ]
     for value in values:
@@ -236,11 +257,13 @@ def test_graph_export_surface_is_exact_and_top_level_excludes_graph():
         "MetricTree",
         "Slot",
         "Slotted",
+        "Staged",
+        "StageSlot",
         "StateRule",
         "TimelineEvent",
         "Wire",
     }
-    assert len(coeftable.graph.__all__) == 16
+    assert len(coeftable.graph.__all__) == 18
     assert set(coeftable.graph.__all__) == expected
     for name in expected:
         assert hasattr(coeftable.graph, name)
@@ -529,7 +552,7 @@ def _plain_graph(
     return Graph(nodes=nodes, layout=Slotted(slots), **kwargs)  # ty: ignore[invalid-argument-type]
 
 
-def _slotted(layout: Slotted | LayeredDag) -> Slotted:
+def _slotted(layout: Slotted | LayeredDag | Staged) -> Slotted:
     """Narrow a graph's resolved layout to `Slotted` for direct `.slots` access."""
     assert isinstance(layout, Slotted)
     return layout
@@ -902,7 +925,7 @@ def test_graph_accepts_injected_rule_without_collapsible_ancestry():
 @pytest.mark.parametrize(
     ("kwargs", "message"),
     [
-        ({"layout": cast(Slotted, 7)}, "Graph.layout must be a Slotted or LayeredDag"),
+        ({"layout": cast(Slotted, 7)}, "Graph.layout must be a Slotted, LayeredDag, or Staged"),
         ({"theme": cast(object, 7)}, "Graph.theme must be a Theme"),
         ({"chrome": cast(object, 7)}, "Graph.chrome must be a CardChrome"),
     ],
@@ -961,7 +984,9 @@ def test_layered_dag_rejects_a_cycle_before_recursive_layout():
 
 
 def test_graph_rejects_an_unknown_layout_value():
-    with pytest.raises(SpecError, match=re.escape("Graph.layout must be a Slotted or LayeredDag")):
+    with pytest.raises(
+        SpecError, match=re.escape("Graph.layout must be a Slotted, LayeredDag, or Staged")
+    ):
         Graph((("a", Card("A")),), object())  # ty: ignore[invalid-argument-type]
 
 

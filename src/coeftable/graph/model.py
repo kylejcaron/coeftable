@@ -11,6 +11,7 @@ from coeftable.cards.card import Card
 from coeftable.cards.chrome import DEFAULT_CHROME, CardChrome
 from coeftable.errors import SpecError
 from coeftable.graph._layered import layered_positions
+from coeftable.graph._staged import staged_boxes
 from coeftable.graph.state import _compile_state, _CompiledState
 from coeftable.graph.topology import blocker_families, check_acyclic
 from coeftable.theme import DEFAULT, Role, Theme
@@ -158,6 +159,38 @@ class Slotted:
             if not isinstance(slot, Slot):
                 raise SpecError(f"Slotted.slots[{index}] must be a Slot")
         object.__setattr__(self, "slots", cast(tuple[Slot, ...], slots))
+
+
+@dataclass(frozen=True, slots=True)
+class StageSlot:
+    """A card's zero-based stage/lane position in a :class:`Staged` layout."""
+
+    card_id: str
+    stage: int
+    lane: int
+
+    def __post_init__(self) -> None:
+        """Validate the card and its zero-based coordinates."""
+        _non_empty_str(self.card_id, name="StageSlot.card_id")
+        _non_negative_int(self.stage, name="StageSlot.stage")
+        _non_negative_int(self.lane, name="StageSlot.lane")
+
+
+@dataclass(frozen=True, slots=True)
+class Staged:
+    """Explicit stage/lane positions; graph-level domain checks are deferred."""
+
+    slots: tuple[StageSlot, ...]
+
+    def __post_init__(self) -> None:
+        """Canonicalize and validate the stage/lane entries."""
+        slots = _canonical(self.slots, name="Staged.slots")
+        if not slots:
+            raise SpecError("Staged.slots must not be empty")
+        for index, slot in enumerate(slots):
+            if not isinstance(slot, StageSlot):
+                raise SpecError(f"Staged.slots[{index}] must be a StageSlot")
+        object.__setattr__(self, "slots", cast(tuple[StageSlot, ...], slots))
 
 
 @dataclass(frozen=True, slots=True)
@@ -415,8 +448,8 @@ def _graph_shared_slot_proof(
 
 def _graph_validate_settings(graph: Graph) -> None:
     """Validate graph-wide scalar settings and object types."""
-    if not isinstance(graph.layout, (Slotted, LayeredDag)):
-        raise SpecError("Graph.layout must be a Slotted or LayeredDag")
+    if not isinstance(graph.layout, (Slotted, LayeredDag, Staged)):
+        raise SpecError("Graph.layout must be a Slotted, LayeredDag, or Staged")
     if not isinstance(graph.theme, Theme):
         raise SpecError("Graph.theme must be a Theme")
     if not isinstance(graph.chrome, CardChrome):
@@ -441,6 +474,20 @@ def _graph_validate_layout(slots: tuple[Slot, ...], known_cards: set[str]) -> No
     slots_dense = min(slot_domain) == 0 and max(slot_domain) == len(slot_domain) - 1
     if not (layers_dense and slots_dense):
         raise SpecError("Graph.layout layer and slot indices must be dense from zero")
+
+
+def _graph_validate_staged(slots: tuple[StageSlot, ...], known_cards: set[str]) -> None:
+    """Validate that staged slots cover nodes with dense, non-overlapping coordinates."""
+    card_ids = tuple(slot.card_id for slot in slots)
+    if len(set(card_ids)) != len(card_ids) or set(card_ids) != known_cards:
+        raise SpecError("Graph.layout.slots must cover graph node ids exactly once")
+    positions = tuple((slot.stage, slot.lane) for slot in slots)
+    if len(set(positions)) != len(positions):
+        raise SpecError("Graph.layout cards must not share a stage/lane")
+    stages = {slot.stage for slot in slots}
+    lanes = {slot.lane for slot in slots}
+    if stages != set(range(len(stages))) or lanes != set(range(len(lanes))):
+        raise SpecError("Graph.layout stage and lane indices must be dense from zero")
 
 
 def _graph_wires(
@@ -841,12 +888,46 @@ def _graph_measure(
     )
 
 
+def _graph_measure_staged(
+    nodes: tuple[tuple[str, Card], ...],
+    slots: tuple[StageSlot, ...],
+    *,
+    lane_gap: int,
+    stage_gap: int,
+    padding: int,
+) -> _GraphLayout:
+    """Measure rebound cards once and resolve their staged border boxes."""
+    measured = {card_id: card.measure() for card_id, card in nodes}
+    slot_by_id = {slot.card_id: slot for slot in slots}
+    entries = tuple(
+        (
+            card_id,
+            slot_by_id[card_id].stage,
+            slot_by_id[card_id].lane,
+            measured[card_id].width,
+            measured[card_id].expanded_height,
+        )
+        for card_id, _ in nodes
+    )
+    width, height, boxes = staged_boxes(
+        entries, lane_gap=lane_gap, stage_gap=stage_gap, padding=padding
+    )
+    anchors = tuple(
+        (
+            card_id,
+            ((0.0, box_height / 2), (box_width, box_height / 2)),
+        )
+        for card_id, (_x, _y, box_width, box_height) in boxes
+    )
+    return _GraphLayout(MeasuredGraph(width, height, boxes), anchors, ())
+
+
 @dataclass(frozen=True, slots=True)
 class Graph:
     """A validated, themed graph of cards and explicit vertical wires."""
 
     nodes: tuple[tuple[str, Card], ...]
-    layout: Slotted | LayeredDag
+    layout: Slotted | LayeredDag | Staged
     wires: tuple[Wire, ...] = ()
     collapsible: tuple[str, ...] = ()
     visibility: tuple[str, ...] | None = None
@@ -870,37 +951,49 @@ class Graph:
         node_ids = tuple(node_id for node_id, _ in nodes)
         known_cards = set(node_ids)
         wires = _graph_wires(self.wires, known_cards=known_cards)
-        slots = _graph_resolve_slots(self.layout, node_ids=node_ids, wires=wires)
-        _graph_validate_layout(slots, known_cards)
-        layers_by_id = {slot.card_id: slot.layer for slot in slots}
-        _graph_validate_wire_layers(wires, layers_by_id=layers_by_id)
+        if isinstance(self.layout, Staged):
+            staged_slots = self.layout.slots
+            _graph_validate_staged(staged_slots, known_cards)
+            slots: tuple[Slot, ...] = ()
+        else:
+            staged_slots = ()
+            slots = _graph_resolve_slots(self.layout, node_ids=node_ids, wires=wires)
+            _graph_validate_layout(slots, known_cards)
+            layers_by_id = {slot.card_id: slot.layer for slot in slots}
+            _graph_validate_wire_layers(wires, layers_by_id=layers_by_id)
         wire_ids = tuple(wire.id for wire in wires)
         collapsible = _graph_collapsible(self.collapsible, known_cards)
-        if collapsible and self.layer_gap < 18:
-            raise SpecError(
-                "Graph.layer_gap must be at least 18 when collapsible cards are present"
-            )
-        if wires and self.layer_gap < 18:
-            raise SpecError("Graph.layer_gap must be at least 18 when wires are present")
         label_offset = self.chrome.caption_size + 2
         labeled_layer_gap = label_offset + self.chrome.caption_size + 4
-        if any(wire.label is not None for wire in wires) and self.layer_gap < labeled_layer_gap:
-            raise SpecError(
-                f"Graph.layer_gap must be at least {labeled_layer_gap} when "
-                "wire labels are present"
-            )
-        collapsible_layers = {
-            layers_by_id[card_id] for card_id in collapsible if card_id in layers_by_id
-        }
-        labeled_destination_bands = {
-            layers_by_id[wire.dst] - 1 for wire in wires if wire.label is not None
-        }
-        shared_band_gap = 18 + label_offset + self.chrome.caption_size
-        if collapsible_layers & labeled_destination_bands and self.layer_gap < shared_band_gap:
-            raise SpecError(
-                f"Graph.layer_gap must be at least {shared_band_gap} when "
-                "labels share a band with fold nubs"
-            )
+        if not isinstance(self.layout, Staged):
+            # Vertical label-band checks apply only to the row/column layouts;
+            # Staged has no layers and defers wire/label geometry to R6.
+            if collapsible and self.layer_gap < 18:
+                raise SpecError(
+                    "Graph.layer_gap must be at least 18 when collapsible cards are present"
+                )
+            if wires and self.layer_gap < 18:
+                raise SpecError("Graph.layer_gap must be at least 18 when wires are present")
+            if (
+                any(wire.label is not None for wire in wires)
+                and self.layer_gap < labeled_layer_gap
+            ):
+                raise SpecError(
+                    f"Graph.layer_gap must be at least {labeled_layer_gap} when "
+                    "wire labels are present"
+                )
+            collapsible_layers = {
+                layers_by_id[card_id] for card_id in collapsible if card_id in layers_by_id
+            }
+            labeled_destination_bands = {
+                layers_by_id[wire.dst] - 1 for wire in wires if wire.label is not None
+            }
+            shared_band_gap = 18 + label_offset + self.chrome.caption_size
+            if collapsible_layers & labeled_destination_bands and self.layer_gap < shared_band_gap:
+                raise SpecError(
+                    f"Graph.layer_gap must be at least {shared_band_gap} when "
+                    "labels share a band with fold nubs"
+                )
         cards, rebound_nodes = _graph_rebound_nodes(nodes, theme=self.theme, chrome=self.chrome)
         card_options = {node_id: card.control_options() for node_id, card in rebound_nodes}
         visibility, visibility_wires = _graph_visibility(
@@ -916,9 +1009,12 @@ class Graph:
         visibility_edges = tuple((wire.src, wire.dst) for wire in visibility_wires)
         check_acyclic(node_ids, visibility_edges)
         blockers = blocker_families(node_ids, visibility_edges, collapsible)
-        _graph_shared_slot_proof(
-            _graph_shared_slot_groups(slots), cards=cards, rules=rules, blockers=blockers
-        )
+        if not isinstance(self.layout, Staged):
+            # Staged forbids shared stage/lane positions outright; the
+            # select-governed shared-slot proof only applies to layered rows.
+            _graph_shared_slot_proof(
+                _graph_shared_slot_groups(slots), cards=cards, rules=rules, blockers=blockers
+            )
         _graph_validate_rule_controllers(rules, collapsible=collapsible, blockers=blockers)
         object.__setattr__(self, "nodes", tuple(rebound_nodes))
         object.__setattr__(self, "wires", wires)
@@ -941,42 +1037,51 @@ class Graph:
             ),
         )
 
-        layout = _graph_measure(
-            tuple(rebound_nodes),
-            slots,
-            wires,
-            collapsible=collapsible,
-            gap=self.gap,
-            layer_gap=self.layer_gap,
-            chrome=self.chrome,
-            padding=self.chrome.padding,
-        )
-        # The ladder raises stacked labels by label_step per row; every band
-        # must fit its OWN occupied rows (SpecError still at construction) -
-        # a deep ladder in one band never inflates an unrelated band.
-        label_step = self.chrome.caption_size + 4
-        band_depths = dict(layout.label_band_depths)
-        overall_extra = max(band_depths.values(), default=0) * label_step
-        if overall_extra and self.layer_gap < labeled_layer_gap + overall_extra:
-            raise SpecError(
-                f"Graph.layer_gap must be at least {labeled_layer_gap + overall_extra} "
-                "to fit the stacked wire labels"
+        if isinstance(self.layout, Staged):
+            layout = _graph_measure_staged(
+                tuple(rebound_nodes),
+                staged_slots,
+                lane_gap=self.gap,
+                stage_gap=self.layer_gap,
+                padding=self.chrome.padding,
             )
-        shared_extra = (
-            max(
-                (depth for band, depth in band_depths.items() if band in collapsible_layers),
-                default=0,
+        else:
+            layout = _graph_measure(
+                tuple(rebound_nodes),
+                slots,
+                wires,
+                collapsible=collapsible,
+                gap=self.gap,
+                layer_gap=self.layer_gap,
+                chrome=self.chrome,
+                padding=self.chrome.padding,
             )
-            * label_step
-        )
-        if (
-            collapsible_layers & labeled_destination_bands
-            and self.layer_gap < shared_band_gap + shared_extra
-        ):
-            raise SpecError(
-                f"Graph.layer_gap must be at least {shared_band_gap + shared_extra} "
-                "to fit stacked labels beside fold nubs"
+            # The ladder raises stacked labels by label_step per row; every band
+            # must fit its OWN occupied rows (SpecError still at construction) -
+            # a deep ladder in one band never inflates an unrelated band.
+            label_step = self.chrome.caption_size + 4
+            band_depths = dict(layout.label_band_depths)
+            overall_extra = max(band_depths.values(), default=0) * label_step
+            if overall_extra and self.layer_gap < labeled_layer_gap + overall_extra:
+                raise SpecError(
+                    f"Graph.layer_gap must be at least {labeled_layer_gap + overall_extra} "
+                    "to fit the stacked wire labels"
+                )
+            shared_extra = (
+                max(
+                    (depth for band, depth in band_depths.items() if band in collapsible_layers),
+                    default=0,
+                )
+                * label_step
             )
+            if (
+                collapsible_layers & labeled_destination_bands
+                and self.layer_gap < shared_band_gap + shared_extra
+            ):
+                raise SpecError(
+                    f"Graph.layer_gap must be at least {shared_band_gap + shared_extra} "
+                    "to fit stacked labels beside fold nubs"
+                )
         object.__setattr__(self, "_layout", layout)
 
     def measure(self) -> MeasuredGraph:

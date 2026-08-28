@@ -12,6 +12,8 @@ from coeftable.graph.model import (
     MeasuredGraph,
     Slot,
     Slotted,
+    Staged,
+    StageSlot,
     StateRule,
     Wire,
 )
@@ -32,6 +34,8 @@ __all__ = [
     "MetricTree",
     "Slot",
     "Slotted",
+    "StageSlot",
+    "Staged",
     "StateRule",
     "TimelineEvent",
     "Wire",
