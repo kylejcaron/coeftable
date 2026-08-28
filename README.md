@@ -466,8 +466,7 @@ namespace rather than the top-level `coeftable` namespace.
 
 ```python
 import coeftable as ct
-from coeftable.cards import Card, CardGrid
-from coeftable.cards.regions import Diagnostics, Event, Events, Metric, Trend
+from coeftable.cards import Card, CardGrid, Diagnostics, Event, Events, Metric, Trend
 
 events = Events([Event("launch", "#4C72B0", at=2.0)])
 revenue = Card(
