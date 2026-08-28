@@ -84,6 +84,7 @@ def EventFlow(
     dom_prefix: str = "g0",
     gap: int = 36,
     stage_gap: int | None = None,
+    stage_labels: Sequence[str] = (),
 ) -> Graph:
     """Build a staged flow with paint-only back edges.
 
@@ -103,7 +104,10 @@ def EventFlow(
         tuple[StageSlot, ...], _canonical(placements, name="EventFlow.placements")
     )
     edge_entries = cast(tuple[FlowEdge, ...], _canonical(edges, name="EventFlow.edges"))
-    layout = Staged(placement_entries)
+    stage_label_entries = cast(
+        tuple[str, ...], _canonical(stage_labels, name="EventFlow.stage_labels")
+    )
+    layout = Staged(placement_entries, labels=stage_label_entries)
     slot_by_id = {slot.card_id: slot for slot in layout.slots}
     stage_by_id = {card_id: slot.stage for card_id, slot in slot_by_id.items()}
     if len(stage_by_id) != len(layout.slots):

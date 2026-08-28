@@ -6,6 +6,7 @@ from typing import cast
 import pytest
 
 from coeftable.cards import Card, CardChrome, TextBlock
+from coeftable.cards.chrome import DEFAULT_CHROME, line_height
 from coeftable.errors import SpecError
 from coeftable.graph import (
     Atom,
@@ -1837,3 +1838,70 @@ def test_thick_opposing_loop_tracks_keep_disjoint_painted_stroke_corridors():
     _assert_every_painted_pill_pair_disjoint(graph)
     _assert_no_wire_samples_enter_any_card(graph)
     _assert_pill_bounds_inside(graph)
+
+
+def test_staged_labels_are_snapshotted_and_must_match_dense_stages():
+    labels = ["Browse", "Checkout"]
+    layout = Staged(
+        (StageSlot("a", 0, 0), StageSlot("b", 1, 0)),
+        labels=labels,  # ty: ignore[invalid-argument-type]
+    )
+    labels.clear()
+    assert layout.labels == ("Browse", "Checkout")
+    with pytest.raises(SpecError, match="one label per stage"):
+        Graph(
+            (("a", Card("A")), ("b", Card("B"))),
+            Staged(
+                (StageSlot("a", 0, 0), StageSlot("b", 1, 0)),
+                labels=("Browse",),
+            ),
+        )
+
+
+def test_staged_labels_reserve_exact_header_and_render_behind_wires_and_cards():
+    nodes = (("a", Card("A", width=120)), ("b", Card("B", width=120)))
+    plain = Graph(
+        nodes,
+        Staged((StageSlot("a", 0, 0), StageSlot("b", 1, 0))),
+        dom_prefix="plain-stages",
+    )
+    labeled = Graph(
+        nodes,
+        Staged(
+            (StageSlot("a", 0, 0), StageSlot("b", 1, 0)),
+            labels=("Browse", "Checkout"),
+        ),
+        dom_prefix="named-stages",
+    )
+    header = line_height(DEFAULT_CHROME.caption_size, DEFAULT_CHROME) + 2 * DEFAULT_CHROME.gap
+    plain_boxes = dict(plain.measure().boxes)
+    labeled_boxes = dict(labeled.measure().boxes)
+    assert labeled.measure().height == plain.measure().height + header
+    assert all(labeled_boxes[node][1] == plain_boxes[node][1] + header for node in plain_boxes)
+    html = labeled.as_raw_html()
+    assert (
+        html.index("named-stages-stage-0") < html.index("<svg") < html.index("named-stages-card-0")
+    )
+    assert ">BROWSE<" in html and ">CHECKOUT<" in html
+    explicit_empty = Graph(
+        nodes,
+        Staged((StageSlot("a", 0, 0), StageSlot("b", 1, 0)), labels=()),
+        dom_prefix="plain-stages",
+    )
+    assert explicit_empty.measure() == plain.measure()
+    assert explicit_empty.as_raw_html() == plain.as_raw_html()
+
+
+def test_event_flow_stage_labels_pass_through_to_staged_and_render():
+    graph = EventFlow(
+        (("a", Card("A")), ("b", Card("B"))),
+        (StageSlot("a", 0, 0), StageSlot("b", 1, 0)),
+        (FlowEdge("a-b", "a", "b", "forward"),),
+        dom_prefix="flowlabels",
+        stage_labels=["Discover", "Convert"],
+    )
+    assert isinstance(graph.layout, Staged)
+    assert graph.layout.labels == ("Discover", "Convert")
+    html = graph.as_raw_html()
+    assert ">DISCOVER<" in html and ">CONVERT<" in html
+    assert html.index("flowlabels-stage-0") < html.index("<svg") < html.index("flowlabels-card-0")

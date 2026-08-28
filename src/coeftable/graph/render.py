@@ -5,6 +5,7 @@ from __future__ import annotations
 import html
 from typing import TYPE_CHECKING
 
+from coeftable.cards.chrome import line_height
 from coeftable.graph.model import _resolve_edge_styles
 from coeftable.theme import Theme
 
@@ -163,6 +164,36 @@ def _nub_markup(
     return markup, "".join(rules)
 
 
+def _stage_markup(graph: Graph, layout: _GraphLayout) -> str:
+    """Render each `Staged` header band, positioned behind wires and cards.
+
+    Every band spans its stage's measured card extent horizontally and the
+    canvas from its header down to the bottom margin vertically, so labeled
+    stages read as one continuous column behind their cards regardless of
+    per-card height differences within the stage.
+    """
+    if not layout.stage_columns:
+        return ""
+    header_height = line_height(graph.chrome.caption_size, graph.chrome) + 2 * graph.chrome.gap
+    fragments = []
+    for index, (label, left, width, header_top) in enumerate(layout.stage_columns):
+        band_height = layout.measured.height - header_top
+        fragments.append(
+            f'<div id="{graph.dom_prefix}-stage-{index}" '
+            f'style="position:absolute;box-sizing:border-box;'
+            f"left:{_number(left)}px;top:{_number(header_top)}px;"
+            f"width:{_number(width)}px;height:{_number(band_height)}px;"
+            f"border:1px solid {_esc(graph.theme.rule)};"
+            f'border-radius:{graph.chrome.radius}px;background:{_esc(graph.theme.band)}">'
+            f'<div style="box-sizing:border-box;height:{header_height}px;'
+            f"padding-top:{graph.chrome.gap}px;text-align:center;text-transform:uppercase;"
+            f"letter-spacing:0.12em;font-size:{graph.chrome.caption_size}px;"
+            f'font-weight:650;color:{_esc(graph.theme.muted)}">{_esc(label.upper())}</div>'
+            "</div>"
+        )
+    return "".join(fragments)
+
+
 def _state_style(graph: Graph, compiled: _CompiledState, nub_rules: str) -> str:
     """Serialize the compiler's rules without deriving any new selectors."""
     styles: list[str] = []
@@ -180,7 +211,8 @@ def render_graph(graph: Graph) -> str:
     layout = graph._layout
     measured = layout.measured
     compiled = graph._compiled
-    svg = _wire_svg(graph, layout, compiled) if graph.wires else ""
+    stage_markup = _stage_markup(graph, layout)
+    svg = _wire_svg(graph, layout, compiled) if (graph.wires or layout.stage_columns) else ""
     nubs, nub_rules = _nub_markup(graph, layout, compiled)
     cards_html: list[str] = []
     boxes = dict(measured.boxes)
@@ -198,7 +230,7 @@ def render_graph(graph: Graph) -> str:
     return (
         f'<div class="{graph.dom_prefix}-canvas" style="position:relative;box-sizing:border-box;'
         f'width:{measured.width}px;height:{measured.height}px;margin:0;padding:0;overflow:visible">'
-        f"{svg}{''.join(cards_html)}{style}</div>"
+        f"{stage_markup}{svg}{''.join(cards_html)}{style}</div>"
     )
 
 

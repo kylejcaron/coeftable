@@ -9,6 +9,7 @@ def staged_boxes(
     lane_gap: int,
     stage_gap: int,
     padding: int,
+    top_padding: int | None = None,
 ) -> tuple[int, int, tuple[tuple[str, tuple[int, int, int, int]], ...]]:
     """Place each `(card_id, stage, lane, width, height)` entry on a grid.
 
@@ -17,8 +18,12 @@ def staged_boxes(
     advances the canvas downward the same way, using each lane's tallest
     occupant and `lane_gap`. Every box keeps its own width and height rather
     than the shared stage/lane maximum, and boxes are returned in input
-    order.
+    order. `top_padding`, when given, replaces `padding` only as the
+    initial y cursor (and thus the final height's outer margin); x padding
+    is always `padding`, so a caller reserving vertical header space never
+    shifts stage columns horizontally.
     """
+    top = padding if top_padding is None else top_padding
     stage_widths: dict[int, int] = {}
     lane_heights: dict[int, int] = {}
     for _card_id, stage, lane, width, height in entries:
@@ -30,7 +35,7 @@ def staged_boxes(
         stage_x[stage] = cursor
         cursor += stage_widths[stage] + stage_gap
     lane_y: dict[int, int] = {}
-    cursor_y = padding
+    cursor_y = top
     for lane in range(len(lane_heights)):
         lane_y[lane] = cursor_y
         cursor_y += lane_heights[lane] + lane_gap

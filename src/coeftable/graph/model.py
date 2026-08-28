@@ -189,9 +189,10 @@ class Staged:
     """Explicit stage/lane positions; graph-level domain checks are deferred."""
 
     slots: tuple[StageSlot, ...]
+    labels: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        """Canonicalize and validate the stage/lane entries."""
+        """Canonicalize and validate the stage/lane entries and stage labels."""
         slots = _canonical(self.slots, name="Staged.slots")
         if not slots:
             raise SpecError("Staged.slots must not be empty")
@@ -199,6 +200,10 @@ class Staged:
             if not isinstance(slot, StageSlot):
                 raise SpecError(f"Staged.slots[{index}] must be a StageSlot")
         object.__setattr__(self, "slots", cast(tuple[StageSlot, ...], slots))
+        labels = _canonical(self.labels, name="Staged.labels")
+        for index, label in enumerate(labels):
+            _non_empty_str(label, name=f"Staged.labels[{index}]")
+        object.__setattr__(self, "labels", cast(tuple[str, ...], labels))
 
 
 @dataclass(frozen=True, slots=True)
@@ -552,7 +557,9 @@ def _graph_validate_layout(slots: tuple[Slot, ...], known_cards: set[str]) -> No
         raise SpecError("Graph.layout layer and slot indices must be dense from zero")
 
 
-def _graph_validate_staged(slots: tuple[StageSlot, ...], known_cards: set[str]) -> None:
+def _graph_validate_staged(
+    slots: tuple[StageSlot, ...], known_cards: set[str], labels: tuple[str, ...]
+) -> None:
     """Validate that staged slots cover nodes with dense, non-overlapping coordinates."""
     card_ids = tuple(slot.card_id for slot in slots)
     if len(set(card_ids)) != len(card_ids) or set(card_ids) != known_cards:
@@ -564,6 +571,8 @@ def _graph_validate_staged(slots: tuple[StageSlot, ...], known_cards: set[str]) 
     lanes = {slot.lane for slot in slots}
     if stages != set(range(len(stages))) or lanes != set(range(len(lanes))):
         raise SpecError("Graph.layout stage and lane indices must be dense from zero")
+    if labels and len(labels) != len(stages):
+        raise SpecError("Staged.labels must provide exactly one label per stage")
 
 
 def _graph_wires(
@@ -858,6 +867,8 @@ type GraphAnchors = tuple[tuple[str, tuple[AnchorOffset, AnchorOffset]], ...]
 type WirePath = str
 type WireGeometry = tuple[WirePath, AnchorOffset]
 type GraphWireGeometry = tuple[tuple[str, WireGeometry], ...]
+# (label, left, width, header_top) for one measured `Staged` header band.
+type StageColumn = tuple[str, float, float, float]
 
 
 @dataclass(frozen=True, slots=True)
@@ -870,6 +881,7 @@ class _GraphLayout:
     label_band_depths: tuple[tuple[int, int], ...] = ()
     nub_anchors: tuple[tuple[str, tuple[float, float, str]], ...] = ()
     flow_pills: tuple[tuple[str, tuple[float, float, float, float]], ...] = ()
+    stage_columns: tuple[StageColumn, ...] = ()
 
 
 def _graph_layout_offsets(sizes: tuple[int, ...], gap: int) -> tuple[int, ...]:
@@ -1148,6 +1160,24 @@ def _stage_extents(
         left, right = extents.get(stage, (x, x + width))
         extents[stage] = (min(left, x), max(right, x + width))
     return extents
+
+
+def _stage_columns(
+    boxes: tuple[tuple[str, Box], ...],
+    slot_by_id: Mapping[str, StageSlot],
+    labels: tuple[str, ...],
+    header_top: float,
+) -> tuple[StageColumn, ...]:
+    """Derive each stage's measured header band from its final card boxes.
+
+    Stage indices are guaranteed dense from zero and `labels` one-per-stage
+    by `_graph_validate_staged`, so `labels[stage]` always resolves.
+    """
+    extents = _stage_extents(dict(boxes), slot_by_id)
+    return tuple(
+        (labels[stage], extents[stage][0], extents[stage][1] - extents[stage][0], header_top)
+        for stage in range(len(labels))
+    )
 
 
 def _stage_vertical_extents(
@@ -1625,6 +1655,7 @@ def _graph_measure_staged(
     chrome: CardChrome,
     theme: Theme,
     edge_styles: tuple[tuple[EdgeKind, EdgeStyle], ...],
+    labels: tuple[str, ...] = (),
 ) -> _GraphLayout:
     """Measure rebound cards, resolve staged boxes, and route flow wires.
 
@@ -1633,6 +1664,11 @@ def _graph_measure_staged(
     enough horizontal room for an interior column's nub, but the last stage
     has no following column to absorb it, so its collapsible cards' own
     actual box widths grow the canvas instead.
+
+    When `labels` is non-empty, every stage reserves a fixed top header band
+    (`stage_header_height`) above its cards; `staged_boxes` sees this as a
+    pure top-padding override, so unlabeled staged graphs take the exact
+    same call path and produce byte-identical geometry.
     """
     measured = {card_id: card.measure() for card_id, card in nodes}
     slot_by_id = {slot.card_id: slot for slot in slots}
@@ -1646,9 +1682,19 @@ def _graph_measure_staged(
         )
         for card_id, _ in nodes
     )
-    width, height, boxes = staged_boxes(
-        entries, lane_gap=lane_gap, stage_gap=stage_gap, padding=padding
-    )
+    if labels:
+        stage_header_height = line_height(chrome.caption_size, chrome) + 2 * chrome.gap
+        width, height, boxes = staged_boxes(
+            entries,
+            lane_gap=lane_gap,
+            stage_gap=stage_gap,
+            padding=padding,
+            top_padding=padding + stage_header_height,
+        )
+    else:
+        width, height, boxes = staged_boxes(
+            entries, lane_gap=lane_gap, stage_gap=stage_gap, padding=padding
+        )
     anchors = tuple(
         (
             card_id,
@@ -1667,8 +1713,13 @@ def _graph_measure_staged(
             for card_id, (x, y, box_width, box_height) in boxes
             if card_id in collapsible
         )
+        stage_columns = _stage_columns(boxes, slot_by_id, labels, float(padding)) if labels else ()
         return _GraphLayout(
-            MeasuredGraph(width, height, boxes), anchors, (), nub_anchors=nub_anchors
+            MeasuredGraph(width, height, boxes),
+            anchors,
+            (),
+            nub_anchors=nub_anchors,
+            stage_columns=stage_columns,
         )
 
     styles = _resolve_edge_styles(theme, edge_styles)
@@ -1727,12 +1778,16 @@ def _graph_measure_staged(
         if card_id in collapsible
     )
     flow_pills = tuple((wire.id, pills[wire.id]) for wire in wires if wire.id in pills)
+    stage_columns = (
+        _stage_columns(boxes, slot_by_id, labels, float(padding + shift_y)) if labels else ()
+    )
     return _GraphLayout(
         MeasuredGraph(width, height, boxes),
         anchors,
         wire_geometry,
         nub_anchors=nub_anchors,
         flow_pills=flow_pills,
+        stage_columns=stage_columns,
     )
 
 
@@ -1774,7 +1829,7 @@ class Graph:
                     "Graph.layer_gap must be at least 18 when staged collapsible cards are present"
                 )
             staged_slots = self.layout.slots
-            _graph_validate_staged(staged_slots, known_cards)
+            _graph_validate_staged(staged_slots, known_cards, self.layout.labels)
             slots: tuple[Slot, ...] = ()
         else:
             staged_slots = ()
@@ -1877,6 +1932,7 @@ class Graph:
                 chrome=self.chrome,
                 theme=self.theme,
                 edge_styles=edge_styles,
+                labels=self.layout.labels,
             )
         else:
             layout = _graph_measure(

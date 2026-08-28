@@ -28,6 +28,7 @@ from coeftable.graph import (
     StateRule,
     Wire,
 )
+from coeftable.graph.model import _stage_columns
 from coeftable.graph.state import _CompiledState
 from coeftable.graph.topology import blocker_families, check_acyclic, is_acyclic
 from coeftable.theme import DEFAULT, Direction
@@ -128,6 +129,14 @@ from coeftable.theme import DEFAULT, Direction
         (lambda: StageSlot("card", 0, -1), "StageSlot.lane must be a non-negative int"),
         (lambda: Staged(()), "Staged.slots must not be empty"),
         (lambda: Staged((cast(StageSlot, 7),)), "Staged.slots[0] must be a StageSlot"),
+        (
+            lambda: Staged((StageSlot("card", 0, 0),), labels=(cast(str, 7),)),
+            "Staged.labels[0] must be a non-empty str",
+        ),
+        (
+            lambda: Staged((StageSlot("card", 0, 0),), labels=("",)),
+            "Staged.labels[0] must be a non-empty str",
+        ),
         (lambda: Wire("", "a", "b"), "Wire.id must be a non-empty str"),
         (lambda: Wire("w", "", "b"), "Wire.src must be a non-empty str"),
         (lambda: Wire("w", "a", ""), "Wire.dst must be a non-empty str"),
@@ -220,6 +229,68 @@ def test_valid_leaf_values_and_optional_wire_labels():
     assert Wire("w", "a", "b")
     assert Wire("w", "a", "b", label="estimate", label_role="favorable")
     assert Wire("w", "a", "b", label="estimate", label_color="#abc")
+
+
+def test_stage_columns_helper_derives_extents_and_pairs_labels_in_stage_order():
+    boxes = (
+        ("a", (10, 5, 50, 20)),
+        ("wide", (10, 40, 90, 20)),
+        ("b", (150, 5, 60, 20)),
+    )
+    slot_by_id = {
+        "a": StageSlot("a", 0, 0),
+        "wide": StageSlot("wide", 0, 1),
+        "b": StageSlot("b", 1, 0),
+    }
+    columns = _stage_columns(boxes, slot_by_id, ("Intake", "Resolve"), 3.0)
+    assert columns == (
+        ("Intake", 10.0, 90.0, 3.0),
+        ("Resolve", 150.0, 60.0, 3.0),
+    )
+
+
+def test_staged_graph_caches_stage_columns_matching_measured_extents():
+    nodes = (
+        ("a", Card("A", width=100)),
+        ("wide", Card("Wide", width=160)),
+        ("b", Card("B", width=120)),
+    )
+    slots = (StageSlot("a", 0, 0), StageSlot("wide", 0, 1), StageSlot("b", 1, 0))
+    graph = Graph(nodes, Staged(slots, labels=("Intake", "Resolve")), dom_prefix="cols")
+    columns = graph._layout.stage_columns
+    boxes = dict(graph.measure().boxes)
+    label0, left0, width0, header_top0 = columns[0]
+    label1, left1, width1, header_top1 = columns[1]
+    assert (label0, label1) == ("Intake", "Resolve")
+    assert left0 == min(boxes["a"][0], boxes["wide"][0])
+    stage0_right = max(boxes["a"][0] + boxes["a"][2], boxes["wide"][0] + boxes["wide"][2])
+    assert width0 == stage0_right - left0
+    assert left1 == boxes["b"][0]
+    assert width1 == boxes["b"][2]
+    assert header_top0 == header_top1 == graph.chrome.padding
+
+
+def test_staged_labeled_flow_renders_bands_matching_cached_stage_columns():
+    nodes = (("a", Card("A")), ("b", Card("B")))
+    graph = Graph(
+        nodes,
+        Staged((StageSlot("a", 0, 0), StageSlot("b", 1, 0)), labels=("Intake", "Resolve")),
+        wires=(Wire("a-b", "a", "b", kind="forward"),),
+        dom_prefix="bandcheck",
+    )
+    columns = graph._layout.stage_columns
+    measured = graph.measure()
+    html = graph.as_raw_html()
+    for index, (label, left, width, header_top) in enumerate(columns):
+        div_id = f"bandcheck-stage-{index}"
+        start = html.index(f'id="{div_id}"')
+        style = html[start : html.index(">", start)]
+        band_height = measured.height - header_top
+        assert f"left:{left:g}px" in style
+        assert f"top:{header_top:g}px" in style
+        assert f"width:{width:g}px" in style
+        assert f"height:{band_height:g}px" in style
+        assert f">{label.upper()}<" in html
 
 
 def test_every_leaf_is_frozen_slotted_and_without_dict():
