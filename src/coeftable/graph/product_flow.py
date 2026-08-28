@@ -159,8 +159,7 @@ class ProductStep:
         if self.kind == "decision":
             if series:
                 raise SpecError("ProductStep decision requires empty series")
-            if not self.note:
-                raise SpecError("ProductStep decision note must be a non-empty str")
+            _non_empty_str(self.note, name="ProductStep decision note")
             if self.share_of is not None:
                 raise SpecError("ProductStep decision must not set share_of")
             if self.muted:
@@ -235,6 +234,7 @@ def _series_content(
             y=series,
             x_domain=(0.0, float(len(series) - 1)),
             domain=_trend_domain(series),
+            fmt=value_fmt,
             direction=step.direction,
             role=role,
             show_axis=False,

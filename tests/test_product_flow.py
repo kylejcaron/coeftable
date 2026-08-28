@@ -50,6 +50,7 @@ def step(**changes: object) -> ProductStep:
         ({"series": (0.0, 1.0)}, "strictly positive"),
         ({"series": (1.0, -1.0)}, "nonnegative"),
         ({"kind": "decision", "series": (), "note": None}, "decision note"),
+        ({"kind": "decision", "series": (), "note": 1}, "decision note"),
         ({"kind": "decision", "series": (1.0, 2.0), "note": "branch"}, "empty series"),
     ],
 )
@@ -257,16 +258,16 @@ def test_product_flow_default_graph_and_legend_distinguish_skip_from_back():
     assert entries["skip"] != entries["loop / back"]
 
 
-def test_product_flow_caller_back_style_override_wins_in_graph_and_legend():
-    styles = {"back": EdgeStyle("#123456", dash=())}
-    report = _funnel_report(styles=styles)
+def test_product_flow_caller_style_keeps_width_and_dash_period_edge_only():
+    style = EdgeStyle("#123456", width=4.0, dash=(7.0, 5.0))
+    report = _funnel_report(styles={"back": style})
     graph_styles = dict(report.graph.edge_styles)
-    assert graph_styles["back"] == styles["back"]
+    assert graph_styles["back"] == style
 
     legend = report.header[1]
     assert isinstance(legend, RuleStrip)
     entries = dict((label, (color, dash)) for label, color, dash in legend.entries)
-    assert entries["loop / back"] == ("#123456", "solid")
+    assert entries["loop / back"] == ("#123456", "dashed")
 
 
 def test_product_flow_collapsible_inference_ignores_paint_only_back_edges():
@@ -405,12 +406,16 @@ def test_default_formatters_are_compact_number_and_signed_percent():
     assert badge.text == Percent(signed=True, decimals=1)(-20.0)
 
 
-def test_custom_formatters_are_applied_to_metric_badge_and_diagnostics():
+def test_custom_formatters_are_applied_to_metric_trend_badge_and_diagnostics():
     value_fmt = Number(decimals=0, prefix="$")
     change_fmt = Percent(decimals=0)
     report = _funnel_report(value_fmt=value_fmt, change_fmt=change_fmt)
-    metric, badge, _trend, diagnostics = _series_content(_card(report, "viewed"))
+    card = _card(report, "viewed")
+    metric, badge, trend, diagnostics = _series_content(card)
     assert metric.fmt is value_fmt
+    assert trend.fmt is value_fmt
+    (spark,) = trend.resolve(width=220, theme=report.graph.theme, chrome=card.chrome)
+    assert f">{value_fmt(1200.0)}<" in spark.svg
     assert badge.text == change_fmt(20.0)
     assert diagnostics.items[0] == ("Now", value_fmt(1200.0))
 
