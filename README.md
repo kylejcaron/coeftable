@@ -457,17 +457,16 @@ shaded intervals via each function's `annotations=` parameter. Because a
 standalone plot and a table column share one `Theme`, a report that mixes
 both stays visually consistent.
 
-## Metric cards (experimental)
+## Metric cards
 
 `coeftable.cards` composes the standalone plots into measured, foldable
 metric cards — the same formatters, themes, and SVG primitives as the
-tables. The API is experimental and may change; it is deliberately not
-exported from the top-level `coeftable` namespace yet.
+tables. Metric cards are provided under the stable `coeftable.cards`
+namespace rather than the top-level `coeftable` namespace.
 
 ```python
 import coeftable as ct
-from coeftable.cards import Card, CardGrid
-from coeftable.cards.regions import Diagnostics, Event, Events, Metric, Trend
+from coeftable.cards import Card, CardGrid, Diagnostics, Event, Events, Metric, Trend
 
 events = Events([Event("launch", "#4C72B0", at=2.0)])
 revenue = Card(
@@ -496,12 +495,12 @@ and is omitted otherwise). A standalone card collapses to
 its header; inside a `CardGrid` each card's expanded footprint stays
 reserved, so folding never reflows neighbors.
 
-## Metric panels (experimental)
+## Metric panels
 
 `coeftable.cards` panels put named side-by-side panes in one bordered shell
-with a shared header and footer: the compositional step above cards. The API
-is experimental and may change; it is deliberately not exported from the
-top-level `coeftable` namespace yet.
+with a shared header and footer: the compositional step above cards. Metric
+panels are provided under the stable `coeftable.cards` namespace rather than
+the top-level `coeftable` namespace.
 
 ```python
 import coeftable as ct
@@ -585,6 +584,42 @@ CSS and no JavaScript.
 
 A `MetricTree` left as the last notebook expression renders itself via
 `_repr_html_`; `with_theme()` follows the same conventions as cards.
+
+## Causal graphs (experimental)
+
+`coeftable.graph.CausalGraph` is a thin builder over the same `Graph` kernel
+as `MetricTree`: it takes cards the caller has already prepared, wires them
+into a DAG, and derives a deterministic layered layout instead of a
+caller-specified `Slotted` one. Every node that is a wire source is
+collapsible. The API is experimental and may change; it is deliberately not
+exported from the top-level `coeftable` namespace yet.
+
+```python
+from coeftable.cards import Card
+from coeftable.graph import CausalGraph, Wire
+
+causal = CausalGraph(
+    nodes=(
+        ("treatment", Card("Treatment")),
+        ("mediator", Card("Mediator")),
+        ("outcome", Card("Outcome")),
+    ),
+    wires=(
+        Wire("t-m", "treatment", "mediator"),
+        Wire("m-y", "mediator", "outcome"),
+        Wire("t-y", "treatment", "outcome"),
+    ),
+    dom_prefix="causal-example",
+)
+causal
+```
+
+`CausalGraph` does not build cards itself; the caller prepares each `Card`
+before wiring it in. Layout is deterministic: nodes are placed by longest
+path from any root, so `treatment`, `mediator`, and `outcome` land on their
+own layers and the direct `treatment -> outcome` wire spans two layers
+alongside the mediated path. Like `MetricTree`, the graph API remains
+experimental.
 
 ## Driver-tree reports (experimental)
 
@@ -741,6 +776,59 @@ measured, exact-width timeline strip whenever events or a `strip_title` call
 for one. `report.measure()`,
 `report.as_raw_html()`, and its `_repr_html_` notebook display all work the
 same way they do for a plain `Graph`.
+
+## Staged event flows (experimental)
+
+`coeftable.graph.EventFlow` lays out prepared cards in explicit stages and
+lanes. `StageSlot` coordinates are dense from zero, so placement is
+deterministic from left to right and lanes read from top to bottom. The graph
+namespace remains experimental and is deliberately not exported from the
+top-level `coeftable` namespace yet.
+
+```python
+from coeftable.cards import Card
+from coeftable.graph import EdgeStyle, EventFlow, FlowEdge, StageSlot
+
+cards = (
+    ("received", Card("Received")),
+    ("reviewed", Card("Reviewed")),
+    ("settled", Card("Settled")),
+)
+placements = (
+    StageSlot("received", stage=0, lane=0),
+    StageSlot("reviewed", stage=1, lane=0),
+    StageSlot("settled", stage=2, lane=0),
+)
+edges = (
+    FlowEdge("continue", "received", "reviewed", "forward", label="continue"),
+    FlowEdge("fast-track", "received", "settled", "skip", label="fast-track"),
+    FlowEdge("retry", "settled", "reviewed", "back", label="retry"),
+)
+
+flow = EventFlow(
+    cards,
+    placements,
+    edges,
+    collapsible=("received",),
+    styles={
+        "forward": EdgeStyle("#2F6B4F", width=2),
+        "skip": EdgeStyle("#315A8A", width=2, dash=(6, 3)),
+        "back": EdgeStyle("#8A4B3A", width=2, dash=(2, 3)),
+    },
+    dom_prefix="release-flow",
+)
+html = flow.as_raw_html()
+```
+
+Forward edges advance one stage and skip edges cross two or more; together
+they define downstream visibility. Back edges return to the same or an earlier
+stage but are paint-only: they never change which cards are visible. A card
+listed in `collapsible` gets a right-edge fold nub that hides downstream
+cards, every wire touching them, and every wire leaving the folded card, back
+edges included. Per-kind `EdgeStyle` values override the default stroke,
+width, and dash. Omitting `stage_gap`, as
+above, derives a safe gap for labels, routes, and fold nubs, never narrower
+than 108px. Rendering and folding use HTML and CSS with zero JavaScript.
 
 ## Plot annotations
 

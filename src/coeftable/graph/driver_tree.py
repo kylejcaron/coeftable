@@ -48,6 +48,7 @@ from coeftable.cards import (
 from coeftable.cards.measure import _budget, text_line_plan
 from coeftable.errors import SpecError
 from coeftable.format import Format, Number
+from coeftable.graph._layered import layered_positions
 from coeftable.graph.breakout import (
     Breakout,
     Op,
@@ -67,7 +68,7 @@ from coeftable.graph.honesty import (
     ribbon_domain,
     tradeoff_pairs,
 )
-from coeftable.graph.metric_tree import _label, _layers, _slots
+from coeftable.graph.metric_tree import _label
 from coeftable.graph.model import Graph, Slot, Slotted, StateRule, Wire
 from coeftable.graph.report import GraphReport
 from coeftable.graph.timeline import (
@@ -806,8 +807,8 @@ def _check_layout_acyclic(
     Collapsing a non-default alternative onto its default sibling (`rep`)
     can introduce a cycle the raw edges never had -- an alternative that
     decomposes into its own sibling's representative collapses to a
-    self-edge. `_layers` recurses with no cycle guard of its own, so this
-    must run before it does.
+    self-edge. `layered_positions` would reject that too, but only with a
+    generic message; naming the cyclic nodes here requires running first.
     """
     pairs = tuple((src, dst) for src, dst, _ in canonical_edges)
     if is_acyclic(canonical_ids, pairs):
@@ -822,7 +823,7 @@ def _check_layout_acyclic(
 def _compute_layout(
     topology: _Topology, rep: dict[str, str], residuals: dict[tuple[str, str], _Residual]
 ) -> tuple[Slot, ...]:
-    """Reuse MetricTree's own layered barycenter helpers on the collapsed tree.
+    """Reuse the shared layered-position helper (also used by MetricTree) on the collapsed tree.
 
     Only the *default* alternative's children ever get a real position;
     every other alternative resolves through `rep` to it, so alternatives
@@ -852,9 +853,12 @@ def _compute_layout(
                 canonical_edges.append((rp, resid.id, None))
 
     _check_layout_acyclic(tuple(canonical_ids), canonical_edges)
-    canonical_layers = _layers(tuple(canonical_ids), tuple(canonical_edges))
-    canonical_slots = _slots(tuple(canonical_ids), tuple(canonical_edges), canonical_layers)
-    canonical_position = {slot.card_id: slot for slot in canonical_slots}
+    positions = layered_positions(
+        tuple(canonical_ids), tuple((src, dst) for src, dst, _ in canonical_edges)
+    )
+    canonical_position = {
+        card_id: Slot(card_id, layer, slot) for card_id, layer, slot in positions
+    }
 
     return tuple(
         Slot(
@@ -1164,9 +1168,9 @@ def DriverTree(
         topology = _build_topology(breakout_map)
     edges = _raw_edges(topology)
 
-    # Cheapest possible failure first: the layered-barycenter layout below
-    # walks parent chains recursively and never terminates on a cycle, so
-    # this must run before any statistics or layout work touches `edges`.
+    # Keep this check ahead of switcher and statistical validation so a cyclic
+    # raw topology reports its direct diagnostic first. `layered_positions`
+    # also checks acyclicity later, once the layout edges have been collapsed.
     check_acyclic(topology.node_order, edges)
 
     # `reject_switcher_conjunctions` runs before any honesty arithmetic, so

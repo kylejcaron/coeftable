@@ -1,8 +1,4 @@
-"""Experimental card layer. Not part of the public coeftable API yet.
-
-The adornment vocabulary is the closed content contract card regions
-resolve into; `render_adornment` is its only serializer.
-"""
+"""Stable, exactly measured card and panel composition under ``coeftable.cards``."""
 
 from coeftable.cards.adornments import (
     Adornment,

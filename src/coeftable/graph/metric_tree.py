@@ -9,8 +9,8 @@ from typing import cast
 from coeftable.cards import DEFAULT_CHROME, Card, CardChrome
 from coeftable.errors import SpecError
 from coeftable.format import Format
+from coeftable.graph._layered import layered_positions
 from coeftable.graph.model import Graph, Slot, Slotted, Wire
-from coeftable.graph.topology import check_acyclic
 from coeftable.theme import DEFAULT, Direction, Theme, role_for
 
 _DIRECTIONS: tuple[Direction, ...] = ("higher_is_better", "lower_is_better", "neutral")
@@ -85,30 +85,6 @@ def _edges(value: object, *, node_ids: set[str]) -> tuple[tuple[str, str, float 
     return tuple(result)
 
 
-def _layers(
-    node_ids: tuple[str, ...], edges: tuple[tuple[str, str, float | None], ...]
-) -> dict[str, int]:
-    """Compute longest root paths in a validated acyclic topology."""
-    parents: dict[str, list[str]] = {node_id: [] for node_id in node_ids}
-    for parent, child, _ in edges:
-        parents[child].append(parent)
-
-    layer: dict[str, int] = {}
-
-    def depth(node_id: str) -> int:
-        if node_id not in layer:
-            layer[node_id] = (
-                0
-                if not parents[node_id]
-                else 1 + max(depth(parent) for parent in parents[node_id])
-            )
-        return layer[node_id]
-
-    for node_id in node_ids:
-        depth(node_id)
-    return layer
-
-
 def _label(fmt: Format, contribution: float) -> str:
     """Format a contribution, making positive signs explicit."""
     text = fmt(contribution)
@@ -117,66 +93,6 @@ def _label(fmt: Format, contribution: float) -> str:
     if contribution > 0 and not text.startswith("+"):
         text = f"+{text}"
     return text
-
-
-def _slots(
-    node_ids: tuple[str, ...],
-    edges: tuple[tuple[str, str, float | None], ...],
-    layers: dict[str, int],
-) -> tuple[Slot, ...]:
-    """Assign dense slots by walking layer barycenters bottom-up.
-
-    Childless cards use their rank within the current layer, translated by
-    the integer slot of that layer's leftmost child-bearing region and
-    anchored at its first child-bearing card.  This keeps independent cards
-    deterministic without letting their global declaration index distort the
-    layer's ordering.
-    """
-    first_appearance = {node_id: index for index, node_id in enumerate(node_ids)}
-    layer_nodes: dict[int, list[str]] = {}
-    for node_id in node_ids:
-        layer_nodes.setdefault(layers[node_id], []).append(node_id)
-    children: dict[str, list[str]] = {node_id: [] for node_id in node_ids}
-    for parent, child, _ in edges:
-        children[parent].append(child)
-
-    slot_by_id: dict[str, int] = {}
-    deepest = max(layer_nodes)
-    for slot, node_id in enumerate(layer_nodes[deepest]):
-        slot_by_id[node_id] = slot
-    max_used = len(layer_nodes[deepest]) - 1
-    for layer in range(deepest - 1, -1, -1):
-        current = layer_nodes[layer]
-        within_layer_rank = {node_id: index for index, node_id in enumerate(current)}
-        childful = [node_id for node_id in current if children[node_id]]
-        childful_barycenters = {
-            node_id: sum(slot_by_id[child] for child in children[node_id]) / len(children[node_id])
-            for node_id in childful
-        }
-        leftmost_region = math.floor(min(childful_barycenters.values(), default=0.0))
-        childful_rank = min((within_layer_rank[node_id] for node_id in childful), default=0)
-
-        barycenters = {
-            node_id: childful_barycenters.get(
-                node_id, leftmost_region + within_layer_rank[node_id] - childful_rank
-            )
-            for node_id in current
-        }
-        ordered = [
-            node_id
-            for _, _, node_id in sorted(
-                (barycenters[node_id], first_appearance[node_id], node_id) for node_id in current
-            )
-        ]
-        # A wider layer expands the dense slot corridor before clamping.
-        max_used = max(max_used, len(ordered) - 1)
-        for index, node_id in enumerate(ordered):
-            barycenter = barycenters[node_id]
-            lower = (slot_by_id[ordered[index - 1]] + 1) if index else 0
-            upper = max(max_used, lower)
-            slot_by_id[node_id] = max(lower, min(round(barycenter), upper))
-        max_used = max(max_used, slot_by_id[ordered[-1]])
-    return tuple(Slot(node_id, layers[node_id], slot_by_id[node_id]) for node_id in node_ids)
 
 
 def MetricTree(
@@ -208,9 +124,10 @@ def MetricTree(
     node_entries = _nodes(nodes)
     node_ids = tuple(node_id for node_id, _ in node_entries)
     edge_entries = _edges(edges, node_ids=set(node_ids))
-    check_acyclic(node_ids, tuple((parent, child) for parent, child, _ in edge_entries))
-    layers = _layers(node_ids, edge_entries)
-    slots = _slots(node_ids, edge_entries, layers)
+    positions = layered_positions(
+        node_ids, tuple((parent, child) for parent, child, _ in edge_entries)
+    )
+    slots = tuple(Slot(card_id, layer, slot) for card_id, layer, slot in positions)
 
     wires = tuple(
         Wire(

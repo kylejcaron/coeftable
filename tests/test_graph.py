@@ -18,10 +18,13 @@ from coeftable.graph import (
     Atom,
     ControlRef,
     Graph,
+    LayeredDag,
     MeasuredGraph,
     MetricTree,
     Slot,
     Slotted,
+    Staged,
+    StageSlot,
     StateRule,
     Wire,
 )
@@ -110,6 +113,21 @@ from coeftable.theme import DEFAULT, Direction
         (lambda: Slot("card", 0, -1), "Slot.slot must be a non-negative int"),
         (lambda: Slotted(()), "Slotted.slots must not be empty"),
         (lambda: Slotted((cast(Slot, 7),)), "Slotted.slots[0] must be a Slot"),
+        (lambda: StageSlot("", 0, 0), "StageSlot.card_id must be a non-empty str"),
+        (
+            lambda: StageSlot("card", cast(int, 1.5), 0),
+            "StageSlot.stage must be a non-negative int",
+        ),
+        (lambda: StageSlot("card", True, 0), "StageSlot.stage must be a non-negative int"),
+        (lambda: StageSlot("card", -1, 0), "StageSlot.stage must be a non-negative int"),
+        (
+            lambda: StageSlot("card", 0, cast(int, 1.5)),
+            "StageSlot.lane must be a non-negative int",
+        ),
+        (lambda: StageSlot("card", 0, True), "StageSlot.lane must be a non-negative int"),
+        (lambda: StageSlot("card", 0, -1), "StageSlot.lane must be a non-negative int"),
+        (lambda: Staged(()), "Staged.slots must not be empty"),
+        (lambda: Staged((cast(StageSlot, 7),)), "Staged.slots[0] must be a StageSlot"),
         (lambda: Wire("", "a", "b"), "Wire.id must be a non-empty str"),
         (lambda: Wire("w", "", "b"), "Wire.src must be a non-empty str"),
         (lambda: Wire("w", "a", ""), "Wire.dst must be a non-empty str"),
@@ -197,6 +215,8 @@ def test_valid_leaf_values_and_optional_wire_labels():
     assert Atom(ControlRef("card", key="mode"), "option_checked", option="compact")
     assert Atom(ControlRef("card", key="mode"), "option_checked", option="")
     assert StateRule((Atom(ControlRef("card"), "checked"),), hide_cards=("other",))
+    assert StageSlot("card", 0, 0)
+    assert Staged((StageSlot("card", 0, 0),))
     assert Wire("w", "a", "b")
     assert Wire("w", "a", "b", label="estimate", label_role="favorable")
     assert Wire("w", "a", "b", label="estimate", label_color="#abc")
@@ -209,6 +229,8 @@ def test_every_leaf_is_frozen_slotted_and_without_dict():
         StateRule((Atom(ControlRef("card"), "checked"),), hide_cards=("other",)),
         Slot("card", 0, 0),
         Slotted((Slot("card", 0, 0),)),
+        StageSlot("card", 0, 0),
+        Staged((StageSlot("card", 0, 0),)),
         Wire("wire", "card", "other"),
     ]
     for value in values:
@@ -224,20 +246,28 @@ def test_graph_export_surface_is_exact_and_top_level_excludes_graph():
     expected = {
         "Atom",
         "Breakout",
+        "CausalGraph",
         "ControlRef",
         "DriverTree",
+        "EdgeKind",
+        "EdgeStyle",
+        "EventFlow",
+        "FlowEdge",
         "Graph",
         "GraphReport",
+        "LayeredDag",
         "MeasuredGraph",
         "MeasuredReport",
         "MetricTree",
         "Slot",
         "Slotted",
+        "Staged",
+        "StageSlot",
         "StateRule",
         "TimelineEvent",
         "Wire",
     }
-    assert len(coeftable.graph.__all__) == 14
+    assert len(coeftable.graph.__all__) == 22
     assert set(coeftable.graph.__all__) == expected
     for name in expected:
         assert hasattr(coeftable.graph, name)
@@ -524,6 +554,12 @@ def _plain_graph(
 ) -> Graph:
     """Build a small graph for validation tests."""
     return Graph(nodes=nodes, layout=Slotted(slots), **kwargs)  # ty: ignore[invalid-argument-type]
+
+
+def _slotted(layout: Slotted | LayeredDag | Staged) -> Slotted:
+    """Narrow a graph's resolved layout to `Slotted` for direct `.slots` access."""
+    assert isinstance(layout, Slotted)
+    return layout
 
 
 def test_blocker_families_cover_diamonds_depth_and_uncuttable_paths():
@@ -893,7 +929,7 @@ def test_graph_accepts_injected_rule_without_collapsible_ancestry():
 @pytest.mark.parametrize(
     ("kwargs", "message"),
     [
-        ({"layout": cast(Slotted, 7)}, "Graph.layout must be a Slotted"),
+        ({"layout": cast(Slotted, 7)}, "Graph.layout must be a Slotted, LayeredDag, or Staged"),
         ({"theme": cast(object, 7)}, "Graph.theme must be a Theme"),
         ({"chrome": cast(object, 7)}, "Graph.chrome must be a CardChrome"),
     ],
@@ -913,6 +949,49 @@ def test_graph_rejects_invalid_object_types(kwargs, message):
 def test_visibility_topology_rejects_cycles():
     with pytest.raises(SpecError, match=r"^visibility topology must be acyclic$"):
         check_acyclic(("root", "child"), (("root", "child"), ("child", "root")))
+
+
+def test_layered_dag_matches_equivalent_slotted_layout():
+    nodes = tuple((node_id, Card(node_id)) for node_id in ("root", "b", "a", "leaf"))
+    wires = (
+        Wire("root-a", "root", "a"),
+        Wire("root-b", "root", "b"),
+        Wire("a-leaf", "a", "leaf"),
+        Wire("b-leaf", "b", "leaf"),
+    )
+    expected = Graph(
+        nodes,
+        Slotted(
+            (
+                Slot("root", 0, 0),
+                Slot("b", 1, 0),
+                Slot("a", 1, 1),
+                Slot("leaf", 2, 0),
+            )
+        ),
+        wires=wires,
+        dom_prefix="layered-parity",
+    )
+    actual = Graph(nodes, LayeredDag(), wires=wires, dom_prefix="layered-parity")
+    assert actual.measure() == expected.measure()
+    assert actual.as_raw_html() == expected.as_raw_html()
+
+
+def test_layered_dag_rejects_a_cycle_before_recursive_layout():
+    nodes = (("a", Card("A")), ("b", Card("B")))
+    with pytest.raises(SpecError, match="acyclic"):
+        Graph(
+            nodes,
+            LayeredDag(),
+            wires=(Wire("a-b", "a", "b"), Wire("b-a", "b", "a")),
+        )
+
+
+def test_graph_rejects_an_unknown_layout_value():
+    with pytest.raises(
+        SpecError, match=re.escape("Graph.layout must be a Slotted, LayeredDag, or Staged")
+    ):
+        Graph((("a", Card("A")),), object())  # ty: ignore[invalid-argument-type]
 
 
 def test_graph_rethemes_cards_atomically_and_rejects_chrome_mismatch():
@@ -1505,6 +1584,7 @@ def test_graph_compiles_diamond_state_to_exact_record():
     assert graph._compiled == _CompiledState(
         card_dom_ids=("g-card-0", "g-card-1", "g-card-2", "g-card-3"),
         wire_dom_ids=("g-edge-0", "g-edge-1", "g-edge-2", "g-edge-3"),
+        pill_dom_ids={},
         nub_dom_ids={"a": "g-nub-1", "b": "g-nub-2"},
         control_dom_ids={},
         rules=(
@@ -1736,6 +1816,7 @@ def test_graph_state_is_empty_and_byte_deterministic():
     assert first._compiled == _CompiledState(
         card_dom_ids=("x-card-0", "x-card-1", "x-card-2", "x-card-3"),
         wire_dom_ids=("x-edge-0", "x-edge-1", "x-edge-2", "x-edge-3"),
+        pill_dom_ids={},
         nub_dom_ids={},
         control_dom_ids={},
         rules=(),
@@ -2458,7 +2539,8 @@ def test_metric_tree_slots_clamp_parents_and_keep_orphans_rightward():
         tuple((node_id, Card(node_id)) for node_id in ("parent", "c0", "c1", "c2")),
         (("parent", "c0", 1.0), ("parent", "c1", 1.0), ("parent", "c2", 1.0)),
     )
-    assert dict((slot.card_id, slot.slot) for slot in centered.layout.slots)["parent"] == 1
+    centered_slots = dict((slot.card_id, slot.slot) for slot in _slotted(centered.layout).slots)
+    assert centered_slots["parent"] == 1
 
     nodes = tuple(
         (node_id, Card(node_id)) for node_id in ("parent", *(f"c{i}" for i in range(10)), "orphan")
@@ -2467,7 +2549,7 @@ def test_metric_tree_slots_clamp_parents_and_keep_orphans_rightward():
         nodes,
         tuple(("parent", f"c{i}", 1.0) for i in range(10)),
     )
-    slots = {slot.card_id: slot.slot for slot in graph.layout.slots}
+    slots = {slot.card_id: slot.slot for slot in _slotted(graph.layout).slots}
     assert 4 <= slots["parent"] <= 5
     assert slots["orphan"] > slots["parent"]
 
@@ -2480,7 +2562,7 @@ def test_metric_tree_orphans_flow_around_parent_barycenter():
         nodes,
         (("parent", "c0", 1.0), ("parent", "c1", 1.0), ("parent", "c2", 1.0)),
     )
-    slots = {slot.card_id: slot.slot for slot in graph.layout.slots}
+    slots = {slot.card_id: slot.slot for slot in _slotted(graph.layout).slots}
     assert slots["parent"] == 1
     assert slots["orphan1"] == 2
     assert slots["orphan2"] == 3
@@ -2491,7 +2573,7 @@ def test_metric_tree_childless_rank_is_within_layer_not_global():
         tuple((node_id, Card(node_id)) for node_id in ("child", "orphan", "parent")),
         (("parent", "child", 1.0),),
     )
-    assert graph.layout.slots == (
+    assert _slotted(graph.layout).slots == (
         Slot("child", 1, 0),
         Slot("orphan", 0, 0),
         Slot("parent", 0, 1),
@@ -2527,7 +2609,7 @@ def _metric_tree(nodes, edges, *, direction="higher_is_better"):
 def test_metric_tree_assigns_longest_path_layers_and_barycenter_slots():
     nodes = tuple((node_id, Card(node_id)) for node_id in ("root", "b", "a", "orphan"))
     graph = _metric_tree(nodes, (("root", "a", 1.0), ("root", "b", -1.0)))
-    assert graph.layout.slots == (
+    assert _slotted(graph.layout).slots == (
         Slot("root", 0, 0),
         Slot("b", 1, 0),
         Slot("a", 1, 1),
@@ -2537,7 +2619,7 @@ def test_metric_tree_assigns_longest_path_layers_and_barycenter_slots():
         tuple((node_id, Card(node_id)) for node_id in ("left", "root", "c0", "c1", "c2")),
         (("root", "c0", 1.0), ("root", "c1", 1.0), ("root", "c2", 1.0)),
     )
-    assert centered_parent.layout.slots == (
+    assert _slotted(centered_parent.layout).slots == (
         Slot("left", 0, 0),
         Slot("root", 0, 1),
         Slot("c0", 1, 0),
@@ -2548,7 +2630,7 @@ def test_metric_tree_assigns_longest_path_layers_and_barycenter_slots():
         tuple((node_id, Card(node_id)) for node_id in ("second", "child", "first")),
         (("first", "child", 1.0),),
     )
-    assert multi_root.layout.slots == (
+    assert _slotted(multi_root.layout).slots == (
         Slot("second", 0, 0),
         Slot("child", 1, 0),
         Slot("first", 0, 1),
@@ -2558,7 +2640,7 @@ def test_metric_tree_assigns_longest_path_layers_and_barycenter_slots():
         diamond_nodes,
         (("r", "a", 1.0), ("r", "b", 1.0), ("a", "c", 1.0), ("b", "c", 1.0)),
     )
-    assert diamond.layout.slots == (
+    assert _slotted(diamond.layout).slots == (
         Slot("r", 0, 0),
         Slot("b", 1, 0),
         Slot("a", 1, 1),
@@ -2569,7 +2651,7 @@ def test_metric_tree_assigns_longest_path_layers_and_barycenter_slots():
         tuple((node_id, Card(node_id)) for node_id in ("r", "a", "c", "b", "d")),
         (("r", "a", 1.0), ("a", "c", 1.0), ("r", "b", 1.0), ("b", "d", 1.0), ("d", "c", 1.0)),
     )
-    assert dict((slot.card_id, slot.layer) for slot in unequal.layout.slots) == {
+    assert dict((slot.card_id, slot.layer) for slot in _slotted(unequal.layout).slots) == {
         "r": 0,
         "a": 1,
         "b": 1,
@@ -2780,7 +2862,7 @@ def _driver_tree_fixture() -> Graph:
 def test_metric_tree_driver_fixture_has_exact_layout_wires_labels_nubs_and_determinism():
     graph = _driver_tree_fixture()
     measured = graph.measure()
-    assert graph.layout.slots == (
+    assert _slotted(graph.layout).slots == (
         Slot("revenue", 0, 1),
         Slot("users", 1, 0),
         Slot("orders", 1, 1),
@@ -2798,7 +2880,7 @@ def test_metric_tree_driver_fixture_has_exact_layout_wires_labels_nubs_and_deter
         130,
         107,
     )
-    slot_by_id = {slot.card_id: slot for slot in graph.layout.slots}
+    slot_by_id = {slot.card_id: slot for slot in _slotted(graph.layout).slots}
     column_widths = tuple(
         max(
             card.measure().width
