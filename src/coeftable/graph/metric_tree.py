@@ -11,7 +11,6 @@ from coeftable.errors import SpecError
 from coeftable.format import Format
 from coeftable.graph._layered import layered_positions
 from coeftable.graph.model import Graph, Slot, Slotted, Wire
-from coeftable.graph.topology import check_acyclic
 from coeftable.theme import DEFAULT, Direction, Theme, role_for
 
 _DIRECTIONS: tuple[Direction, ...] = ("higher_is_better", "lower_is_better", "neutral")
@@ -125,7 +124,6 @@ def MetricTree(
     node_entries = _nodes(nodes)
     node_ids = tuple(node_id for node_id, _ in node_entries)
     edge_entries = _edges(edges, node_ids=set(node_ids))
-    check_acyclic(node_ids, tuple((parent, child) for parent, child, _ in edge_entries))
     positions = layered_positions(
         node_ids, tuple((parent, child) for parent, child, _ in edge_entries)
     )

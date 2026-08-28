@@ -1198,6 +1198,55 @@ def test_multiple_packed_tracks_gated_routes_clear_every_card_and_stay_disjoint(
     _assert_pill_bounds_inside(graph)
 
 
+def test_pooled_back_tracks_share_one_datum_across_different_stage_subsets():
+    """Two back wires in the same pool span different stage subsets with
+    distinct extrema: one skips the tall intervening stage entirely, the
+    other spans it. Pooling both to one shared bottom base — not each
+    wire's own narrower span — keeps `_flow_offsets`'s packed spacing
+    honest: the deep-spanning wire is declared *first* (the smaller
+    offset) and the shallow-spanning wire *second* (the larger offset),
+    so a per-wire base would shrink their actual separation below what
+    the pool's offsets were built to guarantee, even though every stage
+    gap here is the tightest the public API itself allows.
+    """
+    tall = Card(
+        "C1",
+        content=(
+            TextBlock("one"),
+            TextBlock("two"),
+            TextBlock("three"),
+            TextBlock("four"),
+            TextBlock("five"),
+        ),
+    )
+    nodes = (("a", Card("A")), ("b", Card("B")), ("c", tall), ("d", Card("D")))
+    slots = (
+        StageSlot("a", 0, 0),
+        StageSlot("b", 1, 0),
+        StageSlot("c", 2, 0),
+        StageSlot("d", 3, 0),
+    )
+    edges = (
+        # Declared first (smaller offset): spans stages 1-3, so its own
+        # span includes the tall stage-2 card.
+        FlowEdge("d-b", "d", "b", "back", "retry"),
+        # Declared second (larger offset): spans stages 0-1 only, so its
+        # own span never touches the tall stage-2 card.
+        FlowEdge("b-a", "b", "a", "back", "reset"),
+    )
+    # A "public small gap": the narrowest stage_gap the public API itself
+    # derives as sufficient, re-applied explicitly instead of left implicit.
+    derived = EventFlow(nodes, slots, edges, dom_prefix="poolgap")
+    graph = EventFlow(nodes, slots, edges, dom_prefix="poolgap", stage_gap=derived.layer_gap)
+    _assert_no_wire_samples_enter_any_card(graph)
+    _assert_every_painted_pill_pair_disjoint(graph)
+    wire_geometry = dict(graph._layout.wire_geometry)
+    pills = dict(graph._layout.flow_pills)
+    assert not _rects_overlap(pills["d-b"], pills["b-a"])
+    assert wire_geometry["d-b"][1][1] != wire_geometry["b-a"][1][1]
+    _assert_pill_bounds_inside(graph)
+
+
 def _left_anchor(box: tuple[float, float, float, float]) -> tuple[float, float]:
     x, y, _width, height = box
     return (float(x), y + height / 2)

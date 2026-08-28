@@ -1062,9 +1062,18 @@ def _flow_route(
     dst_lane: int,
     offset: float,
     stage_extents: Mapping[int, tuple[float, float]],
-    stage_vertical_extents: Mapping[int, tuple[float, float]],
+    skip_base: float,
+    back_base: float,
 ) -> Route:
-    """Choose the graph-integrated route for one flow wire by kind and placement."""
+    """Choose the graph-integrated route for one flow wire by kind and placement.
+
+    ``skip_base``/``back_base`` are the whole flow's pooled skip-top and
+    back-bottom bases (see `_flow_vertical_bases`): every wire in a pool
+    shares one absolute datum, so `_flow_offsets`'s track spacing — computed
+    once, independent of any wire's own span — actually holds between two
+    wires' painted corridors instead of drifting apart by however much
+    their own per-wire spans happened to differ.
+    """
     if wire.kind == "forward":
         return route_across(
             src_box,
@@ -1072,32 +1081,27 @@ def _flow_route(
             src_edge=stage_extents[src_stage][1],
             dst_edge=stage_extents[dst_stage][0],
         )
-    low_stage, high_stage = min(src_stage, dst_stage), max(src_stage, dst_stage)
     if wire.kind == "skip":
-        top = min(stage_vertical_extents[stage][0] for stage in range(low_stage, high_stage + 1))
         src_gate = _stage_gap_midpoint(stage_extents, src_stage, src_stage + 1)
         dst_gate = _stage_gap_midpoint(stage_extents, dst_stage - 1, dst_stage)
         return route_skip_bow(
             src_box,
             dst_box,
             offset=offset,
-            bound=top,
+            bound=skip_base,
             src_gate=src_gate,
             dst_gate=dst_gate,
             src_edge=stage_extents[src_stage][1],
             dst_edge=stage_extents[dst_stage][0],
         )
     if dst_stage < src_stage:
-        bottom = max(
-            stage_vertical_extents[stage][1] for stage in range(low_stage, high_stage + 1)
-        )
         src_gate = _stage_gap_midpoint(stage_extents, src_stage - 1, src_stage)
         dst_gate = _stage_gap_midpoint(stage_extents, dst_stage, dst_stage + 1)
         return route_back_sag(
             src_box,
             dst_box,
             offset=offset,
-            bound=bottom,
+            bound=back_base,
             src_gate=src_gate,
             dst_gate=dst_gate,
             src_edge=stage_extents[src_stage][0],
@@ -1162,6 +1166,48 @@ def _stage_vertical_extents(
         top, bottom = extents.get(stage, (y, y + height))
         extents[stage] = (min(top, y), max(bottom, y + height))
     return extents
+
+
+def _flow_vertical_bases(
+    wires: tuple[Wire, ...],
+    *,
+    slot_by_id: Mapping[str, StageSlot],
+    stage_vertical_extents: Mapping[int, tuple[float, float]],
+) -> tuple[float, float]:
+    """Return the flow's shared skip-top and cross-stage-back-bottom bases.
+
+    Every skip wire already shares one upper corridor pool, and every
+    cross-stage back wire (one returning to a strictly earlier stage, not
+    a same-stage loop) already shares one lower corridor pool
+    (`_flow_track_group`); `_flow_offsets` packs each pool's tracks on the
+    assumption that every wire in it departs from the very same datum. A
+    per-wire bound spanning only that wire's own stages would let two
+    pool-mates disagree on where "clear" starts whenever their spans
+    differ, silently eating into the very spacing the pool's offsets were
+    built to guarantee. Pooling to one base — the minimum top (skip) or
+    maximum bottom (back) across every stage *any* pool member spans —
+    keeps every wire in a pool on the one shared datum its offset assumes.
+    """
+    skip_stages: set[int] = set()
+    back_stages: set[int] = set()
+    for wire in wires:
+        src_stage = slot_by_id[wire.src].stage
+        dst_stage = slot_by_id[wire.dst].stage
+        low_stage, high_stage = min(src_stage, dst_stage), max(src_stage, dst_stage)
+        if wire.kind == "skip":
+            skip_stages.update(range(low_stage, high_stage + 1))
+        elif wire.kind == "back" and dst_stage < src_stage:
+            back_stages.update(range(low_stage, high_stage + 1))
+    # A pool with no members never reaches its bound at the call site
+    # (`_flow_route` only reads it for a wire that is itself in the pool),
+    # so 0.0 is an inert placeholder, never an actual corridor.
+    skip_base = (
+        min(stage_vertical_extents[stage][0] for stage in skip_stages) if skip_stages else 0.0
+    )
+    back_base = (
+        max(stage_vertical_extents[stage][1] for stage in back_stages) if back_stages else 0.0
+    )
+    return skip_base, back_base
 
 
 def _pill_bounds(
@@ -1438,6 +1484,9 @@ def _flow_geometry(
     """Resolve every wire's route and each labeled wire's pill bounds."""
     stage_extents = _stage_extents(boxes_by_id, slot_by_id)
     stage_vertical_extents = _stage_vertical_extents(boxes_by_id, slot_by_id)
+    skip_base, back_base = _flow_vertical_bases(
+        wires, slot_by_id=slot_by_id, stage_vertical_extents=stage_vertical_extents
+    )
     routes: dict[str, Route] = {}
     for wire in wires:
         src_slot = slot_by_id[wire.src]
@@ -1452,7 +1501,8 @@ def _flow_geometry(
             dst_lane=dst_slot.lane,
             offset=offsets.get(wire.id, 0.0),
             stage_extents=stage_extents,
-            stage_vertical_extents=stage_vertical_extents,
+            skip_base=skip_base,
+            back_base=back_base,
         )
     pills = {
         wire.id: _pill_bounds(routes[wire.id].label_anchor, wire.label, chrome)
