@@ -71,7 +71,6 @@ class CardTemplate:
         border_style = "dashed" if appearance.border == "dashed" else "solid"
         border_color = render_theme.axis if appearance.border == "strong" else render_theme.rule
         background = "transparent" if appearance.fill == "transparent" else render_theme.surface
-        opacity = ";opacity:0.78" if appearance.emphasis == "muted" else ""
         summary_content = measured.header_height - chrome.border_width - chrome.padding
         header_html = "".join(
             _wrap(row, render_theme, chrome, control_dom_ids=control_dom_ids)
@@ -106,7 +105,7 @@ class CardTemplate:
             f"margin:0;padding:0 0 {chrome.padding}px 0;"
             f"border-width:{chrome.border_width}px;border-style:{border_style};"
             f"border-color:{_esc(border_color)};"
-            f"border-radius:{chrome.radius}px;background:{_esc(background)}{opacity};"
+            f"border-radius:{chrome.radius}px;background:{_esc(background)};"
             f'overflow:visible">'
             f'<summary style="box-sizing:content-box;display:flex;'
             f"column-gap:{chrome.gap}px;list-style:none;margin:0;"
