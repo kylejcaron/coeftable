@@ -948,6 +948,47 @@ def _assert_flow_geometry_gated_at_stage_edges(
     _assert_pill_bounds_inside(graph)
 
 
+def test_right_c_loop_pill_clears_same_stage_collapsible_nubs():
+    nodes = (
+        ("source", Card("Source")),
+        ("collapsible", Card("Collapsible")),
+        ("destination", Card("Destination")),
+    )
+    slots = (
+        StageSlot("source", 0, 0),
+        StageSlot("collapsible", 0, 1),
+        StageSlot("destination", 0, 2),
+    )
+    graph = EventFlow(
+        nodes,
+        slots,
+        (FlowEdge("loop", "source", "destination", "back", "retry"),),
+        collapsible=("collapsible",),
+        dom_prefix="nub-loop",
+    )
+    measured = graph.measure()
+    boxes = dict(measured.boxes)
+    right_nubs = [
+        (nx, ny - 9.0, 18.0, 18.0)
+        for _card_id, (nx, ny, side) in graph._layout.nub_anchors
+        if side == "right"
+    ]
+    pill = dict(graph._layout.flow_pills)["loop"]
+    assert right_nubs
+    for nub in right_nubs:
+        assert not _rects_overlap(pill, nub)
+    for x, y, width, height in boxes.values():
+        assert 0 <= x <= x + width <= measured.width
+        assert 0 <= y <= y + height <= measured.height
+    for points in _all_wire_samples(graph).values():
+        for x, y in points:
+            assert 0 <= x <= measured.width
+            assert 0 <= y <= measured.height
+    _assert_flow_geometry_gated_at_stage_edges(
+        graph, {"loop": _right_anchor(boxes["destination"])}
+    )
+
+
 def test_forward_and_skip_gated_routes_clear_a_wider_source_stage_sibling():
     """A forward or skip wire's source card can be far narrower than a
     sibling sharing its own stage on another lane. Without a flat run out

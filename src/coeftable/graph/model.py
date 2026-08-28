@@ -1259,6 +1259,7 @@ def _flow_offsets(
     wires: tuple[Wire, ...],
     *,
     slot_by_id: Mapping[str, StageSlot],
+    collapsible: tuple[str, ...],
     chrome: CardChrome,
     styles: Mapping[EdgeKind, EdgeStyle],
 ) -> dict[str, float]:
@@ -1267,12 +1268,14 @@ def _flow_offsets(
     Tracks pack independently per corridor key (`_flow_track_group`) in wire
     declaration order. A pool's first track clears its own half-extent plus
     one `chip_gap` from the stage boundary, so even a single loop pill sits
-    fully outside its stage's cards. Each later track in the same pool
-    clears the prior track's half-extent, its own half-extent, and one more
-    `chip_gap`, so consecutive pills (or bare strokes, for unlabeled wires)
-    never overlap.
+    fully outside its stage's cards. A right-loop pool in a stage containing
+    any collapsible card first reserves the nub's 18px width. Each later track
+    in the same pool clears the prior track's half-extent, its own half-extent,
+    and one more `chip_gap`, so consecutive pills (or bare strokes, for
+    unlabeled wires) never overlap.
     """
     offsets: dict[str, float] = {}
+    collapsible_stages = {slot_by_id[card_id].stage for card_id in collapsible}
     tracks: dict[str, tuple[float, float]] = {}
     for wire in wires:
         group = _flow_track_group(wire, slot_by_id=slot_by_id)
@@ -1284,7 +1287,13 @@ def _flow_offsets(
             prev_offset, prev_extent = tracks[key]
             offset = prev_offset + prev_extent + chrome.chip_gap + extent
         else:
-            offset = extent + chrome.chip_gap
+            nub_reservation = (
+                18
+                if key == f"loop-right-{slot_by_id[wire.src].stage}"
+                and slot_by_id[wire.src].stage in collapsible_stages
+                else 0
+            )
+            offset = nub_reservation + extent + chrome.chip_gap
         tracks[key] = (offset, extent)
         offsets[wire.id] = offset
     return offsets
@@ -1466,7 +1475,13 @@ def _graph_measure_staged(
 
     styles = _resolve_edge_styles(theme, edge_styles)
     pill_halo = chrome.border_width / 2
-    offsets = _flow_offsets(wires, slot_by_id=slot_by_id, chrome=chrome, styles=styles)
+    offsets = _flow_offsets(
+        wires,
+        slot_by_id=slot_by_id,
+        collapsible=collapsible,
+        chrome=chrome,
+        styles=styles,
+    )
     _graph_validate_c_loop_track_width(
         wires,
         slot_by_id=slot_by_id,
