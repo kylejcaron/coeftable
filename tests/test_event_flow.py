@@ -22,6 +22,8 @@ from coeftable.graph import (
     StateRule,
     Wire,
 )
+from coeftable.graph._routes import route_back_sag
+from coeftable.graph.model import _stage_vertical_extents
 
 
 def _rects_overlap(
@@ -59,6 +61,41 @@ def _point_inside_box(point: tuple[float, float], box: tuple[float, float, float
     px, py = point
     bx, by, bw, bh = box
     return bx < px < bx + bw and by < py < by + bh
+
+
+_PATH_CMD_RE = re.compile(r"([MLC])\s*([^MLC]*)")
+
+
+def _sample_path_points(path_d: str, steps: int = 200) -> list[tuple[float, float]]:
+    """Densely sample every M/L/C segment of a rendered SVG path.
+
+    Unlike `_path_points`, which only returns each segment's own anchor
+    and control coordinates, this walks the actual curve at many ``t``
+    values — a continuous cubic can dip well below its own control hull's
+    extreme points partway through a segment, so only the sampled curve
+    itself can prove no intersection with an intervening card.
+    """
+    points: list[tuple[float, float]] = []
+    current = (0.0, 0.0)
+    for letter, rest in _PATH_CMD_RE.findall(path_d):
+        values = [float(token) for token in re.findall(r"-?\d+(?:\.\d+)?", rest)]
+        if letter == "M":
+            current = (values[0], values[1])
+            points.append(current)
+        elif letter == "L":
+            current = (values[0], values[1])
+            points.append(current)
+        else:  # "C"
+            p0 = current
+            c1, c2, end = (values[0], values[1]), (values[2], values[3]), (values[4], values[5])
+            for step in range(1, steps + 1):
+                t = step / steps
+                mt = 1 - t
+                x = mt**3 * p0[0] + 3 * mt**2 * t * c1[0] + 3 * mt * t**2 * c2[0] + t**3 * end[0]
+                y = mt**3 * p0[1] + 3 * mt**2 * t * c1[1] + 3 * mt * t**2 * c2[1] + t**3 * end[1]
+                points.append((x, y))
+            current = end
+    return points
 
 
 def test_staged_layout_places_cards_left_to_right_and_top_to_bottom():
@@ -682,3 +719,160 @@ def test_same_stage_c_loop_accumulated_tracks_exact_boundary_and_rejection():
     _assert_pill_bounds_inside(graph)
     with pytest.raises(SpecError, match=re.escape("same-stage back-loop track requires 118px")):
         build(117)
+
+
+def _all_wire_samples(graph: Graph) -> dict[str, list[tuple[float, float]]]:
+    """Densely sample every wire's actual rendered curve, not just its anchors."""
+    wire_geometry = dict(graph._layout.wire_geometry)
+    return {
+        wire_id: _sample_path_points(path_d)
+        for wire_id, (path_d, _anchor) in wire_geometry.items()
+    }
+
+
+def _assert_no_wire_samples_enter_any_card(graph: Graph) -> None:
+    """Assert every wire's densely sampled curve never enters a card's interior."""
+    boxes = dict(graph.measure().boxes)
+    for wire_id, points in _all_wire_samples(graph).items():
+        for card_id, box in boxes.items():
+            for point in points:
+                assert not _point_inside_box(point, box), (
+                    f"wire {wire_id!r} sample {point} enters card {card_id!r} box {box}"
+                )
+
+
+def test_back_sag_gated_route_clears_a_taller_intervening_card_that_a_continuous_bow_grazes():
+    """The historical bug: a continuous bow only touches its corridor at one
+    instant, so an intervening card positioned off that instant can still be
+    grazed even though the corridor height itself clears it. Confirm the
+    same boxes actually graze under the old, continuous two-cubic bow, then
+    confirm the graph-integrated (gated) route no longer does.
+    """
+    tall = Card(
+        "Middle",
+        content=(
+            TextBlock("one"),
+            TextBlock("two"),
+            TextBlock("three"),
+            TextBlock("four"),
+            TextBlock("five"),
+            TextBlock("six"),
+            TextBlock("seven"),
+            TextBlock("eight"),
+        ),
+    )
+    nodes = (
+        ("start", Card("Start")),
+        ("mid1", Card("Mid1")),
+        ("mid2", tall),
+        ("end", Card("End")),
+    )
+    slots = (
+        StageSlot("start", 0, 0),
+        StageSlot("mid1", 1, 0),
+        StageSlot("mid2", 2, 0),
+        StageSlot("end", 3, 0),
+    )
+    graph = EventFlow(
+        nodes, slots, (FlowEdge("end-start", "end", "start", "back", "retry"),), dom_prefix="graze"
+    )
+    boxes = dict(graph.measure().boxes)
+    (path_d, _anchor) = dict(graph._layout.wire_geometry)["end-start"]
+
+    # The fixed, graph-integrated route: no sampled point enters any card.
+    for card_id, box in boxes.items():
+        for point in _sample_path_points(path_d):
+            assert not _point_inside_box(point, box), (
+                f"gated sample {point} enters {card_id!r} box {box}"
+            )
+    _assert_pill_bounds_inside(graph)
+
+    # The old, continuous bow (no gates) computed from the same resolved
+    # boxes and bound: proves the graze this fix eliminates was real, not
+    # a hypothetical worst case.
+    low_stage, high_stage = 0, 3
+    slot_by_id = {slot.card_id: slot for slot in slots}
+    bottom = max(
+        _stage_vertical_extents(boxes, slot_by_id)[stage][1]
+        for stage in range(low_stage, high_stage + 1)
+    )
+    pure = route_back_sag(boxes["end"], boxes["start"], offset=24, bound=bottom)
+    pure_hits = [
+        point
+        for point in _sample_path_points(pure.path)
+        if _point_inside_box(point, boxes["mid2"])
+    ]
+    assert pure_hits, "expected the continuous bow to graze the tall intervening card"
+
+
+def test_skip_bow_gated_route_clears_unequal_height_intervening_cards():
+    """A skip's gated route stays clear even when an early intervening card
+    towers over its later, shorter siblings.
+    """
+    tall = Card(
+        "Tall",
+        content=(
+            TextBlock("one"),
+            TextBlock("two"),
+            TextBlock("three"),
+            TextBlock("four"),
+            TextBlock("five"),
+            TextBlock("six"),
+            TextBlock("seven"),
+            TextBlock("eight"),
+        ),
+    )
+    nodes = (
+        ("start", Card("Start")),
+        ("mid1", tall),
+        ("mid2", Card("Mid2")),
+        ("end", Card("End")),
+    )
+    slots = (
+        StageSlot("start", 0, 0),
+        StageSlot("mid1", 1, 0),
+        StageSlot("mid2", 2, 0),
+        StageSlot("end", 3, 0),
+    )
+    graph = EventFlow(
+        nodes, slots, (FlowEdge("start-end", "start", "end", "skip", "jump"),), dom_prefix="sgraze"
+    )
+    _assert_no_wire_samples_enter_any_card(graph)
+    _assert_pill_bounds_inside(graph)
+
+
+def test_multiple_packed_tracks_gated_routes_clear_every_card_and_stay_disjoint():
+    """Two packed back tracks around an unequal-height intervening lane: every
+    wire's actual curve must clear every card, and their pills must stay
+    disjoint from each other and from every card, at every packed offset.
+    """
+    tall = Card(
+        "B1",
+        content=(
+            TextBlock("one"),
+            TextBlock("two"),
+            TextBlock("three"),
+            TextBlock("four"),
+            TextBlock("five"),
+        ),
+    )
+    nodes = (("a", Card("A")), ("b0", Card("B0")), ("b1", tall), ("c", Card("C")))
+    slots = (
+        StageSlot("a", 0, 0),
+        StageSlot("b0", 1, 0),
+        StageSlot("b1", 1, 1),
+        StageSlot("c", 2, 0),
+    )
+    graph = EventFlow(
+        nodes,
+        slots,
+        (
+            FlowEdge("c-a", "c", "a", "back", "retry"),
+            FlowEdge("b0-a", "b0", "a", "back", "reset"),
+        ),
+        dom_prefix="packed",
+    )
+    _assert_no_wire_samples_enter_any_card(graph)
+    pills = dict(graph._layout.flow_pills)
+    assert not _rects_overlap(pills["c-a"], pills["b0-a"])
+    _assert_pill_bounds_inside(graph)

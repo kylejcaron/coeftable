@@ -1095,18 +1095,26 @@ def _flow_route(
     stage_extents: Mapping[int, tuple[float, float]],
     stage_vertical_extents: Mapping[int, tuple[float, float]],
 ) -> Route:
-    """Choose the pure route for one flow wire by kind and relative placement."""
+    """Choose the graph-integrated route for one flow wire by kind and placement."""
     if wire.kind == "forward":
         return route_across(src_box, dst_box)
     low_stage, high_stage = min(src_stage, dst_stage), max(src_stage, dst_stage)
     if wire.kind == "skip":
         top = min(stage_vertical_extents[stage][0] for stage in range(low_stage, high_stage + 1))
-        return route_skip_bow(src_box, dst_box, offset=offset, bound=top)
+        src_gate = _stage_gap_midpoint(stage_extents, src_stage, src_stage + 1)
+        dst_gate = _stage_gap_midpoint(stage_extents, dst_stage - 1, dst_stage)
+        return route_skip_bow(
+            src_box, dst_box, offset=offset, bound=top, src_gate=src_gate, dst_gate=dst_gate
+        )
     if dst_stage < src_stage:
         bottom = max(
             stage_vertical_extents[stage][1] for stage in range(low_stage, high_stage + 1)
         )
-        return route_back_sag(src_box, dst_box, offset=offset, bound=bottom)
+        src_gate = _stage_gap_midpoint(stage_extents, src_stage - 1, src_stage)
+        dst_gate = _stage_gap_midpoint(stage_extents, dst_stage, dst_stage + 1)
+        return route_back_sag(
+            src_box, dst_box, offset=offset, bound=bottom, src_gate=src_gate, dst_gate=dst_gate
+        )
     side: Literal["left", "right"] = "left" if dst_lane < src_lane else "right"
     left_edge, right_edge = stage_extents[src_stage]
     return route_c_loop(
@@ -1116,6 +1124,21 @@ def _flow_route(
         side=side,
         bound=left_edge if side == "left" else right_edge,
     )
+
+
+def _stage_gap_midpoint(
+    stage_extents: Mapping[int, tuple[float, float]], left_stage: int, right_stage: int
+) -> float:
+    """Return the midpoint x of the empty gap between two adjacent stages.
+
+    ``left_stage``'s max right extent and ``right_stage``'s min left extent
+    bound a column with no cards at any height, so a skip bow or back sag's
+    curved cap can bow anywhere inside it without ever reaching a card —
+    see `_flow_route` and `route_skip_bow`/`route_back_sag`'s ``*_gate``.
+    """
+    _left_min, left_right = stage_extents[left_stage]
+    right_left, _right_max = stage_extents[right_stage]
+    return (left_right + right_left) / 2
 
 
 def _stage_extents(

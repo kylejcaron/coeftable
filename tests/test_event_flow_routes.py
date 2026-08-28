@@ -66,3 +66,52 @@ def test_back_sag_bound_override_clears_a_taller_intervening_card():
     assert route.path == "M210,130 C186,130 186,224 160,224 S134,50 110,50"
     assert route.label_anchor == (160.0, 224.0)
     assert route.bounds == (110.0, 50.0, 210.0, 224.0)
+
+
+def test_skip_bow_gates_bow_within_each_endpoint_gap_then_cross_flat():
+    """With gates, the bow only curves inside each endpoint's own gap.
+
+    Everything between the two gates is a flat straight line at the
+    corridor height, so an intervening stage anywhere between the gates
+    is cleared by construction, not by a continuous curve that only
+    touches the corridor height at one instant.
+    """
+    route = route_skip_bow(SRC, DST, offset=10, bound=0, src_gate=130, dst_gate=170)
+    assert route.path == "M110,50 C120,50 120,-10 130,-10 L170,-10 C200,-10 200,130 210,130"
+    assert route.label_anchor == (150.0, -10.0)
+    assert route.bounds == (110.0, -10.0, 210.0, 130.0)
+
+
+def test_skip_bow_gates_clamp_a_packed_offset_to_the_gap_boundary():
+    """A packed offset wide enough to overshoot a gate is clamped to it.
+
+    Without this clamp, a large packed offset would push a control point
+    (and thus the curve) straight through the neighboring stage's cards.
+    """
+    route = route_skip_bow(SRC, DST, offset=100, bound=0, src_gate=130, dst_gate=170)
+    assert route.path == "M110,50 C130,50 130,-100 130,-100 L170,-100 C170,-100 170,130 210,130"
+    assert route.label_anchor == (150.0, -100.0)
+    assert route.bounds == (110.0, -100.0, 210.0, 130.0)
+
+
+def test_back_sag_gates_bow_within_each_endpoint_gap_then_cross_flat():
+    route = route_back_sag(DST, SRC, offset=24, bound=200, src_gate=170, dst_gate=70)
+    assert route.path == "M210,130 C186,130 186,224 170,224 L70,224 C86,224 86,50 110,50"
+    assert route.label_anchor == (120.0, 224.0)
+    assert route.bounds == (70.0, 50.0, 210.0, 224.0)
+
+
+def test_back_sag_gates_clamp_a_packed_offset_to_the_gap_boundary():
+    route = route_back_sag(DST, SRC, offset=200, bound=200, src_gate=170, dst_gate=70)
+    assert route.path == "M210,130 C170,130 170,400 170,400 L70,400 C70,400 70,50 110,50"
+    assert route.label_anchor == (120.0, 400.0)
+    assert route.bounds == (70.0, 50.0, 210.0, 400.0)
+
+
+def test_skip_bow_missing_either_gate_keeps_the_pure_continuous_bow():
+    """Supplying only one gate falls back to the original two-cubic bow."""
+    only_src = route_skip_bow(SRC, DST, offset=24, src_gate=130)
+    only_dst = route_skip_bow(SRC, DST, offset=24, dst_gate=170)
+    pure = route_skip_bow(SRC, DST, offset=24)
+    assert only_src.path == pure.path
+    assert only_dst.path == pure.path
