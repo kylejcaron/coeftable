@@ -777,6 +777,58 @@ for one. `report.measure()`,
 `report.as_raw_html()`, and its `_repr_html_` notebook display all work the
 same way they do for a plain `Graph`.
 
+## Staged event flows (experimental)
+
+`coeftable.graph.EventFlow` lays out prepared cards in explicit stages and
+lanes. `StageSlot` coordinates are dense from zero, so placement is
+deterministic from left to right and lanes read from top to bottom. The graph
+namespace remains experimental and is deliberately not exported from the
+top-level `coeftable` namespace yet.
+
+```python
+from coeftable.cards import Card
+from coeftable.graph import EdgeStyle, EventFlow, FlowEdge, StageSlot
+
+cards = (
+    ("received", Card("Received")),
+    ("reviewed", Card("Reviewed")),
+    ("settled", Card("Settled")),
+)
+placements = (
+    StageSlot("received", stage=0, lane=0),
+    StageSlot("reviewed", stage=1, lane=0),
+    StageSlot("settled", stage=2, lane=0),
+)
+edges = (
+    FlowEdge("continue", "received", "reviewed", "forward", label="continue"),
+    FlowEdge("fast-track", "received", "settled", "skip", label="fast-track"),
+    FlowEdge("retry", "settled", "reviewed", "back", label="retry"),
+)
+
+flow = EventFlow(
+    cards,
+    placements,
+    edges,
+    collapsible=("received",),
+    styles={
+        "forward": EdgeStyle("#2F6B4F", width=2),
+        "skip": EdgeStyle("#315A8A", width=2, dash=(6, 3)),
+        "back": EdgeStyle("#8A4B3A", width=2, dash=(2, 3)),
+    },
+    dom_prefix="release-flow",
+)
+html = flow.as_raw_html()
+```
+
+Forward edges advance one stage and skip edges cross two or more; together
+they define downstream visibility. Back edges return to the same or an earlier
+stage but are paint-only: they never change which cards are visible. A card
+listed in `collapsible` gets a right-edge fold nub that hides only downstream
+cards and forward or skip wires. Per-kind `EdgeStyle` values override the
+default stroke, width, and dash. Omitting `stage_gap`, as above, derives the
+narrowest safe gap for labels, routes, and fold nubs. Rendering and folding use
+HTML and CSS with zero JavaScript.
+
 ## Plot annotations
 
 `ct.Rule` draws a line and `ct.Band` shades an interval in a forest plot or
