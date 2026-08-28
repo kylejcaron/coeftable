@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from math import ceil
-from typing import cast
+from typing import Literal, cast
 
 from coeftable.cards import (
     Adornment,
@@ -119,6 +119,7 @@ class GraphReport:
     header: tuple[Adornment, ...] = ()
     footer: tuple[Adornment, ...] = ()
     gap: int = 16
+    font: Literal["inherit", "system"] = "inherit"
     _measured: MeasuredReport = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -127,6 +128,8 @@ class GraphReport:
             raise SpecError("GraphReport.graph must be a Graph")
         if not isinstance(self.gap, int) or isinstance(self.gap, bool) or self.gap < 0:
             raise SpecError("GraphReport.gap must be a non-negative int")
+        if self.font not in ("inherit", "system"):
+            raise SpecError("GraphReport.font must be inherit or system")
         object.__setattr__(self, "header", _canonical(self.header, name="GraphReport.header"))
         object.__setattr__(self, "footer", _canonical(self.footer, name="GraphReport.footer"))
         object.__setattr__(self, "_measured", self._compute())
@@ -181,9 +184,14 @@ class GraphReport:
         footer_html = _render_section(footer_rows, theme=theme, chrome=chrome)
         if footer_rows:
             footer_html = f'<div style="margin-top:{self.gap}px">{footer_html}</div>'
+        font = (
+            ";font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif"
+            if self.font == "system"
+            else ""
+        )
         return (
             f'<div style="position:relative;box-sizing:border-box;'
-            f'width:{measured.width}px;height:{measured.height}px;margin:0;padding:0">'
+            f'width:{measured.width}px;height:{measured.height}px;margin:0;padding:0{font}">'
             f"{header_html}{graph_html}{footer_html}</div>"
         )
 

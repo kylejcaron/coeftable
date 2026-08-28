@@ -10,6 +10,7 @@ from coeftable.cards import (
     Badge,
     Card,
     CardAppearance,
+    CardChrome,
     Diagnostics,
     Metric,
     RuleStrip,
@@ -19,7 +20,7 @@ from coeftable.cards import (
 from coeftable.errors import SpecError
 from coeftable.format import Number, Percent
 from coeftable.graph import EdgeStyle, FlowEdge, GraphReport, ProductFlow, ProductStep, Staged
-from coeftable.theme import DEFAULT
+from coeftable.theme import DEFAULT, Theme
 
 _VALUE_FMT = Number(compact=True)
 _CHANGE_FMT = Percent(signed=True, decimals=1)
@@ -274,6 +275,95 @@ def test_product_flow_collapsible_inference_ignores_paint_only_back_edges():
     report = _funnel_report()
     assert "purchased" not in report.graph.collapsible
     assert "decide" not in report.graph.collapsible
+
+
+def test_product_flow_defaults_stage_inset_to_fourteen_and_accepts_zero_override():
+    default_report = _funnel_report()
+    assert isinstance(default_report.graph.layout, Staged)
+    assert default_report.graph.layout.stage_inset == 14
+    compact_report = _funnel_report(stage_inset=0)
+    assert isinstance(compact_report.graph.layout, Staged)
+    assert compact_report.graph.layout.stage_inset == 0
+
+
+@pytest.mark.parametrize("stage_inset", [-1, True, 1.5, "16"])
+def test_product_flow_rejects_a_malformed_stage_inset(stage_inset):
+    """Validated once through the shared `Staged` contract, not duplicated
+    as a second numeric rule in `ProductFlow` itself."""
+    with pytest.raises(
+        SpecError, match=re.escape("Staged.stage_inset must be a non-negative int")
+    ):
+        _funnel_report(stage_inset=stage_inset)
+
+
+def test_product_flow_default_theme_is_default_with_a_neutral_gray_band():
+    report = _funnel_report()
+    assert report.graph.theme.band == "rgba(20,24,31,.035)"
+    assert dataclasses.replace(report.graph.theme, band=DEFAULT.band) == DEFAULT
+    assert report.graph.layer_gap == 44
+
+
+def test_product_flow_explicit_theme_including_default_bypasses_the_gray_band_substitute():
+    default_report = _funnel_report(theme=DEFAULT)
+    assert default_report.graph.theme.band == DEFAULT.band
+    custom = Theme(band="#123456")
+    custom_report = _funnel_report(theme=custom)
+    assert custom_report.graph.theme.band == "#123456"
+
+
+def test_product_flow_applies_every_custom_layout_and_appearance_option():
+    """One integrated pass through every geometry/appearance keyword at once,
+    proving each is threaded to its actual effect rather than merely
+    accepted and dropped."""
+    custom_theme = Theme(band="#0F0F0F", favorable="#00FF00")
+    custom_chrome = CardChrome(caption_size=13)
+    steps = (
+        ProductStep(
+            "viewed",
+            "Viewed",
+            0,
+            0,
+            subtitle="weekly cohort",
+            series=(100.0, 150.0),
+        ),
+        ProductStep("purchased", "Purchased", 1, 0, series=(10.0, 20.0)),
+    )
+    edges = (FlowEdge("viewed-purchased", "viewed", "purchased", "forward"),)
+    report = ProductFlow(
+        ("Viewed", "Purchased"),
+        steps,
+        edges,
+        card_width=311,
+        theme=custom_theme,
+        chrome=custom_chrome,
+        dom_prefix="custom-cfg",
+        gap=41,
+        stage_gap=150,
+        stage_inset=24,
+    )
+    graph = report.graph
+    card = _card(report, "viewed")
+    assert card.width == 311
+    assert card.subtitle == "weekly cohort"
+    assert card.theme == custom_theme
+    assert card.chrome == custom_chrome
+    assert graph.theme == custom_theme
+    assert graph.chrome == custom_chrome
+    assert graph.gap == 41
+    assert graph.layer_gap == 150
+    assert isinstance(graph.layout, Staged)
+    assert graph.layout.stage_inset == 24
+    boxes = dict(graph.measure().boxes)
+    assert boxes["viewed"][2] == 311
+    html = graph.as_raw_html()
+    assert 'id="custom-cfg-card-0"' in html
+    assert "weekly cohort" in html
+    columns = graph._layout.stage_columns
+    (_l0, left0, width0, _h0), (_l1, left1, _w1, _h1) = columns
+    assert left1 - (left0 + width0) == 150  # stage_gap between padded bounds
+    viewed_x, _y, viewed_w, _h = boxes["viewed"]
+    assert viewed_x == left0 + 24  # centered against its own (only) card in the column
+    assert left0 + width0 == viewed_x + viewed_w + 24
 
 
 # --- Card content and roles ------------------------------------------------

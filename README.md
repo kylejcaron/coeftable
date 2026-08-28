@@ -820,15 +820,30 @@ flow = EventFlow(
 html = flow.as_raw_html()
 ```
 
-Forward edges advance one stage and skip edges cross two or more; together
-they define downstream visibility. Back edges return to the same or an earlier
-stage but are paint-only: they never change which cards are visible. A card
-listed in `collapsible` gets a right-edge fold nub that hides downstream
-cards, every wire touching them, and every wire leaving the folded card, back
-edges included. Per-kind `EdgeStyle` values override the default stroke,
-width, and dash. Omitting `stage_gap`, as
-above, derives a safe gap for labels, routes, and fold nubs, never narrower
-than 108px. Rendering and folding use HTML and CSS with zero JavaScript.
+`forward` edges advance to the next stage or to the next lane in the same
+stage; `skip` edges advance to any later stage (adjacent stages included) or
+to the next lane in the same stage; together they define downstream
+visibility. `back` edges return to the same or an earlier stage but are
+paint-only: they never change which cards are visible. A same-stage
+forward/skip pill routes and centers inside the lane gap (`gap`) it crosses,
+not the inter-stage `stage_gap`; every cross-stage forward/adjacent-skip
+pill packs into `stage_gap` instead, alongside exterior skip bows, back
+loops, and collapsible fold nubs. A card listed in `collapsible` gets a
+right-edge fold nub that hides downstream cards, every wire touching them,
+and every wire leaving the folded card, back edges included. Per-kind
+`EdgeStyle` values override the default stroke, width, and dash.
+
+`EventFlow` also takes an optional `stage_inset` (0 by default): a measured
+horizontal margin reserved inside each stage column, centering every
+intrinsic-width card in it rather than left-aligning it to the column's
+edge. `stage_gap` remains the empty distance between two adjacent *padded*
+column bounds, so a stage boundary's actual physical clearance for routes,
+pills, and fold nubs is `stage_gap + 2 * stage_inset` -- the inset margin is
+real corridor space, not merely a card margin. Omitting `stage_gap` preserves
+at least 108px of physical card-edge clearance, then subtracts the inset
+already supplying that space; the visible gap stays at least 18px when fold
+nubs are present and otherwise at least 1px. Rendering and folding use HTML
+and CSS with zero JavaScript.
 
 ## Product-flow reports (experimental)
 
@@ -894,9 +909,15 @@ resolved color and solid/dashed category from the graph's own `EdgeStyle`s
 by default -- so the legend can never drift from what is actually painted.
 Back edges, like `purchased-checkout` above, are paint-only: they route and
 label like any other edge but never change what is visible, exactly as in
-`EventFlow`. Omitting `stage_gap` derives a safe gap for labels, routes, and
-fold nubs from the graph's own content, the same derivation `EventFlow`
-uses.
+`EventFlow`. `ProductFlow` matches the prototype's compact column rhythm by
+default: `stage_inset=14` places each intrinsic-width card inside a padded
+stage band, while `stage_gap=44` leaves 44px between bands and 72px between
+card edges. Pass `stage_gap=None` for EventFlow's conservative automatic gap
+derivation, or `stage_inset=0` for edge-to-edge bands. The ProductFlow default
+theme matches `DEFAULT` except for the prototype's translucent neutral stage
+fill (`rgba(20,24,31,.035)`); an explicit `theme` argument -- `DEFAULT`
+included -- is used unchanged. The report uses the prototype's system font
+stack: `-apple-system`, `"Segoe UI"`, Helvetica, Arial, then `sans-serif`.
 
 Every step that originates a `"forward"` or `"skip"` edge automatically gets
 a right-edge fold nub -- no `collapsible` list to maintain by hand -- so

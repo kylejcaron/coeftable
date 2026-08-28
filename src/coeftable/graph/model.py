@@ -191,9 +191,10 @@ class Staged:
 
     slots: tuple[StageSlot, ...]
     labels: tuple[str, ...] = ()
+    stage_inset: int = 0
 
     def __post_init__(self) -> None:
-        """Canonicalize and validate the stage/lane entries and stage labels."""
+        """Canonicalize and validate the stage/lane entries, labels, and inset."""
         slots = _canonical(self.slots, name="Staged.slots")
         if not slots:
             raise SpecError("Staged.slots must not be empty")
@@ -205,6 +206,7 @@ class Staged:
         for index, label in enumerate(labels):
             _non_empty_str(label, name=f"Staged.labels[{index}]")
         object.__setattr__(self, "labels", cast(tuple[str, ...], labels))
+        _non_negative_int(self.stage_inset, name="Staged.stage_inset")
 
 
 @dataclass(frozen=True, slots=True)
@@ -1217,15 +1219,26 @@ def _stage_columns(
     slot_by_id: Mapping[str, StageSlot],
     labels: tuple[str, ...],
     header_top: float,
+    stage_inset: int = 0,
 ) -> tuple[StageColumn, ...]:
     """Derive each stage's measured header band from its final card boxes.
 
     Stage indices are guaranteed dense from zero and `labels` one-per-stage
-    by `_graph_validate_staged`, so `labels[stage]` always resolves.
+    by `_graph_validate_staged`, so `labels[stage]` always resolves. The
+    widest card in a stage always touches its column's inner (post-inset)
+    edge exactly, so padding the raw card extents by `stage_inset` on each
+    side recovers the same padded column bounds `staged_boxes` measured --
+    including after any route-induced canvas shift, since `boxes` already
+    reflects it.
     """
     extents = _stage_extents(dict(boxes), slot_by_id)
     return tuple(
-        (labels[stage], extents[stage][0], extents[stage][1] - extents[stage][0], header_top)
+        (
+            labels[stage],
+            extents[stage][0] - stage_inset,
+            extents[stage][1] - extents[stage][0] + 2 * stage_inset,
+            header_top,
+        )
         for stage in range(len(labels))
     )
 
@@ -1527,6 +1540,8 @@ def _stage_gap_requirements(
     chrome: CardChrome,
     styles: Mapping[EdgeKind, EdgeStyle],
     max_stage: int,
+    include_centered_pills: bool = True,
+    include_labeled_loops: bool = True,
 ) -> dict[int, float]:
     """Return each stage boundary's minimum physical gap requirement.
 
@@ -1541,19 +1556,21 @@ def _stage_gap_requirements(
     is only owed between two occupants that would otherwise need to share
     the same space.
 
-    A forward or adjacent-skip pill's x never shifts off that exact midpoint regardless of
-    how wide the gap is, so an asymmetric pair of loop pools still forces
-    *both* halves of the gap to fit the pill: the minimum gap doubles
-    whichever side's loop pool (plus its own clearance to the pill) reaches
-    furthest. With no pill to center in that gap, two opposing loop pools
-    only need to clear one `chip_gap` directly between themselves, so their
-    reaches add rather than double.
+    A forward or adjacent-skip pill's x never shifts off that exact midpoint,
+    so an asymmetric pair of loop pools still forces both halves of the gap
+    to fit it. Positive-inset compact layouts set both
+    `include_centered_pills=False` and `include_labeled_loops=False` because
+    final painted pill/card/nub rectangles are checked exactly after routing;
+    unlabeled exterior loop pools and wireless nubs always remain in this
+    conservative planner.
     """
     pill_halo = chrome.border_width / 2
     collapsible_stages = {slot_by_id[card_id].stage for card_id in collapsible}
     loop_reach: dict[str, float] = {}
     for wire in wires:
         group = _flow_track_group(wire, slot_by_id=slot_by_id)
+        if not include_labeled_loops and wire.label is not None:
+            continue
         if group is None or group[1] != "width":
             continue
         key, _axis = group
@@ -1562,13 +1579,14 @@ def _stage_gap_requirements(
         reach = offsets[wire.id] + extent
         loop_reach[key] = max(loop_reach.get(key, 0.0), reach)
     centered_reach: dict[int, float] = {}
-    for wire in wires:
-        if wire.label is None or not _flow_routes_across(wire, slot_by_id=slot_by_id):
-            continue
-        nominal = _pill_width(wire.label, chrome) / 2
-        half = _painted_extent(wire, nominal, styles=styles, pill_halo=pill_halo)
-        stage = slot_by_id[wire.src].stage
-        centered_reach[stage] = max(centered_reach.get(stage, 0.0), half)
+    if include_centered_pills:
+        for wire in wires:
+            if wire.label is None or not _flow_routes_across(wire, slot_by_id=slot_by_id):
+                continue
+            nominal = _pill_width(wire.label, chrome) / 2
+            half = _painted_extent(wire, nominal, styles=styles, pill_halo=pill_halo)
+            stage = slot_by_id[wire.src].stage
+            centered_reach[stage] = max(centered_reach.get(stage, 0.0), half)
     requirements: dict[int, float] = {}
     for stage in range(max_stage):
         left = loop_reach.get(f"loop-right-{stage}", 0.0)
@@ -1596,13 +1614,23 @@ def _graph_validate_stage_gap(
     styles: Mapping[EdgeKind, EdgeStyle],
     max_stage: int,
     stage_gap: int,
+    stage_inset: int = 0,
 ) -> None:
     """Reject a `Graph.layer_gap` too narrow for any stage boundary's occupants.
 
     `_stage_gap_requirements` names the exact same physical gap that both
     this direct validation and `EventFlow`'s derived default rely on, so an
     explicit `layer_gap` and the derived default share one contract instead
-    of drifting apart across independent checks.
+    of drifting apart across independent checks. `stage_gap` is measured
+    between two adjacent *padded* stage-column bounds, so the actual
+    physical clearance available to a stage boundary's routes, pills, and
+    nubs is `stage_gap + 2 * stage_inset`: the empty inset margin inside
+    each column is real corridor space too, not merely a card margin. With
+    `stage_inset=0` this reduces to the plain `stage_gap` bound exactly.
+
+    Positive inset enables compact padded columns: labeled routes use exact
+    final card/nub/pill collision checks, while unlabeled exterior loop pools
+    and wireless nubs retain conservative pre-measure clearance validation.
     """
     requirements = _stage_gap_requirements(
         wires,
@@ -1612,13 +1640,24 @@ def _graph_validate_stage_gap(
         chrome=chrome,
         styles=styles,
         max_stage=max_stage,
+        include_centered_pills=stage_inset == 0,
+        include_labeled_loops=stage_inset == 0,
     )
+    available = stage_gap + 2 * stage_inset
     for stage, required in requirements.items():
-        if required > stage_gap:
+        if required <= available:
+            continue
+        if stage_inset:
+            required_gap = max(0.0, required - 2 * stage_inset)
             raise SpecError(
-                f"Graph.layer_gap must be at least {required:g}px between stage {stage} "
-                f"and stage {stage + 1} but is {stage_gap}px"
+                f"Graph.layer_gap must be at least {required_gap:g}px between stage "
+                f"{stage} and stage {stage + 1} with stage_inset {stage_inset}px "
+                f"but is {stage_gap}px"
             )
+        raise SpecError(
+            f"Graph.layer_gap must be at least {required:g}px between stage {stage} "
+            f"and stage {stage + 1} but is {stage_gap}px"
+        )
 
 
 def _graph_validate_same_stage_pill_height(
@@ -1710,15 +1749,16 @@ def _pack_forward_pills(
     stage — and therefore the same physical gap — can land at an identical
     pill x, and even the same y whenever their endpoints happen to sit at
     equal painted heights. Every other labeled wire (a same-stage
-    forward/skip, a bowing skip, back, and a same-stage loop) already owns
-    a fixed, disjoint track/anchor of its own, so its own pill never moves;
-    those painted rects are seeded once, up front, as one flat obstacle set
-    with no per-gap bucketing — a skip/back pill's bow/sag can span several
-    stages, so a real rect-intersection test against every one of them is
-    the only reliable answer to "does this actually share my gap", not
-    which pool the wire nominally belongs to. Declaration order then
-    breaks ties between across pills themselves, forward and adjacent skip
-    alike: each keeps its own gap-midpoint x exactly and, only if its
+    forward/skip, a bowing skip, back, and a same-stage loop) owns a fixed
+    track/anchor; those painted rects are seeded once, up front, as one flat
+    obstacle set. After across pills are packed, a separate validation rejects
+    any remaining fixed-pill collision rather than emitting overlapping paint.
+    There is no per-gap bucketing for obstacles: a skip/back pill's bow/sag can
+    span several stages, so a real rect-intersection test against every one of
+    them is the only reliable answer to "does this actually share my gap".
+    Declaration order then breaks ties between across pills themselves,
+    forward and adjacent skip alike: each keeps its own gap-midpoint x exactly
+    and, only if its
     *painted* rect (nominal, expanded by half the chrome border width on
     every side, matching `_flow_bounds_extrema`'s own definition of a
     pill's actual paint) actually intersects an obstacle or an earlier
@@ -1754,6 +1794,58 @@ def _pack_forward_pills(
             packed_routes[wire.id] = replace(route, label_anchor=(anchor_x, y + height / 2))
         placed.append(_painted_pill_rect(rect, pill_halo))
     return packed_routes, packed_pills
+
+
+def _graph_validate_pill_disjoint(
+    wires: tuple[Wire, ...],
+    pills: Mapping[str, tuple[float, float, float, float]],
+    chrome: CardChrome,
+) -> None:
+    """Reject any labeled flow pills still overlapping after across-pill packing."""
+    pill_halo = chrome.border_width / 2
+    labeled = tuple(wire for wire in wires if wire.id in pills)
+    for index, left in enumerate(labeled):
+        left_rect = _painted_pill_rect(pills[left.id], pill_halo)
+        for right in labeled[index + 1 :]:
+            right_rect = _painted_pill_rect(pills[right.id], pill_halo)
+            if _rects_intersect(left_rect, right_rect):
+                raise SpecError(
+                    f"flow pills {left.id!r} and {right.id!r} overlap; adjust labels or spacing"
+                )
+
+
+def _graph_validate_pill_obstacles(
+    wires: tuple[Wire, ...],
+    pills: Mapping[str, tuple[float, float, float, float]],
+    boxes_by_id: Mapping[str, Box],
+    collapsible: tuple[str, ...],
+    chrome: CardChrome,
+) -> None:
+    """Reject a painted pill intersecting a card or right-edge fold nub."""
+    pill_halo = chrome.border_width / 2
+    card_rects = tuple((card_id, box) for card_id, box in boxes_by_id.items())
+    nub_rects = tuple(
+        (
+            card_id,
+            (
+                float(boxes_by_id[card_id][0] + boxes_by_id[card_id][2]),
+                boxes_by_id[card_id][1] + boxes_by_id[card_id][3] / 2 - _NUB_RESERVE / 2,
+                _NUB_RESERVE,
+                _NUB_RESERVE,
+            ),
+        )
+        for card_id in collapsible
+    )
+    for wire in wires:
+        if wire.id not in pills:
+            continue
+        painted = _painted_pill_rect(pills[wire.id], pill_halo)
+        for card_id, card_rect in card_rects:
+            if _rects_intersect(painted, card_rect):
+                raise SpecError(f"flow pill {wire.id!r} overlaps card {card_id!r}")
+        for card_id, nub_rect in nub_rects:
+            if _rects_intersect(painted, nub_rect):
+                raise SpecError(f"flow pill {wire.id!r} overlaps fold nub {card_id!r}")
 
 
 def _flow_bounds_extrema(
@@ -1810,6 +1902,7 @@ def _graph_measure_staged(
     theme: Theme,
     edge_styles: tuple[tuple[EdgeKind, EdgeStyle], ...],
     labels: tuple[str, ...] = (),
+    stage_inset: int = 0,
 ) -> _GraphLayout:
     """Measure rebound cards, resolve staged boxes, and route flow wires.
 
@@ -1822,7 +1915,10 @@ def _graph_measure_staged(
     When `labels` is non-empty, every stage reserves a fixed top header band
     (`stage_header_height`) above its cards; `staged_boxes` sees this as a
     pure top-padding override, so unlabeled staged graphs take the exact
-    same call path and produce byte-identical geometry.
+    same call path and produce byte-identical geometry. `stage_inset`
+    reserves a matching horizontal margin inside every stage column,
+    centering each card in it; zero is likewise byte-identical to the
+    left-aligned geometry `staged_boxes` measures without it.
     """
     measured = {card_id: card.measure() for card_id, card in nodes}
     slot_by_id = {slot.card_id: slot for slot in slots}
@@ -1845,10 +1941,15 @@ def _graph_measure_staged(
             stage_gap=stage_gap,
             padding=padding,
             top_padding=padding + stage_header_height,
+            stage_inset=stage_inset,
         )
     else:
         width, height, boxes = staged_boxes(
-            entries, lane_gap=lane_gap, stage_gap=stage_gap, padding=padding
+            entries,
+            lane_gap=lane_gap,
+            stage_gap=stage_gap,
+            padding=padding,
+            stage_inset=stage_inset,
         )
     anchors = tuple(
         (
@@ -1868,7 +1969,11 @@ def _graph_measure_staged(
             for card_id, (x, y, box_width, box_height) in boxes
             if card_id in collapsible
         )
-        stage_columns = _stage_columns(boxes, slot_by_id, labels, float(padding)) if labels else ()
+        stage_columns = (
+            _stage_columns(boxes, slot_by_id, labels, float(padding), stage_inset)
+            if labels
+            else ()
+        )
         return _GraphLayout(
             MeasuredGraph(width, height, boxes),
             anchors,
@@ -1895,6 +2000,7 @@ def _graph_measure_staged(
         styles=styles,
         max_stage=last_stage,
         stage_gap=stage_gap,
+        stage_inset=stage_inset,
     )
     _graph_validate_same_stage_pill_height(
         wires,
@@ -1927,6 +2033,8 @@ def _graph_measure_staged(
         )
 
     routes, pills = _pack_forward_pills(wires, routes, pills, slot_by_id, chrome)
+    _graph_validate_pill_disjoint(wires, pills, chrome)
+    _graph_validate_pill_obstacles(wires, pills, boxes_by_id, collapsible, chrome)
 
     _min_x1, _min_y1, max_x, max_y = _flow_bounds_extrema(
         wires, routes, pills, styles=styles, pill_halo=pill_halo
@@ -1944,7 +2052,9 @@ def _graph_measure_staged(
     )
     flow_pills = tuple((wire.id, pills[wire.id]) for wire in wires if wire.id in pills)
     stage_columns = (
-        _stage_columns(boxes, slot_by_id, labels, float(padding + shift_y)) if labels else ()
+        _stage_columns(boxes, slot_by_id, labels, float(padding + shift_y), stage_inset)
+        if labels
+        else ()
     )
     return _GraphLayout(
         MeasuredGraph(width, height, boxes),
@@ -2098,6 +2208,7 @@ class Graph:
                 theme=self.theme,
                 edge_styles=edge_styles,
                 labels=self.layout.labels,
+                stage_inset=self.layout.stage_inset,
             )
         else:
             layout = _graph_measure(

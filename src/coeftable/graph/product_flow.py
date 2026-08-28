@@ -8,13 +8,18 @@ edge-kind legend, and a note. The legend derives each kind's exact resolved
 color and solid/dashed semantic category from the ``EventFlow`` styles.
 ``EdgeStyle.width`` and numeric dash periods remain rendered-edge-only
 details rather than miniature legend styling.
+
+The default theme matches :data:`~coeftable.theme.DEFAULT` except for the
+prototype's translucent neutral stage band (``rgba(20,24,31,.035)``), so the
+default 14px ``stage_inset`` reads against white card surfaces.
+A caller-supplied theme -- ``DEFAULT`` included -- is used unchanged.
 """
 
 from __future__ import annotations
 
 import math
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal, cast
 
 from coeftable.cards import (
@@ -49,6 +54,9 @@ _LEGEND_KINDS: tuple[tuple[EdgeKind, str], ...] = (
 )
 _DEFAULT_VALUE_FMT: Format = Number(compact=True)
 _DEFAULT_CHANGE_FMT: Format = Percent(signed=True, decimals=1)
+# ProductFlow's default uses the prototype's translucent neutral stage band.
+# Explicit themes, including DEFAULT itself, bypass this default value.
+_DEFAULT_THEME: Theme = replace(DEFAULT, band="rgba(20,24,31,.035)")
 
 
 def _sequence(value: object, *, name: str) -> tuple[object, ...]:
@@ -352,11 +360,12 @@ def ProductFlow(
     change_fmt: Format = _DEFAULT_CHANGE_FMT,
     card_width: int = 228,
     styles: Mapping[EdgeKind, EdgeStyle] | None = None,
-    theme: Theme = DEFAULT,
+    theme: Theme = _DEFAULT_THEME,
     chrome: CardChrome = DEFAULT_CHROME,
     dom_prefix: str = "product-flow",
     gap: int = 36,
-    stage_gap: int | None = None,
+    stage_inset: int = 14,
+    stage_gap: int | None = 44,
 ) -> GraphReport:
     """Compose a staged product-funnel report from stages, steps, and edges.
 
@@ -369,6 +378,18 @@ def ProductFlow(
     solid/dashed semantic category from the ``EventFlow`` styles, and an
     optional note. ``EdgeStyle.width`` and numeric dash periods affect only
     rendered edges, not the categorical legend.
+
+    The default ``theme`` equals :data:`~coeftable.theme.DEFAULT` except for
+    the prototype's translucent neutral stage ``band``
+    (``rgba(20,24,31,.035)``). A caller-supplied theme -- ``DEFAULT``
+    included -- is used unchanged.
+
+    ``stage_inset`` defaults to the prototype's 14px measured margin inside
+    each stage column, centering every intrinsic-width card. ``stage_gap``
+    defaults to 44px between padded stage bands, yielding the prototype's
+    72px card-edge spacing; pass ``stage_gap=None`` for EventFlow's
+    conservative automatic derivation or ``stage_inset=0`` for compact
+    edge-to-edge bands.
     """
     stage_entries = _validate_stages(stages)
     step_entries = _validate_steps(steps, stage_count=len(stage_entries))
@@ -379,6 +400,7 @@ def ProductFlow(
     _positive_int(card_width, name="ProductFlow.card_width")
     if not isinstance(theme, Theme):
         raise SpecError("ProductFlow.theme must be a Theme")
+    resolved_theme = theme
     if not isinstance(chrome, CardChrome):
         raise SpecError("ProductFlow.chrome must be a CardChrome")
     _optional_str(title, name="ProductFlow.title")
@@ -399,7 +421,7 @@ def ProductFlow(
             change_fmt=change_fmt,
             card_width=card_width,
             chrome=chrome,
-            theme=theme,
+            theme=resolved_theme,
             steps_by_id=steps_by_id,
             current_by_id=current_by_id,
         )
@@ -413,7 +435,7 @@ def ProductFlow(
         if any(edge.src == entry.id and edge.kind in ("forward", "skip") for edge in edge_entries)
     )
     product_styles: dict[EdgeKind, EdgeStyle] = {
-        "back": EdgeStyle(theme.unfavorable, dash=(2.0, 3.0))
+        "back": EdgeStyle(resolved_theme.unfavorable, dash=(2.0, 3.0))
     }
     if isinstance(styles, Mapping):
         product_styles.update(styles)
@@ -428,10 +450,11 @@ def ProductFlow(
         stage_labels=stage_entries,
         styles=flow_styles,
         collapsible=collapsible,
-        theme=theme,
+        theme=resolved_theme,
         chrome=chrome,
         dom_prefix=dom_prefix,
         gap=gap,
+        stage_inset=stage_inset,
         stage_gap=stage_gap,
     )
 
@@ -450,7 +473,7 @@ def ProductFlow(
     header.append(RuleStrip(legend_entries))
     if note is not None:
         header.append(TextBlock(note, variant="caption"))
-    return GraphReport(graph, header=tuple(header))
+    return GraphReport(graph, header=tuple(header), font="system")
 
 
 __all__ = ["ProductFlow", "ProductStep", "ProductStepKind"]

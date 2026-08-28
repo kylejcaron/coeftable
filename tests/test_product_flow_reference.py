@@ -406,6 +406,46 @@ def test_searched_nub_hides_the_entire_rest_of_the_funnel():
     assert len(all_pills) == 5
 
 
+# --- Intrinsic stage inset ---------------------------------------------------
+
+
+def test_reference_defaults_to_a_fourteen_pixel_stage_inset():
+    report = _product_flow_reference()
+    assert isinstance(report.graph.layout, Staged)
+    assert report.graph.layout.stage_inset == 14
+    assert report.graph.layer_gap == 44
+    assert report.font == "system"
+    assert "font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" in (
+        report.as_raw_html()
+    )
+
+
+def test_reference_default_theme_swaps_in_a_neutral_gray_band():
+    report = _product_flow_reference()
+    assert report.graph.theme.band == "rgba(20,24,31,.035)"
+    assert report.graph.theme.favorable == DEFAULT.favorable  # every other role untouched
+
+
+def test_reference_widest_card_in_every_stage_has_exactly_fourteen_pixels_of_band_whitespace():
+    """This is measured layout geometry, not CSS band expansion: every
+    stage's widest (here, every) card sits exactly `stage_inset` px inside
+    its own padded stage band on both sides."""
+    report = _product_flow_reference()
+    graph = report.graph
+    assert isinstance(graph.layout, Staged)
+    boxes = dict(graph.measure().boxes)
+    slot_by_id = {slot.card_id: slot for slot in graph.layout.slots}
+    by_stage: dict[int, list[str]] = {}
+    for card_id, slot in slot_by_id.items():
+        by_stage.setdefault(slot.stage, []).append(card_id)
+    for stage, (_label, left, width, _header_top) in enumerate(graph._layout.stage_columns):
+        card_ids = by_stage[stage]
+        min_left = min(boxes[cid][0] for cid in card_ids)
+        max_right = max(boxes[cid][0] + boxes[cid][2] for cid in card_ids)
+        assert min_left - left == 14
+        assert (left + width) - max_right == 14
+
+
 # --- Every measured card, pill, and nub stays inside the canvas -------------
 
 

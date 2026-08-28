@@ -602,6 +602,31 @@ def test_event_flow_default_stage_gap_is_never_smaller_than_108():
     assert graph.layer_gap == 108
 
 
+def test_event_flow_stage_inset_replaces_the_default_empty_gap_without_moving_cards():
+    nodes = (("a", Card("A")), ("b", Card("B")))
+    slots = (StageSlot("a", 0, 0), StageSlot("b", 1, 0))
+    edges = (FlowEdge("a-b", "a", "b", "forward"),)
+    compact = EventFlow(nodes, slots, edges)
+    inset = EventFlow(nodes, slots, edges, stage_inset=16)
+    assert compact.layer_gap == 108
+    assert inset.layer_gap == 76
+    compact_boxes = dict(compact.measure().boxes)
+    inset_boxes = dict(inset.measure().boxes)
+    compact_clearance = compact_boxes["b"][0] - sum((compact_boxes["a"][0], compact_boxes["a"][2]))
+    inset_clearance = inset_boxes["b"][0] - sum((inset_boxes["a"][0], inset_boxes["a"][2]))
+    assert inset_clearance == compact_clearance == 108
+
+
+def test_event_flow_derived_gap_respects_the_collapsible_eighteen_pixel_floor():
+    nodes = (("a", Card("A")), ("b", Card("B")))
+    slots = (StageSlot("a", 0, 0), StageSlot("b", 1, 0))
+    edges = (FlowEdge("a-b", "a", "b", "forward"),)
+    plain = EventFlow(nodes, slots, edges, stage_inset=46)
+    collapsible = EventFlow(nodes, slots, edges, stage_inset=46, collapsible=("a",))
+    assert plain.layer_gap == 16
+    assert collapsible.layer_gap == 18
+
+
 def test_skip_route_offset_beyond_padding_expands_the_canvas():
     chrome = CardChrome(chip_gap=50)
     nodes = (
@@ -1008,6 +1033,36 @@ def test_stage_gap_enforces_chip_gap_between_opposing_left_and_right_loop_pools(
         ),
     ):
         EventFlow(nodes, slots, edges, dom_prefix="oppbad", stage_gap=129)
+
+    unlabeled = (
+        FlowEdge("a-b", "a", "b", "back"),
+        FlowEdge("d-c", "d", "c", "back"),
+    )
+    compact = EventFlow(
+        nodes,
+        slots,
+        unlabeled,
+        dom_prefix="opp-inset",
+        stage_gap=5,
+        stage_inset=14,
+    )
+    assert isinstance(compact.layout, Staged)
+    assert compact.layer_gap + 2 * compact.layout.stage_inset == 33
+    with pytest.raises(
+        SpecError,
+        match=re.escape(
+            "Graph.layer_gap must be at least 5px between stage 0 and stage 1 "
+            "with stage_inset 14px but is 4px"
+        ),
+    ):
+        EventFlow(
+            nodes,
+            slots,
+            unlabeled,
+            dom_prefix="opp-inset-bad",
+            stage_gap=4,
+            stage_inset=14,
+        )
 
 
 def test_stage_gap_uses_the_furthest_reaching_painted_extent_for_a_thick_labeled_style():
@@ -1902,6 +1957,97 @@ def test_staged_labels_reserve_exact_header_and_render_behind_wires_and_cards():
     assert explicit_empty.as_raw_html() == plain.as_raw_html()
 
 
+def test_event_flow_stage_inset_zero_is_byte_identical_to_omitting_it():
+    nodes = (("a", Card("A")), ("b", Card("B")))
+    slots = (StageSlot("a", 0, 0), StageSlot("b", 1, 0))
+    edges = (FlowEdge("a-b", "a", "b", "forward"),)
+    omitted = EventFlow(nodes, slots, edges, dom_prefix="ei0")
+    explicit_zero = EventFlow(nodes, slots, edges, dom_prefix="ei0", stage_inset=0)
+    assert omitted.measure() == explicit_zero.measure()
+    assert omitted.as_raw_html() == explicit_zero.as_raw_html()
+
+
+def test_event_flow_stage_inset_passes_through_to_staged():
+    graph = EventFlow(
+        (("a", Card("A")), ("b", Card("B"))),
+        (StageSlot("a", 0, 0), StageSlot("b", 1, 0)),
+        (FlowEdge("a-b", "a", "b", "forward"),),
+        dom_prefix="einset",
+        stage_inset=16,
+    )
+    assert isinstance(graph.layout, Staged)
+    assert graph.layout.stage_inset == 16
+
+
+@pytest.mark.parametrize("stage_inset", [-1, True, 1.5, "16"])
+def test_event_flow_rejects_a_malformed_stage_inset(stage_inset):
+    with pytest.raises(
+        SpecError, match=re.escape("Staged.stage_inset must be a non-negative int")
+    ):
+        EventFlow(
+            (("a", Card("A")), ("b", Card("B"))),
+            (StageSlot("a", 0, 0), StageSlot("b", 1, 0)),
+            (FlowEdge("a-b", "a", "b", "forward"),),
+            stage_inset=cast(int, stage_inset),
+        )
+
+
+def test_stage_inset_uses_exact_compact_validation_and_shrinks_the_derived_gap():
+    """Positive inset validates final painted geometry instead of applying
+    the zero-inset conservative boundary; automatic derivation still preserves
+    the same physical card-edge clearance."""
+
+    def build(stage_gap: int, stage_inset: int = 0) -> Graph:
+        nodes = (("s", Card("S")), ("p", Card("P")), ("q", Card("Q")), ("r", Card("R")))
+        slots = (
+            StageSlot("s", 0, 0),
+            StageSlot("p", 1, 0),
+            StageSlot("q", 1, 1),
+            StageSlot("r", 1, 2),
+        )
+        return EventFlow(
+            nodes,
+            slots,
+            (
+                FlowEdge("q-p", "q", "p", "back", "abcde"),
+                FlowEdge("r-q", "r", "q", "back", "fghij"),
+            ),
+            stage_gap=stage_gap,
+            stage_inset=stage_inset,
+            dom_prefix="acc-inset",
+        )
+
+    baseline = build(120)  # the exact zero-inset boundary this mirrors
+    inset_graph = build(88, stage_inset=16)  # 88 + 2 * 16 == 120: same physical clearance
+    assert inset_graph.layer_gap == 88
+    assert baseline.layer_gap == inset_graph.layer_gap + 2 * 16
+    assert isinstance(inset_graph.layout, Staged)
+    assert inset_graph.layout.stage_inset == 16
+    pills = dict(inset_graph._layout.flow_pills)
+    assert not _rects_overlap(
+        _model_painted_pill_rect(pills["q-p"], inset_graph.chrome.border_width / 2),
+        _model_painted_pill_rect(pills["r-q"], inset_graph.chrome.border_width / 2),
+    )
+    _assert_pill_bounds_inside(inset_graph)
+    compact = build(44, stage_inset=16)
+    assert compact.layer_gap == 44
+    _assert_pill_bounds_inside(compact)
+
+    # The auto-derived visible gap likewise shrinks by exactly
+    # 2 * stage_inset while physical card-edge clearance retains its 108px floor.
+    nodes2 = (("a", Card("A")), ("e", Card("E")), ("f", Card("F")))
+    slots2 = (StageSlot("a", 0, 0), StageSlot("e", 0, 1), StageSlot("f", 1, 1))
+    edges2 = (
+        FlowEdge("a-f", "a", "f", "forward", "go now"),
+        FlowEdge("a-e", "a", "e", "back", "retry"),
+    )
+    plain = EventFlow(nodes2, slots2, edges2, dom_prefix="coin-plain")
+    derived_inset = EventFlow(nodes2, slots2, edges2, dom_prefix="coin-inset", stage_inset=16)
+    assert plain.layer_gap == 197
+    assert derived_inset.layer_gap == plain.layer_gap - 32
+    assert derived_inset.layer_gap + 2 * 16 == plain.layer_gap
+
+
 def test_event_flow_stage_labels_pass_through_to_staged_and_render():
     graph = EventFlow(
         (("a", Card("A")), ("b", Card("B"))),
@@ -1984,6 +2130,43 @@ def test_staged_labels_keep_skip_route_and_pill_clear_of_the_header_band():
                 )
     _assert_no_wire_samples_enter_any_card(labeled)
     _assert_pill_bounds_inside(labeled)
+
+
+def test_staged_labels_stage_columns_stay_padded_by_inset_after_a_route_shift():
+    """Cached stage bands must expand to the padded column bounds using the
+    *final* card boxes, after whatever canvas shift routing required --
+    not the pre-shift padding -- exactly like the unlabeled header-shift
+    invariant this mirrors."""
+    nodes = (("a", Card("A")), ("b", Card("B")), ("c", Card("C")))
+    slots = (StageSlot("a", 0, 0), StageSlot("b", 1, 0), StageSlot("c", 2, 0))
+    edges = (
+        FlowEdge("a-b", "a", "b", "forward"),
+        FlowEdge("a-c", "a", "c", "skip", "skip-it"),
+    )
+    labeled = EventFlow(
+        nodes,
+        slots,
+        edges,
+        gap=18,
+        stage_gap=18,
+        stage_inset=16,
+        dom_prefix="hdrskip-inset",
+        stage_labels=["Browse", "Cart", "Done"],
+    )
+    assert isinstance(labeled.layout, Staged)
+    layout = labeled._layout
+    boxes = dict(layout.measured.boxes)
+    by_stage: dict[int, list[str]] = {}
+    for card_id, slot in ((s.card_id, s) for s in labeled.layout.slots):
+        by_stage.setdefault(slot.stage, []).append(card_id)
+    for stage, (_label, left, width, _header_top) in enumerate(layout.stage_columns):
+        card_ids = by_stage[stage]
+        min_left = min(boxes[cid][0] for cid in card_ids)
+        max_right = max(boxes[cid][0] + boxes[cid][2] for cid in card_ids)
+        assert left == min_left - 16
+        assert width == (max_right - min_left) + 32
+    _assert_pill_bounds_inside(labeled)
+    _assert_no_wire_samples_enter_any_card(labeled)
 
 
 def test_stage_label_with_long_text_and_custom_leading_stays_on_one_line():
@@ -2340,3 +2523,18 @@ def test_forward_and_adjacent_skip_pills_pack_apart_when_coincident():
     assert not _rects_overlap(first_pill, second_pill)
     _assert_pill_bounds_inside(graph)
     _assert_no_wire_samples_enter_any_card(graph)
+
+
+def test_event_flow_rejects_a_fixed_same_stage_pill_overlapping_a_back_loop_pill():
+    with pytest.raises(
+        SpecError,
+        match=re.escape("flow pills 'forward' and 'back' overlap; adjust labels or spacing"),
+    ):
+        EventFlow(
+            (("a", Card("A")), ("b", Card("B"))),
+            (StageSlot("a", 0, 0), StageSlot("b", 0, 1)),
+            (
+                FlowEdge("forward", "a", "b", "forward", "vertical " * 30),
+                FlowEdge("back", "b", "a", "back", "retry"),
+            ),
+        )

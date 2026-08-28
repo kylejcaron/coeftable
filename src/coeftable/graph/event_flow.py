@@ -84,6 +84,7 @@ def EventFlow(
     dom_prefix: str = "g0",
     gap: int = 36,
     stage_gap: int | None = None,
+    stage_inset: int = 0,
     stage_labels: Sequence[str] = (),
 ) -> Graph:
     """Build a staged flow with paint-only back edges.
@@ -94,10 +95,29 @@ def EventFlow(
     Graph remains the authoritative boundary for any caller that constructs
     staged wires without going through this helper.
 
-    Omitting ``stage_gap`` derives the narrowest gap that still keeps every
-    forward pill, loop pool, and collapsible fold nub disjoint, using the
-    exact same physical planner Graph itself validates an explicit
-    ``stage_gap`` against (see `_stage_gap_requirements`), floored at 108px.
+    Placement rules for staged edges: ``forward`` advances to the next
+    stage or to the next lane in the same stage; ``skip`` advances to any
+    later stage (adjacent stages included) or to the next lane in the same
+    stage; ``back`` returns to the same or an earlier stage and is
+    paint-only, never affecting visibility. A same-stage forward/skip pill
+    is centered in the lane gap (``EventFlow.gap``) it routes through, not
+    the inter-stage ``stage_gap``; every cross-stage forward/adjacent-skip
+    pill packs into ``stage_gap`` instead, alongside exterior skip bows,
+    back loops, and collapsible fold nubs.
+
+    ``stage_inset`` reserves a nonnegative horizontal margin inside each
+    stage column, centering every intrinsic-width card in it; zero (the
+    default) is byte-identical to omitting it. ``stage_gap`` is always the
+    empty distance between two adjacent *padded* stage-column bounds, so a
+    stage boundary's actual physical clearance for routes, pills, and nubs
+    is ``stage_gap + 2 * stage_inset``.
+
+    Omitting ``stage_gap`` derives the narrowest visible band gap that still
+    keeps every forward pill, loop pool, and collapsible fold nub disjoint.
+    Physical card-edge clearance is floored at 108px before
+    ``2 * stage_inset`` is subtracted. The visible gap is clamped to 18px
+    when fold nubs are present and otherwise to the Graph contract's 1px
+    minimum.
     """
     node_entries = cast(tuple[tuple[str, Card], ...], _canonical(nodes, name="EventFlow.nodes"))
     placement_entries = cast(
@@ -107,7 +127,7 @@ def EventFlow(
     stage_label_entries = cast(
         tuple[str, ...], _canonical(stage_labels, name="EventFlow.stage_labels")
     )
-    layout = Staged(placement_entries, labels=stage_label_entries)
+    layout = Staged(placement_entries, labels=stage_label_entries, stage_inset=stage_inset)
     slot_by_id = {slot.card_id: slot for slot in layout.slots}
     stage_by_id = {card_id: slot.stage for card_id, slot in slot_by_id.items()}
     if len(stage_by_id) != len(layout.slots):
@@ -171,8 +191,18 @@ def EventFlow(
             styles=resolved_styles,
             max_stage=max_stage,
         )
+        # `stage_gap` is measured between padded column bounds. Preserve the
+        # existing 108px minimum as physical card-edge clearance, then net
+        # out the free inset on both sides so wider bands replace empty gap
+        # instead of pushing cards farther apart.
+        physical_requirement = max(
+            float(_DEFAULT_STAGE_GAP_FLOOR),
+            max(requirements.values(), default=0.0),
+        )
+        minimum_visible_gap = 18 if collapsible_entries else 1
         resolved_stage_gap = max(
-            _DEFAULT_STAGE_GAP_FLOOR, math.ceil(max(requirements.values(), default=0.0))
+            minimum_visible_gap,
+            math.ceil(physical_requirement - 2 * layout.stage_inset),
         )
     visibility = tuple(wire.id for wire in wires if wire.kind != "back")
     return Graph(

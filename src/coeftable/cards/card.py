@@ -66,6 +66,22 @@ class Card:
             theme=resolved_theme,
             chrome=self.chrome,
         )
+        template = CardTemplate(width=self.width, header=header, body=body, chrome=self.chrome)
+        if self.appearance.emphasis == "muted":
+            base_body = resolve_content(
+                self.content,
+                width=usable,
+                theme=self.theme,
+                chrome=self.chrome,
+            )
+            base_template = CardTemplate(
+                width=self.width,
+                header=header,
+                body=base_body,
+                chrome=self.chrome,
+            )
+            if base_template.measure() != template.measure():
+                raise SpecError("Card.appearance emphasis must not change Region geometry")
         control_options: dict[str, tuple[str, ...]] = {}
         for adornment in body:
             if isinstance(adornment, SelectControl) and adornment.key is not None:
@@ -73,11 +89,7 @@ class Card:
                     raise SpecError(f"duplicate SelectControl.key {adornment.key!r} in card")
                 control_options[adornment.key] = tuple(value for value, _ in adornment.options)
         object.__setattr__(self, "_control_options", MappingProxyType(control_options))
-        object.__setattr__(
-            self,
-            "_template",
-            CardTemplate(width=self.width, header=header, body=body, chrome=self.chrome),
-        )
+        object.__setattr__(self, "_template", template)
 
     def measure(self) -> MeasuredCard:
         """Return this card's exact reserved footprints."""

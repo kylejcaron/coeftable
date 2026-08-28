@@ -1496,6 +1496,24 @@ def test_muted_card_bakes_muted_color_into_trend_svg_with_identical_measurement(
     assert "opacity" not in muted_html
 
 
+def test_muted_appearance_rejects_a_region_that_changes_measured_geometry_by_theme():
+    class ThemeSensitiveRegion:
+        def resolve(self, *, width, theme, chrome):
+            del width, chrome
+            rows = (TextBlock("one"),)
+            return rows if theme.text == DEFAULT.text else (*rows, TextBlock("two"))
+
+    with pytest.raises(
+        SpecError,
+        match=re.escape("Card.appearance emphasis must not change Region geometry"),
+    ):
+        Card(
+            "Node",
+            content=(ThemeSensitiveRegion(),),
+            appearance=CardAppearance(emphasis="muted"),
+        )
+
+
 def test_default_appearance_does_not_change_card_html():
     card = Card("Node", content=(TextBlock("Body"),), width=220)
     explicit = dataclasses.replace(card, appearance=DEFAULT_APPEARANCE)

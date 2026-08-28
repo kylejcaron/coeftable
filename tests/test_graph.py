@@ -28,6 +28,7 @@ from coeftable.graph import (
     StateRule,
     Wire,
 )
+from coeftable.graph._staged import staged_boxes
 from coeftable.graph.model import _stage_columns
 from coeftable.graph.state import _CompiledState
 from coeftable.graph.topology import blocker_families, check_acyclic, is_acyclic
@@ -136,6 +137,22 @@ from coeftable.theme import DEFAULT, Direction
         (
             lambda: Staged((StageSlot("card", 0, 0),), labels=("",)),
             "Staged.labels[0] must be a non-empty str",
+        ),
+        (
+            lambda: Staged((StageSlot("card", 0, 0),), stage_inset=cast(int, 1.5)),
+            "Staged.stage_inset must be a non-negative int",
+        ),
+        (
+            lambda: Staged((StageSlot("card", 0, 0),), stage_inset=True),
+            "Staged.stage_inset must be a non-negative int",
+        ),
+        (
+            lambda: Staged((StageSlot("card", 0, 0),), stage_inset=-1),
+            "Staged.stage_inset must be a non-negative int",
+        ),
+        (
+            lambda: Staged((StageSlot("card", 0, 0),), stage_inset=cast(int, "16")),
+            "Staged.stage_inset must be a non-negative int",
         ),
         (lambda: Wire("", "a", "b"), "Wire.id must be a non-empty str"),
         (lambda: Wire("w", "", "b"), "Wire.src must be a non-empty str"),
@@ -249,6 +266,65 @@ def test_stage_columns_helper_derives_extents_and_pairs_labels_in_stage_order():
     )
 
 
+def test_stage_columns_helper_pads_extents_by_stage_inset():
+    """A positive `stage_inset` widens every band by the inset on each side,
+    matching the padded column bounds `staged_boxes` itself measures --
+    including once the underlying `boxes` reflect a route-induced shift,
+    since this helper only ever reads final card extents."""
+    boxes = (
+        ("a", (10, 5, 50, 20)),
+        ("wide", (10, 40, 90, 20)),
+        ("b", (150, 5, 60, 20)),
+    )
+    slot_by_id = {
+        "a": StageSlot("a", 0, 0),
+        "wide": StageSlot("wide", 0, 1),
+        "b": StageSlot("b", 1, 0),
+    }
+    columns = _stage_columns(boxes, slot_by_id, ("Intake", "Resolve"), 3.0, stage_inset=16)
+    assert columns == (
+        ("Intake", 10.0 - 16, 90.0 + 32, 3.0),
+        ("Resolve", 150.0 - 16, 60.0 + 32, 3.0),
+    )
+    # Post-shift boxes (e.g. every x pushed right by an earlier route
+    # canvas expansion) pad exactly the same way, proving this composes
+    # correctly with `_graph_measure_staged`'s shift_x/shift_y handling.
+    shifted = tuple((cid, (x + 40, y, w, h)) for cid, (x, y, w, h) in boxes)
+    shifted_columns = _stage_columns(
+        shifted, slot_by_id, ("Intake", "Resolve"), 3.0, stage_inset=16
+    )
+    assert shifted_columns == tuple(
+        (label, left + 40, width, header_top) for label, left, width, header_top in columns
+    )
+
+
+def test_staged_boxes_stage_inset_centers_narrower_cards_in_padded_columns():
+    """`stage_inset=0` collapses to the prior left-aligned placement
+    exactly; a positive inset pads every column by `widest + 2 * inset`
+    and centers each card -- narrower ones included -- inside it, while
+    every card keeps its own intrinsic width."""
+    entries = (
+        ("a", 0, 0, 100, 20),
+        ("wide", 0, 1, 160, 20),
+        ("b", 1, 0, 120, 20),
+    )
+    omitted = staged_boxes(entries, lane_gap=10, stage_gap=30, padding=8)
+    zero = staged_boxes(entries, lane_gap=10, stage_gap=30, padding=8, stage_inset=0)
+    assert omitted == zero
+
+    width, height, boxes = staged_boxes(
+        entries, lane_gap=10, stage_gap=30, padding=8, stage_inset=16
+    )
+    by_id = dict(boxes)
+    assert by_id["wide"][0] == 8 + 16  # widest card touches the column's inner padded edge
+    assert by_id["a"][0] == by_id["wide"][0] + (160 - 100) // 2  # centered against the same column
+    assert by_id["a"][2] == 100  # intrinsic width preserved, never stretched to fill the column
+    stage1_left = by_id["b"][0] - 16
+    assert stage1_left - (by_id["wide"][0] + 160 + 16) == 30  # stage_gap between padded bounds
+    assert height == omitted[1]  # inset is purely horizontal
+    assert width == omitted[0] + 2 * 16 * 2  # 2 stages, each padded 16px on both sides
+
+
 def test_staged_graph_caches_stage_columns_matching_measured_extents():
     nodes = (
         ("a", Card("A", width=100)),
@@ -291,6 +367,104 @@ def test_staged_labeled_flow_renders_bands_matching_cached_stage_columns():
         assert f"width:{width:g}px" in style
         assert f"height:{band_height:g}px" in style
         assert f">{label.upper()}<" in html
+
+
+@pytest.mark.parametrize(
+    ("src", "dst", "kind", "ok", "message"),
+    [
+        ("s0l0", "s1l0", "forward", True, None),
+        ("s0l0", "s0l1", "forward", True, None),
+        (
+            "s0l0",
+            "s0l2",
+            "forward",
+            False,
+            "same-stage forward edge must advance to the next lane",
+        ),
+        (
+            "s0l0",
+            "s2l0",
+            "forward",
+            False,
+            "forward edge must advance by exactly one stage or to the next lane in the same stage",
+        ),
+        ("s0l0", "s1l0", "skip", True, None),
+        ("s0l0", "s2l0", "skip", True, None),
+        ("s0l0", "s0l1", "skip", True, None),
+        ("s0l0", "s0l2", "skip", False, "same-stage skip edge must advance to the next lane"),
+        (
+            "s1l0",
+            "s0l0",
+            "skip",
+            False,
+            "skip edge must advance to a later stage or to the next lane in the same stage",
+        ),
+        ("s1l0", "s0l0", "back", True, None),
+        ("s0l1", "s0l0", "back", True, None),
+        ("s0l0", "s1l0", "back", False, "back edge must stay in or return to an earlier stage"),
+    ],
+)
+def test_graph_validates_flow_geometry_directly_for_every_wire_kind(src, dst, kind, ok, message):
+    """`Graph` is the authoritative geometry boundary: a caller constructing
+    `Wire`s directly, without going through `EventFlow`, must still be held
+    to the exact same next-stage-or-next-lane forward, any-later-stage-or-
+    next-lane skip, and same-or-earlier-stage back rules."""
+    nodes = tuple((f"s{s}l{lane}", Card(f"s{s}l{lane}")) for s in range(3) for lane in range(3))
+    slots = tuple(StageSlot(f"s{s}l{lane}", s, lane) for s in range(3) for lane in range(3))
+    build = lambda: Graph(nodes, Staged(slots), wires=(Wire("w", src, dst, kind=kind),))  # noqa: E731
+    if ok:
+        assert build()
+    else:
+        with pytest.raises(SpecError, match=re.escape(message)):
+            build()
+
+
+def test_staged_stage_inset_zero_is_byte_identical_to_omitting_it():
+    """The default `stage_inset=0` must reproduce the exact same boxes,
+    canvas size, and cached stage columns as before this keyword existed."""
+    nodes = (("a", Card("A", width=140)), ("b", Card("B", width=140)))
+    slots = (StageSlot("a", 0, 0), StageSlot("b", 1, 0))
+    omitted = Graph(nodes, Staged(slots, labels=("Intake", "Resolve")), dom_prefix="parity")
+    explicit_zero = Graph(
+        nodes,
+        Staged(slots, labels=("Intake", "Resolve"), stage_inset=0),
+        dom_prefix="parity",
+    )
+    assert omitted.measure() == explicit_zero.measure()
+    assert omitted._layout.stage_columns == explicit_zero._layout.stage_columns
+    assert omitted.as_raw_html() == explicit_zero.as_raw_html()
+
+
+def test_staged_stage_inset_pads_columns_and_grows_canvas_by_the_exact_amount():
+    """A 16px inset makes every column `widest_card + 32px`, centers each
+    card against that column, keeps `stage_gap` the empty distance between
+    padded bounds, and grows the canvas by `32px * stage_count`."""
+    nodes = (("a", Card("A", width=140)), ("b", Card("B", width=140)))
+    slots = (StageSlot("a", 0, 0), StageSlot("b", 1, 0))
+    baseline = Graph(nodes, Staged(slots, labels=("Intake", "Resolve")), dom_prefix="pad0")
+    inset = Graph(
+        nodes,
+        Staged(slots, labels=("Intake", "Resolve"), stage_inset=16),
+        dom_prefix="pad0",
+    )
+    baseline_boxes = dict(baseline.measure().boxes)
+    boxes = dict(inset.measure().boxes)
+    for card_id in ("a", "b"):
+        assert boxes[card_id][2:] == baseline_boxes[card_id][2:]  # width/height untouched
+
+    columns = inset._layout.stage_columns
+    for (_label, left, width, _header_top), card_id in zip(columns, ("a", "b"), strict=True):
+        card_x, _y, card_width, _h = boxes[card_id]
+        assert width == card_width + 2 * 16  # widest (only) card in the column, padded both sides
+        assert card_x == left + 16  # centered -- here, flush against the inner padded edge
+        assert left + width == card_x + card_width + 16  # trailing inset matches the leading one
+
+    # stage_gap is still the empty distance between the two padded bands
+    (_l0, left0, width0, _h0), (_l1, left1, _w1, _h1) = columns
+    assert left1 - (left0 + width0) == inset.layer_gap
+
+    assert inset.measure().width == baseline.measure().width + 2 * 16 * 2  # 2 stages
+    assert inset.measure().height == baseline.measure().height  # inset is purely horizontal
 
 
 def test_every_leaf_is_frozen_slotted_and_without_dict():
