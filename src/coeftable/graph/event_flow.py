@@ -118,13 +118,27 @@ def EventFlow(
             raise SpecError(f"EventFlow.edges[{index}] must be a FlowEdge")
         if edge.src not in stage_by_id or edge.dst not in stage_by_id:
             raise SpecError("EventFlow edge endpoints must reference placements")
-        src_stage = stage_by_id[edge.src]
-        dst_stage = stage_by_id[edge.dst]
-        if edge.kind == "forward" and dst_stage != src_stage + 1:
-            raise SpecError("forward edge must advance by exactly one stage")
-        if edge.kind == "skip" and dst_stage <= src_stage + 1:
-            raise SpecError("skip edge must advance by more than one stage")
-        if edge.kind == "back" and dst_stage > src_stage:
+        src_slot = slot_by_id[edge.src]
+        dst_slot = slot_by_id[edge.dst]
+        same_stage_next_lane = (
+            dst_slot.stage == src_slot.stage and dst_slot.lane == src_slot.lane + 1
+        )
+        if edge.kind == "forward":
+            if dst_slot.stage != src_slot.stage + 1 and not same_stage_next_lane:
+                if dst_slot.stage == src_slot.stage:
+                    raise SpecError("same-stage forward edge must advance to the next lane")
+                raise SpecError(
+                    "forward edge must advance by exactly one stage or to the next "
+                    "lane in the same stage"
+                )
+        elif edge.kind == "skip":
+            if dst_slot.stage <= src_slot.stage and not same_stage_next_lane:
+                if dst_slot.stage == src_slot.stage:
+                    raise SpecError("same-stage skip edge must advance to the next lane")
+                raise SpecError(
+                    "skip edge must advance to a later stage or to the next lane in the same stage"
+                )
+        elif dst_slot.stage > src_slot.stage:
             raise SpecError("back edge must stay in or return to an earlier stage")
     wires = tuple(
         Wire(

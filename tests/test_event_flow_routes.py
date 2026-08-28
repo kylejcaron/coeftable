@@ -2,6 +2,7 @@ from coeftable.graph._routes import (
     route_across,
     route_back_sag,
     route_c_loop,
+    route_down,
     route_skip_bow,
 )
 
@@ -182,3 +183,25 @@ def test_skip_bow_missing_either_gate_keeps_the_pure_continuous_bow():
     pure = route_skip_bow(SRC, DST, offset=24)
     assert only_src.path == pure.path
     assert only_dst.path == pure.path
+
+
+def test_down_uses_bottom_and_top_midpoints_when_lane_widths_match():
+    upper = (10, 20, 100, 60)
+    lower = (10, 200, 100, 60)
+    route = route_down(upper, lower)
+    assert route.path == "M60,80 C60,140 60,140 60,200"
+    assert route.label_anchor == (60.0, 140.0)
+    assert route.bounds == (60.0, 80.0, 60.0, 200.0)
+
+
+def test_down_centers_the_control_hull_between_unequal_lane_widths():
+    """Every card keeps its own width rather than its stage's shared max, so
+    a same-stage source and destination can have different centers; the
+    cubic's controls still sit directly beneath each anchor, not on some
+    shared column x."""
+    narrow = (40, 20, 100, 60)
+    wide = (40, 200, 140, 60)
+    route = route_down(narrow, wide)
+    assert route.path == "M90,80 C90,140 110,140 110,200"
+    assert route.label_anchor == (100.0, 140.0)
+    assert route.bounds == (90.0, 80.0, 110.0, 200.0)

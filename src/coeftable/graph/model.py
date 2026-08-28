@@ -17,6 +17,7 @@ from coeftable.graph._routes import (
     route_across,
     route_back_sag,
     route_c_loop,
+    route_down,
     route_skip_bow,
 )
 from coeftable.graph._staged import staged_boxes
@@ -668,23 +669,42 @@ def _graph_validate_flow_geometry(
 
     Graph is the authoritative boundary for this invariant: a caller that
     bypasses :class:`EventFlow` and constructs wires directly still cannot
-    produce a staged wire with a kind/geometry mismatch.
+    produce a staged wire with a kind/geometry mismatch. ``forward`` and
+    ``skip`` additionally accept the next lane in the very same stage
+    (`route_down`'s vertical corridor); any other same-stage movement is
+    neither a valid forward/skip target nor a valid ``back`` target, since
+    ``back`` only ever loops within its own stage (`route_c_loop`), never
+    routes between two same-stage lanes directly.
     """
     if not isinstance(layout, Staged):
         if any(wire.kind is not None for wire in wires):
             raise SpecError("flow wire kinds require a Staged layout")
         return
-    stage_by_id = {slot.card_id: slot.stage for slot in layout.slots}
+    slot_by_id = {slot.card_id: slot for slot in layout.slots}
     for wire in wires:
         if wire.kind is None:
             raise SpecError("Staged graph wires must declare a flow kind")
-        src_stage = stage_by_id[wire.src]
-        dst_stage = stage_by_id[wire.dst]
-        if wire.kind == "forward" and dst_stage != src_stage + 1:
-            raise SpecError("forward edge must advance by exactly one stage")
-        if wire.kind == "skip" and dst_stage <= src_stage + 1:
-            raise SpecError("skip edge must advance by more than one stage")
-        if wire.kind == "back" and dst_stage > src_stage:
+        src_slot = slot_by_id[wire.src]
+        dst_slot = slot_by_id[wire.dst]
+        same_stage_next_lane = (
+            dst_slot.stage == src_slot.stage and dst_slot.lane == src_slot.lane + 1
+        )
+        if wire.kind == "forward":
+            if dst_slot.stage != src_slot.stage + 1 and not same_stage_next_lane:
+                if dst_slot.stage == src_slot.stage:
+                    raise SpecError("same-stage forward edge must advance to the next lane")
+                raise SpecError(
+                    "forward edge must advance by exactly one stage or to the next "
+                    "lane in the same stage"
+                )
+        elif wire.kind == "skip":
+            if dst_slot.stage <= src_slot.stage and not same_stage_next_lane:
+                if dst_slot.stage == src_slot.stage:
+                    raise SpecError("same-stage skip edge must advance to the next lane")
+                raise SpecError(
+                    "skip edge must advance to a later stage or to the next lane in the same stage"
+                )
+        elif dst_slot.stage > src_slot.stage:
             raise SpecError("back edge must stay in or return to an earlier stage")
 
 
@@ -1085,8 +1105,26 @@ def _flow_route(
     once, independent of any wire's own span — actually holds between two
     wires' painted corridors instead of drifting apart by however much
     their own per-wire spans happened to differ.
+
+    A same-stage forward/skip wire routes straight down the lane gap
+    (`route_down`) instead: it never leaves its own stage's column, so none
+    of the exterior stage-boundary machinery below applies to it. An
+    adjacent-stage skip (exactly one stage later) also never needs the
+    exterior bow — it crosses the same single physical gap a forward wire
+    would, so it reuses `route_across` with skip's own dashed styling; only
+    a skip spanning more than one stage still bows over the intervening
+    columns.
     """
+    if src_stage == dst_stage and wire.kind in ("forward", "skip"):
+        return route_down(src_box, dst_box)
     if wire.kind == "forward":
+        return route_across(
+            src_box,
+            dst_box,
+            src_edge=stage_extents[src_stage][1],
+            dst_edge=stage_extents[dst_stage][0],
+        )
+    if wire.kind == "skip" and dst_stage == src_stage + 1:
         return route_across(
             src_box,
             dst_box,
@@ -1210,6 +1248,40 @@ def _stage_vertical_extents(
     return extents
 
 
+def _flow_skip_bows(wire: Wire, *, slot_by_id: Mapping[str, StageSlot]) -> bool:
+    """Return whether a skip wire still bows over an exterior corridor.
+
+    A same-stage skip routes straight down the lane gap (`route_down`) and
+    an adjacent-stage skip crosses the single physical gap directly
+    (`route_across`), exactly like an ordinary forward wire; only a skip
+    spanning more than one stage still bows above the intervening columns
+    and needs the exterior ``skip`` track pool and its shared vertical base.
+    """
+    if wire.kind != "skip":
+        return False
+    src_stage = slot_by_id[wire.src].stage
+    dst_stage = slot_by_id[wire.dst].stage
+    return dst_stage > src_stage + 1
+
+
+def _flow_routes_across(wire: Wire, *, slot_by_id: Mapping[str, StageSlot]) -> bool:
+    """Return whether a forward/skip wire crosses via `route_across`.
+
+    `route_across` always anchors its pill at the exact midpoint of the
+    single physical gap between two adjacent stages, whether the wire is an
+    ordinary forward edge or a skip landing exactly one stage later — both
+    pool into that gap's centered stage-gap requirement and its
+    forward-pill packing exactly alike. A same-stage forward/skip
+    (`route_down`) and a skip spanning more than one stage
+    (`route_skip_bow`) never reach here.
+    """
+    if wire.kind not in ("forward", "skip"):
+        return False
+    src_stage = slot_by_id[wire.src].stage
+    dst_stage = slot_by_id[wire.dst].stage
+    return dst_stage == src_stage + 1
+
+
 def _flow_vertical_bases(
     wires: tuple[Wire, ...],
     *,
@@ -1255,7 +1327,7 @@ def _flow_vertical_bases(
         src_stage = slot_by_id[wire.src].stage
         dst_stage = slot_by_id[wire.dst].stage
         low_stage, high_stage = min(src_stage, dst_stage), max(src_stage, dst_stage)
-        if wire.kind == "skip":
+        if _flow_skip_bows(wire, slot_by_id=slot_by_id):
             skip_stages.update(range(low_stage, high_stage + 1))
         elif wire.kind == "back" and dst_stage < src_stage:
             back_stages.update(range(low_stage, high_stage + 1))
@@ -1314,21 +1386,31 @@ def _flow_track_group(
 ) -> tuple[str, _TrackAxis] | None:
     """Classify a flow wire's exterior track pool and its packing axis.
 
-    A forward wire routes directly with no exterior offset (``None``). A
-    skip wire always bows above every stage it crosses, so every skip wire
-    shares one upper corridor. A back wire returning to a strictly earlier
-    stage always sags below every stage it crosses, so every such wire
-    shares one lower corridor. A back wire that stays within its own stage
-    loops around that stage's own left or right side instead; a stage's
-    left loops and right loops each pack their own independent corridor, so
-    a loop in one stage never reserves room in another.
+    A same-stage forward/skip wire routes straight down the lane gap
+    (`route_down`) and never leaves its own stage's column, so it reserves
+    no exterior track (``None``) — the very same result as an ordinary
+    forward wire, which also routes directly with no exterior offset. An
+    adjacent-stage skip crosses the same single physical gap a forward wire
+    would (`route_across`), so it reserves no exterior track either; only a
+    skip spanning more than one stage still bows above every stage it
+    crosses and shares that upper corridor (`_flow_skip_bows`). A back wire
+    returning to a strictly earlier stage always sags below every stage it
+    crosses, so every such wire shares one lower corridor. A back wire that
+    stays within its own stage loops around that stage's own left or right
+    side instead; a stage's left loops and right loops each pack their own
+    independent corridor, so a loop in one stage never reserves room in
+    another.
     """
+    src_stage = slot_by_id[wire.src].stage
+    dst_stage = slot_by_id[wire.dst].stage
+    if src_stage == dst_stage and wire.kind in ("forward", "skip"):
+        return None
     if wire.kind == "forward":
         return None
     if wire.kind == "skip":
-        return ("skip", "height")
-    src_stage = slot_by_id[wire.src].stage
-    dst_stage = slot_by_id[wire.dst].stage
+        if _flow_skip_bows(wire, slot_by_id=slot_by_id):
+            return ("skip", "height")
+        return None
     if dst_stage < src_stage:
         return ("back", "height")
     side = "left" if slot_by_id[wire.dst].lane < slot_by_id[wire.src].lane else "right"
@@ -1452,14 +1534,14 @@ def _stage_gap_requirements(
     them know each other's actual paint y-coordinate: the left stage's
     right-loop pool (plus its own collapsible fold nub, which reserves
     `_NUB_RESERVE` even wireless — see `_flow_offsets`), the right stage's
-    left-loop pool, and any labeled forward pill crossing straight through
+    left-loop pool, and any labeled forward/adjacent-skip pill crossing
     the gap's own center (`route_across` always anchors it at the exact
     midpoint between the two stages' outer edges). A lone occupant may
     still touch its own stage boundary exactly (as before); one `chip_gap`
     is only owed between two occupants that would otherwise need to share
     the same space.
 
-    A forward pill's x never shifts off that exact midpoint regardless of
+    A forward or adjacent-skip pill's x never shifts off that exact midpoint regardless of
     how wide the gap is, so an asymmetric pair of loop pools still forces
     *both* halves of the gap to fit the pill: the minimum gap doubles
     whichever side's loop pool (plus its own clearance to the pill) reaches
@@ -1481,7 +1563,7 @@ def _stage_gap_requirements(
         loop_reach[key] = max(loop_reach.get(key, 0.0), reach)
     centered_reach: dict[int, float] = {}
     for wire in wires:
-        if wire.kind != "forward" or wire.label is None:
+        if wire.label is None or not _flow_routes_across(wire, slot_by_id=slot_by_id):
             continue
         nominal = _pill_width(wire.label, chrome) / 2
         half = _painted_extent(wire, nominal, styles=styles, pill_halo=pill_halo)
@@ -1539,6 +1621,38 @@ def _graph_validate_stage_gap(
             )
 
 
+def _graph_validate_same_stage_pill_height(
+    wires: tuple[Wire, ...],
+    *,
+    slot_by_id: Mapping[str, StageSlot],
+    chrome: CardChrome,
+    lane_gap: int,
+) -> None:
+    """Reject a `Graph.gap` too narrow for a labeled same-stage flow pill.
+
+    A same-stage forward/skip pill centers in the empty lane gap
+    (`route_down`'s midpoint), not the physical inter-stage gap
+    `_graph_validate_stage_gap` guards, so `Graph.gap` alone — never
+    `Graph.layer_gap` — must independently contain its full painted height:
+    the nominal pill height plus both border halos, matching
+    `_flow_bounds_extrema`'s own definition of a pill's actual paint.
+    """
+    required = 0.0
+    for wire in wires:
+        if wire.kind not in ("forward", "skip") or wire.label is None:
+            continue
+        if slot_by_id[wire.dst].stage != slot_by_id[wire.src].stage:
+            continue
+        nominal_height = line_height(chrome.caption_size, chrome) + 2 * chrome.chip_padding_y
+        painted_height = nominal_height + chrome.border_width
+        required = max(required, painted_height)
+    if required > lane_gap:
+        raise SpecError(
+            f"Graph.gap must be at least {required:g}px for a labeled same-stage "
+            f"flow pill but is {lane_gap}px"
+        )
+
+
 def _flow_geometry(
     wires: tuple[Wire, ...],
     boxes_by_id: dict[str, Box],
@@ -1588,28 +1702,29 @@ def _pack_forward_pills(
     slot_by_id: Mapping[str, StageSlot],
     chrome: CardChrome,
 ) -> tuple[dict[str, Route], dict[str, tuple[float, float, float, float]]]:
-    """Stack a stage gap's labeled forward pills clear of every other painted pill.
+    """Stack a stage gap's labeled across pills clear of every other painted pill.
 
-    A forward wire's pill always centers on the exact physical midpoint
-    between its two stages (`route_across`'s fixed anchor), so two forward
-    wires sharing a source stage — and therefore the same physical gap —
-    can land at an identical pill x, and even the same y whenever their
-    endpoints happen to sit at equal painted heights. Every non-forward
-    labeled wire (skip, back, and same-stage loop) already owns a fixed,
-    disjoint track from `_flow_offsets`, so its own pill never moves; those
-    painted rects are seeded once, up front, as one flat obstacle set with
-    no per-gap bucketing — a skip/back pill's bow/sag can span several
+    A forward or adjacent-stage skip wire's pill always centers on the
+    exact physical midpoint between its two stages (`route_across`'s fixed
+    anchor — see `_flow_routes_across`), so two such wires sharing a source
+    stage — and therefore the same physical gap — can land at an identical
+    pill x, and even the same y whenever their endpoints happen to sit at
+    equal painted heights. Every other labeled wire (a same-stage
+    forward/skip, a bowing skip, back, and a same-stage loop) already owns
+    a fixed, disjoint track/anchor of its own, so its own pill never moves;
+    those painted rects are seeded once, up front, as one flat obstacle set
+    with no per-gap bucketing — a skip/back pill's bow/sag can span several
     stages, so a real rect-intersection test against every one of them is
     the only reliable answer to "does this actually share my gap", not
     which pool the wire nominally belongs to. Declaration order then
-    breaks ties between forward pills themselves: each keeps its own
-    gap-midpoint x exactly and, only if its *painted* rect (nominal,
-    expanded by half the chrome border width on every side, matching
-    `_flow_bounds_extrema`'s own definition of a pill's actual paint)
-    actually intersects an obstacle or an earlier forward pill already
-    packed into that same physical stage gap, shifts straight down by one
-    pill height plus one `chrome.chip_gap` at a time until it clears every
-    one of them.
+    breaks ties between across pills themselves, forward and adjacent skip
+    alike: each keeps its own gap-midpoint x exactly and, only if its
+    *painted* rect (nominal, expanded by half the chrome border width on
+    every side, matching `_flow_bounds_extrema`'s own definition of a
+    pill's actual paint) actually intersects an obstacle or an earlier
+    across pill already packed into that same physical stage gap, shifts
+    straight down by one pill height plus one `chrome.chip_gap` at a time
+    until it clears every one of them.
     """
     packed_routes = dict(routes)
     packed_pills = dict(pills)
@@ -1617,11 +1732,11 @@ def _pack_forward_pills(
     obstacles = [
         _painted_pill_rect(pills[wire.id], pill_halo)
         for wire in wires
-        if wire.kind != "forward" and wire.label is not None
+        if wire.label is not None and not _flow_routes_across(wire, slot_by_id=slot_by_id)
     ]
     placed_by_gap: dict[int, list[tuple[float, float, float, float]]] = {}
     for wire in wires:
-        if wire.kind != "forward" or wire.label is None:
+        if wire.label is None or not _flow_routes_across(wire, slot_by_id=slot_by_id):
             continue
         gap = slot_by_id[wire.src].stage
         placed = placed_by_gap.setdefault(gap, [])
@@ -1780,6 +1895,12 @@ def _graph_measure_staged(
         styles=styles,
         max_stage=last_stage,
         stage_gap=stage_gap,
+    )
+    _graph_validate_same_stage_pill_height(
+        wires,
+        slot_by_id=slot_by_id,
+        chrome=chrome,
+        lane_gap=lane_gap,
     )
     boxes_by_id = dict(boxes)
     routes, pills = _flow_geometry(

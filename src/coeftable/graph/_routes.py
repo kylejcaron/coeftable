@@ -304,3 +304,24 @@ def route_c_loop(
         (corridor, middle_y),
         (min(xs), min(sy, dy), max(xs), max(sy, dy)),
     )
+
+
+def route_down(src: Box, dst: Box) -> Route:
+    """Route a same-stage forward/skip edge from ``src``'s bottom to ``dst``'s top.
+
+    Both endpoints and the cubic's own controls stay in the empty lane gap
+    between two adjacent lanes in the same stage: the destination is entered
+    from directly above, so no horizontal destination tangent is needed the
+    way `route_across`'s cross-stage arrival needs one.
+    """
+    sx = src[0] + src[2] / 2
+    sy = src[1] + src[3]
+    dx = dst[0] + dst[2] / 2
+    dy = dst[1]
+    middle_y = (sy + dy) / 2
+    path = f"M{_n(sx)},{_n(sy)} C{_n(sx)},{_n(middle_y)} {_n(dx)},{_n(middle_y)} {_n(dx)},{_n(dy)}"
+    return Route(
+        path,
+        ((sx + dx) / 2, middle_y),
+        (min(sx, dx), min(sy, dy), max(sx, dx), max(sy, dy)),
+    )

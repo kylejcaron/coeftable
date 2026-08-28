@@ -565,3 +565,63 @@ def test_product_flow_snapshots_stage_step_and_edge_sequences():
         "purchased",
     )
     assert len(report.graph.wires) == len(_funnel_edges())
+
+
+# --- Same-stage and adjacent-skip literal prototype topology --------------
+
+
+def _literal_prototype_stages() -> tuple[str, ...]:
+    return ("Browse", "Cart", "Checkout", "Payment", "Confirmed")
+
+
+def _literal_prototype_steps() -> tuple[ProductStep, ...]:
+    return (
+        ProductStep("searched", "Searched catalog", 0, 0, series=(78.0, 84.1)),
+        ProductStep("viewed", "Viewed product", 0, 1, series=(290.0, 310.0), muted=True),
+        ProductStep("added", "Added to cart", 1, 1, series=(58.0, 62.0)),
+        ProductStep("saved", "Saved for later", 1, 0, series=(11.0, 13.0)),
+        ProductStep("started", "Checkout started", 2, 1, series=(38.0, 41.2)),
+        ProductStep(
+            "shipping", "/shipping", 2, 2, kind="decision", series=(), note="routing decision"
+        ),
+        ProductStep("paysub", "Payment submitted", 3, 1, series=(34.0, 37.0)),
+        ProductStep(
+            "payfail", "Payment failed", 3, 2, series=(4.2, 3.6), direction="lower_is_better"
+        ),
+        ProductStep("confirmed", "Order confirmed", 4, 1, kind="terminal", series=(30.0, 33.5)),
+    )
+
+
+def _literal_prototype_edges() -> tuple[FlowEdge, ...]:
+    return (
+        FlowEdge("searched-viewed", "searched", "viewed", "forward"),
+        FlowEdge("viewed-added", "viewed", "added", "forward"),
+        FlowEdge("viewed-saved", "viewed", "saved", "skip", "save for later"),
+        FlowEdge("saved-added", "saved", "added", "skip", "returns later"),
+        FlowEdge("added-started", "added", "started", "forward"),
+        FlowEdge("viewed-started", "viewed", "started", "skip", "buy now"),
+        FlowEdge("started-shipping", "started", "shipping", "forward"),
+        FlowEdge("shipping-paysub", "shipping", "paysub", "forward"),
+        FlowEdge("paysub-payfail", "paysub", "payfail", "forward"),
+        FlowEdge("payfail-paysub", "payfail", "paysub", "back", "retry"),
+        FlowEdge("started-added", "started", "added", "back", "edit cart"),
+        FlowEdge("paysub-confirmed", "paysub", "confirmed", "forward"),
+    )
+
+
+def test_product_flow_constructs_every_literal_prototype_edge_shape():
+    """The literal prototype's 12 flows include five edge shapes R6's
+    original geometry rules rejected outright: three same-stage forwards
+    (searched to viewed, started to shipping, paysub to payfail), one
+    same-stage skip (saved to added), and one adjacent-stage skip (viewed
+    to saved). All twelve must construct and route."""
+    report = ProductFlow(
+        _literal_prototype_stages(), _literal_prototype_steps(), _literal_prototype_edges()
+    )
+    assert len(report.graph.nodes) == 9
+    assert len(report.graph.wires) == 12
+    same_stage_ids = ("searched-viewed", "started-shipping", "paysub-payfail", "saved-added")
+    wire_geometry = dict(report.graph._layout.wire_geometry)
+    for wire_id in same_stage_ids:
+        assert wire_id in wire_geometry
+    assert report.as_raw_html() == report.as_raw_html()
