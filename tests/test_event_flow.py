@@ -1,6 +1,7 @@
 """Contract tests for the staged graph layout's exact box placement."""
 
 import re
+from typing import cast
 
 import pytest
 
@@ -9,6 +10,7 @@ from coeftable.errors import SpecError
 from coeftable.graph import (
     Atom,
     ControlRef,
+    EdgeKind,
     EdgeStyle,
     EventFlow,
     FlowEdge,
@@ -20,6 +22,31 @@ from coeftable.graph import (
     StateRule,
     Wire,
 )
+
+
+def _rects_overlap(
+    a: tuple[float, float, float, float], b: tuple[float, float, float, float]
+) -> bool:
+    """Return whether two (x, y, width, height) rects share any interior area."""
+    ax, ay, aw, ah = a
+    bx, by, bw, bh = b
+    return ax < bx + bw and bx < ax + aw and ay < by + bh and by < ay + ah
+
+
+def _assert_pill_bounds_inside(graph: Graph) -> None:
+    """Assert every flow pill's full rectangle, not just its anchor, fits the canvas."""
+    measured = graph.measure()
+    for _wire_id, (px, py, pw, ph) in graph._layout.flow_pills:
+        assert px >= 0
+        assert py >= 0
+        assert px + pw <= measured.width
+        assert py + ph <= measured.height
+
+
+def _path_points(path_d: str) -> list[tuple[float, float]]:
+    """Extract every (x, y) coordinate pair from a rendered SVG path string."""
+    numbers = [float(token) for token in re.findall(r"-?\d+(?:\.\d+)?", path_d)]
+    return list(zip(numbers[0::2], numbers[1::2], strict=True))
 
 
 def test_staged_layout_places_cards_left_to_right_and_top_to_bottom():
@@ -264,6 +291,7 @@ def test_event_flow_paths_and_pills_stay_inside_measured_canvas():
     for _wire_id, (_path, anchor) in graph._layout.wire_geometry:
         assert 0 <= anchor[0] <= measured.width
         assert 0 <= anchor[1] <= measured.height
+    _assert_pill_bounds_inside(graph)
 
 
 def test_event_flow_omits_the_legacy_marker_def():
@@ -309,7 +337,8 @@ def test_forward_wire_label_pill_rejected_when_wider_than_layer_gap():
         stage_gap=49,
     )
     with pytest.raises(
-        SpecError, match=re.escape("forward wire label pill is wider than Graph.layer_gap")
+        SpecError,
+        match=re.escape("forward wire label pill requires 49px but Graph.layer_gap is 48px"),
     ):
         EventFlow(
             (("a", Card("A")), ("b", Card("B"))),
@@ -317,6 +346,40 @@ def test_forward_wire_label_pill_rejected_when_wider_than_layer_gap():
             edges,
             stage_gap=48,
         )
+
+
+def test_forward_wire_label_pill_reserves_extra_width_for_a_collapsible_source():
+    edges = (FlowEdge("a-b", "a", "b", "forward", "hello"),)
+    # Pill width 49.0 plus the 36px collapsible-source fold reserve = 85.0 exactly.
+    assert EventFlow(
+        (("a", Card("A")), ("b", Card("B"))),
+        (StageSlot("a", 0, 0), StageSlot("b", 1, 0)),
+        edges,
+        collapsible=("a",),
+        stage_gap=85,
+    )
+    with pytest.raises(
+        SpecError,
+        match=re.escape("forward wire label pill requires 85px but Graph.layer_gap is 84px"),
+    ):
+        EventFlow(
+            (("a", Card("A")), ("b", Card("B"))),
+            (StageSlot("a", 0, 0), StageSlot("b", 1, 0)),
+            edges,
+            collapsible=("a",),
+            stage_gap=84,
+        )
+
+
+def test_event_flow_default_stage_gap_fits_a_continue_pill_from_a_collapsible_source():
+    # Default chrome pill width for "continue" is 2*8 + 8*11*0.6 = 68.8px, plus the
+    # 36px collapsible-source reserve = 104.8px, comfortably inside the 108px default.
+    assert EventFlow(
+        (("a", Card("A")), ("b", Card("B"))),
+        (StageSlot("a", 0, 0), StageSlot("b", 1, 0)),
+        (FlowEdge("a-b", "a", "b", "forward", "continue"),),
+        collapsible=("a",),
+    )
 
 
 def test_skip_route_offset_beyond_padding_expands_the_canvas():
@@ -353,6 +416,7 @@ def test_skip_route_offset_beyond_padding_expands_the_canvas():
     for _wire_id, (_path, anchor) in graph._layout.wire_geometry:
         assert 0 <= anchor[0] <= measured.width
         assert 0 <= anchor[1] <= measured.height
+    _assert_pill_bounds_inside(graph)
 
 
 def test_back_route_offset_beyond_padding_expands_the_canvas():
@@ -393,3 +457,85 @@ def test_back_route_offset_beyond_padding_expands_the_canvas():
     for _wire_id, (_path, anchor) in graph._layout.wire_geometry:
         assert 0 <= anchor[0] <= measured.width
         assert 0 <= anchor[1] <= measured.height
+    _assert_pill_bounds_inside(graph)
+
+
+def test_same_stage_back_wires_loop_left_and_right_without_overlapping_cards():
+    nodes = (("a", Card("A")), ("b", Card("B")), ("c", Card("C")))
+    slots = (StageSlot("a", 0, 0), StageSlot("b", 0, 1), StageSlot("c", 0, 2))
+    graph = EventFlow(
+        nodes,
+        slots,
+        (
+            FlowEdge("b-a", "b", "a", "back", "retry"),
+            FlowEdge("a-c", "a", "c", "back", "resume"),
+        ),
+        dom_prefix="loops",
+    )
+    boxes = tuple(box for _card_id, box in graph.measure().boxes)
+    pills = dict(graph._layout.flow_pills)
+    left_pill = pills["b-a"]
+    right_pill = pills["a-c"]
+    left_of_cards = min(box[0] for box in boxes)
+    right_of_cards = max(box[0] + box[2] for box in boxes)
+    assert left_pill[0] + left_pill[2] <= left_of_cards
+    assert right_pill[0] >= right_of_cards
+    for box in boxes:
+        assert not _rects_overlap(left_pill, box)
+        assert not _rects_overlap(right_pill, box)
+    _assert_pill_bounds_inside(graph)
+
+
+def test_multiple_same_side_c_loops_pack_into_disjoint_tracks():
+    nodes = (("a", Card("A")), ("b", Card("B")), ("c", Card("C")))
+    slots = (StageSlot("a", 0, 0), StageSlot("b", 0, 1), StageSlot("c", 0, 2))
+    graph = EventFlow(
+        nodes,
+        slots,
+        (
+            FlowEdge("b-a", "b", "a", "back", "retry"),
+            FlowEdge("c-a", "c", "a", "back", "restart"),
+        ),
+        dom_prefix="stacked",
+    )
+    boxes = tuple(box for _card_id, box in graph.measure().boxes)
+    pills = dict(graph._layout.flow_pills)
+    first_pill = pills["b-a"]
+    second_pill = pills["c-a"]
+    assert not _rects_overlap(first_pill, second_pill)
+    for box in boxes:
+        assert not _rects_overlap(first_pill, box)
+        assert not _rects_overlap(second_pill, box)
+    _assert_pill_bounds_inside(graph)
+
+
+def test_thick_edge_style_widths_stay_inside_the_measured_canvas():
+    nodes = (("a", Card("A")), ("b", Card("B")), ("c", Card("C")))
+    slots = (StageSlot("a", 0, 0), StageSlot("b", 1, 0), StageSlot("c", 2, 0))
+    styles = {
+        "forward": EdgeStyle("#000000", width=12.0),
+        "skip": EdgeStyle("#000000", width=18.0, dash=(5.0, 3.0)),
+        "back": EdgeStyle("#000000", width=24.0, dash=(2.0, 3.0)),
+    }
+    graph = EventFlow(
+        nodes,
+        slots,
+        (
+            FlowEdge("a-b", "a", "b", "forward"),
+            FlowEdge("b-c", "b", "c", "forward"),
+            FlowEdge("a-c", "a", "c", "skip", "jump"),
+            FlowEdge("c-a", "c", "a", "back", "retry"),
+        ),
+        styles=styles,  # ty: ignore[invalid-argument-type]
+        dom_prefix="thick",
+    )
+    measured = graph.measure()
+    _assert_pill_bounds_inside(graph)
+    wires_by_id = {wire.id: wire for wire in graph.wires}
+    for wire_id, (path_d, _anchor) in graph._layout.wire_geometry:
+        half = styles[cast(EdgeKind, wires_by_id[wire_id].kind)].width / 2
+        for x, y in _path_points(path_d):
+            assert x - half >= -1e-6
+            assert x + half <= measured.width + 1e-6
+            assert y - half >= -1e-6
+            assert y + half <= measured.height + 1e-6

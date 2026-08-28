@@ -40,3 +40,15 @@ def test_c_loop_uses_the_requested_exterior_side():
     assert downward.path == "M310,30 C334,30 334,130 310,130"
     assert downward.label_anchor == (334.0, 80.0)
     assert downward.bounds == (310.0, 30.0, 334.0, 130.0)
+
+
+def test_c_loop_bound_override_clears_a_wider_sibling_in_the_column():
+    upward = route_c_loop(DST, (210, 0, 100, 60), offset=24, side="left", bound=150)
+    assert upward.path == "M210,130 C126,130 126,30 210,30"
+    assert upward.label_anchor == (126.0, 80.0)
+    assert upward.bounds == (126.0, 30.0, 210.0, 130.0)
+
+    downward = route_c_loop((210, 0, 100, 60), DST, offset=24, side="right", bound=400)
+    assert downward.path == "M310,30 C424,30 424,130 310,130"
+    assert downward.label_anchor == (424.0, 80.0)
+    assert downward.bounds == (310.0, 30.0, 424.0, 130.0)

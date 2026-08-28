@@ -52,7 +52,7 @@ def EventFlow(
     chrome: CardChrome = DEFAULT_CHROME,
     dom_prefix: str = "g0",
     gap: int = 36,
-    stage_gap: int = 72,
+    stage_gap: int = 108,
 ) -> Graph:
     """Build a staged flow with paint-only back edges.
 

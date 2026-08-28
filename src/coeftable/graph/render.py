@@ -5,11 +5,11 @@ from __future__ import annotations
 import html
 from typing import TYPE_CHECKING
 
-from coeftable.graph.model import EdgeStyle
+from coeftable.graph.model import _resolve_edge_styles
 from coeftable.theme import Theme
 
 if TYPE_CHECKING:
-    from coeftable.graph.model import EdgeKind, Graph, _GraphLayout
+    from coeftable.graph.model import EdgeKind, EdgeStyle, Graph, _GraphLayout
     from coeftable.graph.state import _CompiledState
     from coeftable.theme import Role
 
@@ -35,13 +35,7 @@ def _label_color(theme: Theme, label_role: Role | None, label_color: str | None)
 
 def _edge_styles(graph: Graph) -> dict[EdgeKind, EdgeStyle]:
     """Resolve default plus overridden per-kind styles against the current theme."""
-    styles: dict[EdgeKind, EdgeStyle] = {
-        "forward": EdgeStyle(graph.theme.axis),
-        "skip": EdgeStyle(graph.theme.muted, dash=(5.0, 3.0)),
-        "back": EdgeStyle(graph.theme.muted, dash=(2.0, 3.0)),
-    }
-    styles.update(dict(graph.edge_styles))
-    return styles
+    return _resolve_edge_styles(graph.theme, graph.edge_styles)
 
 
 def _wire_svg(graph: Graph, layout: _GraphLayout, compiled: _CompiledState) -> str:
@@ -68,7 +62,7 @@ def _wire_svg(graph: Graph, layout: _GraphLayout, compiled: _CompiledState) -> s
         stroke = _esc(styles[kind].stroke)
         defs.append(
             f'<marker id="{kind_markers[kind]}" markerWidth="8" markerHeight="8" '
-            f'refX="6" refY="3" orient="auto" markerUnits="strokeWidth">'
+            f'refX="6" refY="3" orient="auto" markerUnits="userSpaceOnUse">'
             f'<path d="M 0 0 L 6 3 L 0 6 z" fill="{stroke}"/></marker>'
         )
     fragments = [
@@ -113,7 +107,8 @@ def _wire_svg(graph: Graph, layout: _GraphLayout, compiled: _CompiledState) -> s
                 px, py, pw, ph = pills[wire.id]
                 label = (
                     f'<rect x="{_number(px)}" y="{_number(py)}" width="{_number(pw)}" '
-                    f'height="{_number(ph)}" fill="{surface}" stroke="{stroke}"/>'
+                    f'height="{_number(ph)}" fill="{surface}" stroke="{stroke}" '
+                    f'stroke-width="{_number(graph.chrome.border_width)}"/>'
                     f'<text x="{_number(px + pw / 2)}" y="{_number(py + ph / 2)}" '
                     f'text-anchor="middle" dominant-baseline="middle" fill="{stroke}" '
                     f'style="font-size:{graph.chrome.caption_size}px">'

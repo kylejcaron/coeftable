@@ -40,7 +40,7 @@ def route_across(src: Box, dst: Box) -> Route:
     )
 
 
-def route_skip_bow(src: Box, dst: Box, *, offset: int) -> Route:
+def route_skip_bow(src: Box, dst: Box, *, offset: float) -> Route:
     sx, sy = _right(src)
     dx, dy = _left(dst)
     middle = (sx + dx) / 2
@@ -58,7 +58,7 @@ def route_skip_bow(src: Box, dst: Box, *, offset: int) -> Route:
     )
 
 
-def route_back_sag(src: Box, dst: Box, *, offset: int) -> Route:
+def route_back_sag(src: Box, dst: Box, *, offset: float) -> Route:
     sx, sy = _left(src)
     dx, dy = _right(dst)
     middle = (sx + dx) / 2
@@ -72,15 +72,31 @@ def route_back_sag(src: Box, dst: Box, *, offset: int) -> Route:
     return Route(path, (middle, corridor), (min(xs), min(sy, dy), max(xs), corridor))
 
 
-def route_c_loop(src: Box, dst: Box, *, offset: int, side: Literal["left", "right"]) -> Route:
+def route_c_loop(
+    src: Box,
+    dst: Box,
+    *,
+    offset: float,
+    side: Literal["left", "right"],
+    bound: float | None = None,
+) -> Route:
+    """Route a same-stage loop around ``side``.
+
+    ``bound`` overrides the corridor's base edge; pass the whole stage
+    column's own outer edge (not just this wire's two endpoints) so the
+    loop clears every sibling card sharing that column, not only ``src``
+    and ``dst``. Omitting it falls back to the two boxes' own edges.
+    """
     if side == "left":
         sx, sy = _left(src)
         dx, dy = _left(dst)
-        corridor = min(src[0], dst[0]) - offset
+        edge = min(src[0], dst[0]) if bound is None else bound
+        corridor = edge - offset
     else:
         sx, sy = _right(src)
         dx, dy = _right(dst)
-        corridor = max(src[0] + src[2], dst[0] + dst[2]) + offset
+        edge = max(src[0] + src[2], dst[0] + dst[2]) if bound is None else bound
+        corridor = edge + offset
     middle_y = (sy + dy) / 2
     path = f"M{_n(sx)},{_n(sy)} C{_n(corridor)},{_n(sy)} {_n(corridor)},{_n(dy)} {_n(dx)},{_n(dy)}"
     return Route(
