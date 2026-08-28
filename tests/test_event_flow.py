@@ -1974,3 +1974,38 @@ def test_staged_labels_keep_skip_route_and_pill_clear_of_the_header_band():
                 )
     _assert_no_wire_samples_enter_any_card(labeled)
     _assert_pill_bounds_inside(labeled)
+
+
+def test_stage_label_with_long_text_and_custom_leading_stays_on_one_line():
+    """A stage label longer than its column, paired with a non-default
+    `CardChrome.leading`, must render with the caller's exact measured
+    line-height plus `white-space:nowrap`, `overflow:hidden`, and
+    `text-overflow:ellipsis` -- the only combination that guarantees a
+    single clipped line regardless of text length or font metrics.
+    """
+    chrome = CardChrome(leading=1.8, caption_size=11)
+    nodes = (("a", Card("A", width=80, chrome=chrome)), ("b", Card("B", width=80, chrome=chrome)))
+    long_label = "A very long stage label that would definitely wrap onto multiple lines"
+    graph = Graph(
+        nodes,
+        Staged(
+            (StageSlot("a", 0, 0), StageSlot("b", 1, 0)),
+            labels=(long_label, "Checkout"),
+        ),
+        chrome=chrome,
+        dom_prefix="longlabel",
+    )
+    html = graph.as_raw_html()
+    expected_line_height = line_height(chrome.caption_size, chrome)
+    assert expected_line_height == 20  # ceil(11 * 1.8), sanity-checks the fixture is non-default
+    header_height = expected_line_height + 2 * chrome.gap
+    expected_style = (
+        "box-sizing:border-box;"
+        f"height:{header_height}px;"
+        f"padding-top:{chrome.gap}px;text-align:center;text-transform:uppercase;"
+        f"letter-spacing:0.12em;font-size:{chrome.caption_size}px;"
+        f"line-height:{expected_line_height}px;white-space:nowrap;overflow:hidden;"
+        "text-overflow:ellipsis;"
+        f"font-weight:650;color:{graph.theme.muted}"
+    )
+    assert f'<div style="{expected_style}">{long_label.upper()}</div>' in html

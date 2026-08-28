@@ -175,6 +175,7 @@ def _stage_markup(graph: Graph, layout: _GraphLayout) -> str:
     if not layout.stage_columns:
         return ""
     header_height = line_height(graph.chrome.caption_size, graph.chrome) + 2 * graph.chrome.gap
+    label_line_height = line_height(graph.chrome.caption_size, graph.chrome)
     fragments = []
     for index, (label, left, width, header_top) in enumerate(layout.stage_columns):
         band_height = layout.measured.height - header_top
@@ -188,6 +189,8 @@ def _stage_markup(graph: Graph, layout: _GraphLayout) -> str:
             f'<div style="box-sizing:border-box;height:{header_height}px;'
             f"padding-top:{graph.chrome.gap}px;text-align:center;text-transform:uppercase;"
             f"letter-spacing:0.12em;font-size:{graph.chrome.caption_size}px;"
+            f"line-height:{label_line_height}px;white-space:nowrap;overflow:hidden;"
+            f"text-overflow:ellipsis;"
             f'font-weight:650;color:{_esc(graph.theme.muted)}">{_esc(label.upper())}</div>'
             "</div>"
         )
