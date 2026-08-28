@@ -9,9 +9,11 @@ from coeftable.graph.honesty import (
     RESIDUAL_FAIL,
     RESIDUAL_WARN,
     TRADEOFF_R,
+    endpoint_identity_gap,
     endpoint_interval,
     identity_gap,
     implied_series,
+    infer_op,
     level_noise,
     log_ratio,
     ribbon_bounds,
@@ -90,6 +92,16 @@ def test_identity_gap_measures_mean_relative_shortfall():
     parent = (100.0, 100.0)
     children = ((40.0, 30.0),)  # short by 60% then 70%
     assert identity_gap(parent, children, "+") == pytest.approx(0.65)
+
+
+def test_endpoint_identity_gap_rejects_a_zero_parent_endpoint():
+    with pytest.raises(SpecError, match="finite and non-zero"):
+        endpoint_identity_gap((0.0, 10.0), ((0.0, 10.0),), "+")
+
+
+def test_infer_op_reports_a_zero_parent_value_directly():
+    with pytest.raises(SpecError, match="decomposition parent values must be finite and non-zero"):
+        infer_op((0.0, 10.0), ((0.0, 10.0),))
 
 
 def test_tradeoff_pairs_flag_only_strongly_negative_change_correlation():
@@ -449,3 +461,24 @@ def test_log_ratio_refuses_a_single_non_positive_operand():
 
 def test_log_ratio_still_accepts_two_positives():
     assert log_ratio(2.0, 1.0) == pytest.approx(math.log(2.0))
+
+
+def test_endpoint_identity_gap_only_ever_raises_spec_error():
+    # It is a public function in a module whose one contract is that nothing
+    # but SpecError escapes. Probe every out-of-contract parent shape rather
+    # than the one that happened to be reported.
+    children = [[1.0, 2.0], [3.0, 4.0]]
+    bad_parents: tuple[object, ...] = (
+        ("x", 10.0),  # non-numeric
+        (0.0, 10.0),  # zero first endpoint
+        (10.0, 0.0),  # zero last endpoint
+        (float("inf"), 10.0),
+        (float("nan"), 10.0),
+        (10**400, 10.0),  # overflows on conversion
+    )
+    for parent in bad_parents:
+        with pytest.raises(SpecError):
+            endpoint_identity_gap(parent, children, "+")  # ty: ignore[invalid-argument-type]
+
+    # A well-formed parent still scores.
+    assert endpoint_identity_gap((4.0, 6.0), children, "+") == pytest.approx(0.0)

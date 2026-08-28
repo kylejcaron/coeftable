@@ -25,7 +25,8 @@ from coeftable.graph.driver_tree import (
     _CARD_WIDTH,
     _ROOT_CARD_WIDTH,
     _compute_contributions,
-    _residual_domain,
+    _has_multiplicative_noise,
+    _observed_domain,
     _Topology,
 )
 from coeftable.graph.honesty import RESIDUAL_WARN, identity_gap, log_ratio
@@ -1485,9 +1486,12 @@ def test_a_long_caption_grows_the_card_by_exactly_its_extra_rows():
     assert short_rows == 1
     assert long_rows > 8  # genuinely needs more than eight rows, not just a couple
 
+    # Both absolute figures include the card's own-change subtitle row; the
+    # delta assertion below is what actually pins the caption behaviour and is
+    # independent of that baseline.
     short_resolved, long_resolved = _resolved(sentence), _resolved(long_caption)
-    assert short_resolved == (short_rows, 227)
-    assert long_resolved == (long_rows, 392)
+    assert short_resolved == (short_rows, 250)
+    assert long_resolved == (long_rows, 415)
 
     line_h = line_height(DEFAULT_CHROME.caption_size, DEFAULT_CHROME)
     # Every extra row is a whole new line at the caption's own line height --
@@ -1545,17 +1549,17 @@ def test_a_trade_off_host_resolves_by_id_when_sibling_titles_collide():
     assert not _has_tradeoff_callout(cards["b"])
 
 
-def test_a_residual_domain_stays_nondegenerate_for_a_flat_subnormal_series():
+def test_an_observed_domain_stays_nondegenerate_for_a_flat_subnormal_series():
     # A flat series falls back to padding by its own magnitude, but at
     # subnormal scale that pad underflows to zero and leaves both endpoints on
     # the original value. A domain whose bounds are equal has no extent to
     # project a trend into, so the endpoints are nudged apart instead.
-    lo, hi = _residual_domain([5e-324] * 4)
+    lo, hi = _observed_domain([5e-324] * 4)
     assert lo < hi
 
     # The ordinary flat cases the fallback was written for still pad normally.
-    assert _residual_domain([0.0] * 4) == (-0.1, 0.1)
-    normal_lo, normal_hi = _residual_domain([3.0] * 4)
+    assert _observed_domain([0.0] * 4) == (-0.1, 0.1)
+    normal_lo, normal_hi = _observed_domain([3.0] * 4)
     assert (normal_lo, normal_hi) == (2.7, 3.3)
 
 
@@ -1649,3 +1653,182 @@ def test_x_coordinates_spanning_an_infinite_range_are_refused():
             _FMT,
             (-1e308, 0.0, 1e308),
         )
+
+
+def test_a_child_that_subtracts_from_its_parent_is_accepted():
+    # Growth accounting is the canonical case: DAU = retained + new +
+    # resurrected - churned, where churn is negative by nature. The
+    # credibility statistics work in log space and so require positive levels,
+    # but that requirement was enforced globally, refusing an arithmetically
+    # sound decomposition. A signed child now takes the same path an injected
+    # residual already takes -- rendered, with no ribbon and no claimed
+    # direction, rather than refused.
+    weeks = 12
+    dau = [100_000.0 * (1.01**i) for i in range(weeks)]
+    retained = [value * 0.78 for value in dau]
+    new = [value * 0.16 for value in dau]
+    resurrected = [value * 0.09 for value in dau]
+    churned = [-value * 0.03 for value in dau]
+
+    report = DriverTree(
+        {"d": dau, "r": retained, "n": new, "s": resurrected, "c": churned},
+        {"d": "DAU", "r": "Retained", "n": "New", "s": "Resurrected", "c": "Churned"},
+        {"d": (Breakout(key="m", label="by movement", op="+", children=("r", "n", "s", "c")),)},
+        _FMT,
+        list(range(weeks)),
+    )
+
+    labels = [wire.label or "" for wire in report.graph.wires]
+    assert len(labels) == 4
+    # The negative term reports a negative contribution, and claims no
+    # direction since no log-scale interval exists for it.
+    assert any(label.startswith("-") and "ns" in label for label in labels)
+    # Every declared child still reconciles with the parent's own change.
+    contributions = [float(m) for m in re.findall(r"([+-][\d.]+)%", " ".join(labels))]
+    parent_change = (dau[-1] - dau[0]) / dau[0] * 100.0
+    assert abs(sum(contributions) - parent_change) < 0.5
+
+
+def test_a_series_crossing_zero_has_no_multiplicative_noise_model():
+    assert _has_multiplicative_noise([1.0, 2.0, 3.0])
+    assert not _has_multiplicative_noise([1.0, 0.0, 3.0])
+    assert not _has_multiplicative_noise([1.0, -2.0, 3.0])
+    assert not _has_multiplicative_noise([1.0, float("inf")])
+
+
+def test_an_omitted_operator_is_inferred_from_the_series():
+    # The operator is derivable: a genuine sum reconciles under "+" and is off
+    # by orders of magnitude under "x". Omitting it must produce exactly what
+    # declaring it produces.
+    weeks = 12
+    users = [50_000.0 * (1.017**i) for i in range(weeks)]
+    aov = [41.8 * (1.004**i) for i in range(weeks)]
+    revenue = [u * a for u, a in zip(users, aov, strict=True)]
+    series = {"r": revenue, "u": users, "a": aov}
+    titles = {"r": "Revenue", "u": "Users", "a": "AOV"}
+    x = list(range(weeks))
+
+    declared = DriverTree(
+        series,
+        titles,
+        {"r": (Breakout(key="d", label="by driver", op="x", children=("u", "a")),)},
+        _FMT,
+        x,
+    ).as_raw_html()
+    inferred = DriverTree(
+        series,
+        titles,
+        {"r": (Breakout(key="d", label="by driver", children=("u", "a")),)},
+        _FMT,
+        x,
+    ).as_raw_html()
+    assert declared == inferred
+
+
+def test_an_uninferable_operator_names_the_breakout_and_refuses():
+    weeks = 12
+    parent = [1000.0 * (1.01**i) for i in range(weeks)]
+    with pytest.raises(SpecError, match="operator could not be inferred"):
+        DriverTree(
+            {"p": parent, "a": [1.0] * weeks, "b": [2.0] * weeks},
+            {"p": "P", "a": "A", "b": "B"},
+            {"p": (Breakout(key="k", label="kk", children=("a", "b")),)},
+            _FMT,
+            list(range(weeks)),
+        )
+
+
+def test_a_card_states_its_own_change_distinct_from_its_contribution():
+    # Two percentages appear per child and they answer different questions:
+    # the card's subtitle is its own change over the window, the wire's label
+    # is its contribution to the parent's change. They diverge whenever a
+    # child is small relative to its parent, so pin both on one fixture where
+    # the gap is large -- a region that grew ~90% on its own while moving the
+    # total only ~6 points.
+    weeks = 12
+    big = [600_000.0 * (1.005**i) for i in range(weeks)]
+    small = [40_000.0 * (1.06**i) for i in range(weeks)]
+    total = [a + b for a, b in zip(big, small, strict=True)]
+
+    report = DriverTree(
+        {"t": total, "b": big, "s": small},
+        {"t": "Total", "b": "Big", "s": "Small"},
+        {"t": (Breakout(key="g", label="by region", op="+", children=("b", "s")),)},
+        _FMT,
+        list(range(weeks)),
+    )
+    cards = {card.title: card for _, card in report.graph.nodes}
+
+    own_small = (small[-1] - small[0]) / small[0] * 100.0
+    contribution_small = (small[-1] - small[0]) / total[0] * 100.0
+    assert own_small > 80.0 and contribution_small < 10.0, "fixture must separate them"
+
+    assert cards["Small"].subtitle == _FMT(own_small)
+    assert any(wire.label == _FMT(contribution_small) for wire in report.graph.wires)
+    # The parent states its own change too, and the contributions sum to it.
+    assert cards["Total"].subtitle == _FMT((total[-1] - total[0]) / total[0] * 100.0)
+
+
+def test_a_card_whose_base_is_not_positive_states_no_own_change():
+    # A percentage measured from zero or from a negative level misleads: a
+    # churn term growing more negative would read as growth.
+    weeks = 12
+    dau = [100_000.0 * (1.01**i) for i in range(weeks)]
+    retained = [value * 0.97 for value in dau]
+    churned = [-value * 0.03 for value in dau]
+
+    report = DriverTree(
+        {"d": dau, "r": retained, "c": churned},
+        {"d": "DAU", "r": "Retained", "c": "Churned"},
+        {"d": (Breakout(key="m", label="by movement", op="+", children=("r", "c")),)},
+        _FMT,
+        list(range(weeks)),
+    )
+    cards = {card.title: card for _, card in report.graph.nodes}
+    assert cards["Churned"].subtitle is None
+    assert cards["Retained"].subtitle is not None
+
+
+def test_a_signed_parent_decomposed_additively_is_accepted():
+    # Extends growth accounting one level: churn split by reason, where every
+    # level in the subtree is negative. The parent's log-scale delta is only
+    # needed by the multiplicative branch, so an all-additive decomposition of
+    # a signed parent must not be pushed through a positivity check its own
+    # arithmetic never required.
+    weeks = 12
+    churned = [-3000.0 * (1.01**i) for i in range(weeks)]
+    voluntary = [value * 0.6 for value in churned]
+    involuntary = [value * 0.4 for value in churned]
+
+    report = DriverTree(
+        {"c": churned, "v": voluntary, "i": involuntary},
+        {"c": "Churned", "v": "Voluntary", "i": "Involuntary"},
+        {"c": (Breakout(key="k", label="by reason", op="+", children=("v", "i")),)},
+        _FMT,
+        list(range(weeks)),
+    )
+    assert len(report.graph.wires) == 2
+    # No log-scale interval exists anywhere here, so nothing claims a direction.
+    assert all("ns" in (wire.label or "") for wire in report.graph.wires)
+
+
+def test_the_two_percentages_share_one_sign_convention():
+    # A card's own change and a wire's contribution are contrasted in the
+    # documentation, so they must not disagree about how a positive number
+    # looks. The wire labels force an explicit "+"; with an unsigned formatter
+    # the subtitle would silently drop it.
+    weeks = 12
+    users = [50_000.0 * (1.017**i) for i in range(weeks)]
+    aov = [41.8 * (1.004**i) for i in range(weeks)]
+    revenue = [u * a for u, a in zip(users, aov, strict=True)]
+
+    report = DriverTree(
+        {"r": revenue, "u": users, "a": aov},
+        {"r": "Revenue", "u": "Users", "a": "AOV"},
+        {"r": (Breakout(key="d", label="by driver", op="x", children=("u", "a")),)},
+        Number(decimals=1),  # unsigned on purpose
+        list(range(weeks)),
+    )
+    subtitles = [card.subtitle for _, card in report.graph.nodes]
+    assert all(text is not None and text.startswith("+") for text in subtitles)
+    assert all((wire.label or "").startswith("+") for wire in report.graph.wires)

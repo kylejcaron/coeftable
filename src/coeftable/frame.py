@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from functools import partial
 from itertools import combinations
 from typing import Any
 
 import narwhals as nw
 
-from coeftable.grid import assemble_rows, build_grid
+from coeftable.grid import AssembledRows, Grid, assemble_rows, build_grid
 from coeftable.spec import (
     Cell,
     CoefTable,
@@ -92,7 +93,219 @@ def _check_columns(frame: nw.DataFrame, table: CoefTable) -> None:
         )
 
 
-def resolve(table: CoefTable) -> Resolved:  # noqa: C901
+def _output_name(column: Column, split: Any) -> str:
+    return column.label if split is None else f"{split}{SPLIT_JOINER}{column.label}"
+
+
+def _validate_layout_label_collisions(table: CoefTable) -> None:
+    # A column label colliding with a layout key silently overwrites the
+    # layout column in the output frame. Catch it here at spec-check time.
+    layout_keys = {n for n in (table.rows, table.nest, table.groups) if n is not None}
+    for column in table.columns:
+        if column.label in layout_keys:
+            raise SpecError(
+                f"Column label {column.label!r} collides with layout column "
+                f"(rows/nest/groups key {column.label!r}); choose a different label."
+            )
+
+
+def _validate_layout_key_uniqueness(table: CoefTable) -> None:
+    # Two layout roles naming the same column collide in the output frame,
+    # which `resolve()` builds keyed by column name -- the later write
+    # silently discards the earlier role's values, so the table renders with
+    # one role's layout missing. Reject it rather than emit a corrupt table.
+    roles = [("rows", table.rows), ("nest", table.nest), ("groups", table.groups)]
+    named = [(role, key) for role, key in roles if key is not None]
+    for (first_role, first_key), (second_role, second_key) in combinations(named, 2):
+        if first_key == second_key:
+            raise SpecError(
+                f"Layout keys {first_role}= and {second_role}= both name column "
+                f"{first_key!r}; each layout role needs its own column."
+            )
+
+
+def _validate_sparkline_series_collisions(table: CoefTable) -> None:
+    # The overlaid `series` dimension cannot also be a table axis: the
+    # table's row structure already spends whichever of these an
+    # identity maps to, so naming the same column both ways is
+    # ambiguous about which grouping wins.
+    axis_keys = {n for n in (table.rows, table.nest, table.groups, table.split_columns) if n}
+    for column in table.columns:
+        if (
+            isinstance(column, Sparkline)
+            and column.series is not None
+            and column.series in axis_keys
+        ):
+            raise SpecError(
+                f"Sparkline column {column.label!r} series={column.series!r} collides "
+                "with a table layout key (rows/nest/groups/split_columns); the "
+                "overlaid dimension cannot also be a table axis."
+            )
+
+
+def _validate_spec(table: CoefTable) -> None:
+    validate_columns(table.columns)
+    _validate_layout_label_collisions(table)
+    _validate_layout_key_uniqueness(table)
+    _validate_sparkline_series_collisions(table)
+
+
+def _extract_layout_keys(
+    frame: nw.DataFrame, table: CoefTable, n: int
+) -> tuple[list[Any], list[Any], list[Any], list[Any]]:
+    row_keys = frame[table.rows].to_list() if table.rows else [""] * n
+    nest_keys = frame[table.nest].to_list() if table.nest else [None] * n
+    group_keys = frame[table.groups].to_list() if table.groups else [None] * n
+    split_keys = frame[table.split_columns].to_list() if table.split_columns else [None] * n
+    return row_keys, nest_keys, group_keys, split_keys
+
+
+def _prepare_columns(
+    table: CoefTable,
+    frame: nw.DataFrame,
+    row_keys: list[Any],
+    nest_keys: list[Any],
+    group_keys: list[Any],
+    split_keys: list[Any],
+) -> list[Prepared]:
+    scan = Scan(
+        frame=frame,
+        columns=table.columns,
+        row_keys=row_keys,
+        nest_keys=nest_keys,
+        group_keys=group_keys,
+        split_keys=split_keys,
+        rows=table.rows,
+        nest=table.nest,
+        groups=table.groups,
+        split_columns=table.split_columns,
+    )
+    return [column.prepare(scan) for column in table.columns]
+
+
+def _build_display_columns(
+    table: CoefTable, grid: Grid
+) -> tuple[list[str], dict[str, str], dict[str, list[str]], list[str]]:
+    display_columns: list[str] = []
+    labels: dict[str, str] = {}
+    spanners: dict[str, list[str]] = {}
+    plot_columns: list[str] = []
+    for split in grid.splits:
+        for column in table.columns:
+            name = _output_name(column, split)
+            display_columns.append(name)
+            labels[name] = column.label
+            if split is not None:
+                spanners.setdefault(str(split), []).append(name)
+            if isinstance(column, (Forest, Sparkline)):
+                plot_columns.append(name)
+    return display_columns, labels, spanners, plot_columns
+
+
+def _compute_cells(
+    table: CoefTable,
+    grid: Grid,
+    prepared: list[Prepared],
+    display_columns: list[str],
+) -> dict[str, list[str]]:
+    # One call to `column.cell` per (row, split, column).
+    cell_values: dict[str, list[str]] = {name: [] for name in display_columns}
+    for position, (row_key, nest_key, identity_group) in enumerate(grid.ordered):
+        direction = table.direction_for(str(row_key))
+        group = grid.row_group[position]
+        for split in grid.splits:
+            index = grid.source_index.get(((row_key, nest_key, identity_group), split))
+            for column, prep in zip(table.columns, prepared, strict=True):
+                name = _output_name(column, split)
+                if index is None:
+                    cell_values[name].append("")
+                    continue
+                ctx = Cell(
+                    prepared=prep,
+                    index=index,
+                    row_key=row_key,
+                    group=group,
+                    split=split,
+                    direction=direction,
+                    color_rule=table.color_rule,
+                    theme=table.theme,
+                )
+                cell_values[name].append(column.cell(ctx))
+    return cell_values
+
+
+def _build_footer_data(
+    table: CoefTable, grid: Grid, prepared: list[Prepared]
+) -> tuple[dict[str, Column], dict[str, Prepared], dict[str, list[list[Any]]], set[str]]:
+    # Interleave axis rows wherever a column's domain closes.
+    column_by_label: dict[str, Column] = {}
+    prepared_by_label: dict[str, Prepared] = {}
+    footer_keys: dict[str, list[list[Any]]] = {}
+    for column, prep in zip(table.columns, prepared, strict=True):
+        column_by_label[column.label] = column
+        prepared_by_label[column.label] = prep
+        if prep.footer_key is not None:
+            key_fn = prep.footer_key
+            footer_keys[column.label] = [
+                [key_fn(row_key, group, split) for split in grid.splits]
+                for (row_key, _nest, group) in grid.ordered
+            ]
+    # A footer's domain is table-wide only when the column itself says so
+    # (see `Prepared.shared_footer`) -- inferring it from `scale` would be
+    # wrong for `Sparkline`, whose x-axis footer_key is always constant
+    # regardless of `scale` (that setting only buckets each row's own
+    # y-domain, never the shared axis's closing scope).
+    shared_footer_labels = {
+        label for label in footer_keys if prepared_by_label[label].shared_footer
+    }
+    return column_by_label, prepared_by_label, footer_keys, shared_footer_labels
+
+
+def _render_footer(
+    pending: dict[str, list[Any]],
+    *,
+    column_by_label: dict[str, Column],
+    prepared_by_label: dict[str, Prepared],
+    grid: Grid,
+    theme: Any,
+) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for label, keys in pending.items():
+        column = column_by_label[label]
+        prep = prepared_by_label[label]
+        for split_idx, split in enumerate(grid.splits):
+            ctx = Footer(prepared=prep, key=keys[split_idx], theme=theme)
+            text = column.footer(ctx)
+            if text is not None:
+                out[_output_name(column, split)] = text
+    return out
+
+
+def _build_output_frame(
+    table: CoefTable, frame: nw.DataFrame, assembled: AssembledRows, display_columns: list[str]
+) -> Any:
+    data: dict[str, list[Any]] = {}
+    if table.groups:
+        data[table.groups] = assembled.layout_group
+    if table.rows:
+        data[table.rows] = assembled.layout_rows
+    if table.nest:
+        data[table.nest] = assembled.layout_nest
+    for name in display_columns:
+        data[name] = assembled.cells[name]
+    return nw.from_dict(data, backend=nw.get_native_namespace(frame)).to_native()
+
+
+def _build_display_and_markdown_columns(
+    table: CoefTable, display_columns: list[str]
+) -> tuple[list[str], list[str]]:
+    leading = [c for c in (table.groups, table.rows, table.nest) if c]
+    markdown = [c for c in (table.rows, table.nest) if c] + display_columns
+    display = [*(leading[1:] if table.groups else leading), *display_columns]
+    return display, markdown
+
+
+def resolve(table: CoefTable) -> Resolved:
     """Resolve `table` against its frame.
 
     Parameters
@@ -114,70 +327,14 @@ def resolve(table: CoefTable) -> Resolved:  # noqa: C901
     SpecError
         When the column specification is inconsistent.
     """
-    validate_columns(table.columns)
-
-    # A column label colliding with a layout key silently overwrites the
-    # layout column in the output frame. Catch it here at spec-check time.
-    layout_keys = {n for n in (table.rows, table.nest, table.groups) if n is not None}
-    for column in table.columns:
-        if column.label in layout_keys:
-            raise SpecError(
-                f"Column label {column.label!r} collides with layout column "
-                f"(rows/nest/groups key {column.label!r}); choose a different label."
-            )
-
-    # Two layout roles naming the same column collide in the output frame,
-    # which `resolve()` builds keyed by column name -- the later write
-    # silently discards the earlier role's values, so the table renders with
-    # one role's layout missing. Reject it rather than emit a corrupt table.
-    roles = [("rows", table.rows), ("nest", table.nest), ("groups", table.groups)]
-    named = [(role, key) for role, key in roles if key is not None]
-    for (first_role, first_key), (second_role, second_key) in combinations(named, 2):
-        if first_key == second_key:
-            raise SpecError(
-                f"Layout keys {first_role}= and {second_role}= both name column "
-                f"{first_key!r}; each layout role needs its own column."
-            )
-
-    # The overlaid `series` dimension cannot also be a table axis: the
-    # table's row structure already spends whichever of these an
-    # identity maps to, so naming the same column both ways is
-    # ambiguous about which grouping wins.
-    axis_keys = {n for n in (table.rows, table.nest, table.groups, table.split_columns) if n}
-    for column in table.columns:
-        if (
-            isinstance(column, Sparkline)
-            and column.series is not None
-            and column.series in axis_keys
-        ):
-            raise SpecError(
-                f"Sparkline column {column.label!r} series={column.series!r} collides "
-                "with a table layout key (rows/nest/groups/split_columns); the "
-                "overlaid dimension cannot also be a table axis."
-            )
+    _validate_spec(table)
 
     frame = nw.from_native(table.data, eager_only=True)
     _check_columns(frame, table)
 
     n = len(frame)
-    row_keys = frame[table.rows].to_list() if table.rows else [""] * n
-    nest_keys = frame[table.nest].to_list() if table.nest else [None] * n
-    group_keys = frame[table.groups].to_list() if table.groups else [None] * n
-    split_keys = frame[table.split_columns].to_list() if table.split_columns else [None] * n
-
-    scan = Scan(
-        frame=frame,
-        columns=table.columns,
-        row_keys=row_keys,
-        nest_keys=nest_keys,
-        group_keys=group_keys,
-        split_keys=split_keys,
-        rows=table.rows,
-        nest=table.nest,
-        groups=table.groups,
-        split_columns=table.split_columns,
-    )
-    prepared: list[Prepared] = [column.prepare(scan) for column in table.columns]
+    row_keys, nest_keys, group_keys, split_keys = _extract_layout_keys(frame, table, n)
+    prepared = _prepare_columns(table, frame, row_keys, nest_keys, group_keys, split_keys)
 
     grid = build_grid(
         row_keys,
@@ -188,101 +345,29 @@ def resolve(table: CoefTable) -> Resolved:  # noqa: C901
         has_splits=table.split_columns is not None,
     )
 
-    def output_name(column: Column, split: Any) -> str:
-        return column.label if split is None else f"{split}{SPLIT_JOINER}{column.label}"
-
-    display_columns: list[str] = []
-    labels: dict[str, str] = {}
-    spanners: dict[str, list[str]] = {}
-    plot_columns: list[str] = []
-    for split in grid.splits:
-        for column in table.columns:
-            name = output_name(column, split)
-            display_columns.append(name)
-            labels[name] = column.label
-            if split is not None:
-                spanners.setdefault(str(split), []).append(name)
-            if isinstance(column, (Forest, Sparkline)):
-                plot_columns.append(name)
-
-    # Cell pass: one call to `column.cell` per (row, split, column).
-    cell_values: dict[str, list[str]] = {name: [] for name in display_columns}
-    for position, (row_key, nest_key, identity_group) in enumerate(grid.ordered):
-        direction = table.direction_for(str(row_key))
-        group = grid.row_group[position]
-        for split in grid.splits:
-            index = grid.source_index.get(((row_key, nest_key, identity_group), split))
-            for column, prep in zip(table.columns, prepared, strict=True):
-                name = output_name(column, split)
-                if index is None:
-                    cell_values[name].append("")
-                    continue
-                ctx = Cell(
-                    prepared=prep,
-                    index=index,
-                    row_key=row_key,
-                    group=group,
-                    split=split,
-                    direction=direction,
-                    color_rule=table.color_rule,
-                    theme=table.theme,
-                )
-                cell_values[name].append(column.cell(ctx))
-
-    # Footer pass: interleave axis rows wherever a column's domain closes.
-    column_by_label: dict[str, Column] = {}
-    prepared_by_label: dict[str, Prepared] = {}
-    footer_keys: dict[str, list[list[Any]]] = {}
-    for column, prep in zip(table.columns, prepared, strict=True):
-        column_by_label[column.label] = column
-        prepared_by_label[column.label] = prep
-        if prep.footer_key is not None:
-            key_fn = prep.footer_key
-            footer_keys[column.label] = [
-                [key_fn(row_key, group, split) for split in grid.splits]
-                for (row_key, _nest, group) in grid.ordered
-            ]
-    # A footer's domain is table-wide only when the column itself says so
-    # (see `Prepared.shared_footer`) -- inferring it from `scale` would be
-    # wrong for `Sparkline`, whose x-axis footer_key is always constant
-    # regardless of `scale` (that setting only buckets each row's own
-    # y-domain, never the shared axis's closing scope).
-    shared_footer_labels = {
-        label for label in footer_keys if prepared_by_label[label].shared_footer
-    }
-
-    def render_footer(pending: dict[str, list[Any]]) -> dict[str, str]:
-        out: dict[str, str] = {}
-        for label, keys in pending.items():
-            column = column_by_label[label]
-            prep = prepared_by_label[label]
-            for split_idx, split in enumerate(grid.splits):
-                ctx = Footer(prepared=prep, key=keys[split_idx], theme=table.theme)
-                text = column.footer(ctx)
-                if text is not None:
-                    out[output_name(column, split)] = text
-        return out
+    display_columns, labels, spanners, plot_columns = _build_display_columns(table, grid)
+    cell_values = _compute_cells(table, grid, prepared, display_columns)
+    column_by_label, prepared_by_label, footer_keys, shared_footer_labels = _build_footer_data(
+        table, grid, prepared
+    )
+    render_footer = partial(
+        _render_footer,
+        column_by_label=column_by_label,
+        prepared_by_label=prepared_by_label,
+        grid=grid,
+        theme=table.theme,
+    )
 
     assembled = assemble_rows(
         grid, display_columns, cell_values, footer_keys, render_footer, shared_footer_labels
     )
 
-    data: dict[str, list[Any]] = {}
-    if table.groups:
-        data[table.groups] = assembled.layout_group
-    if table.rows:
-        data[table.rows] = assembled.layout_rows
-    if table.nest:
-        data[table.nest] = assembled.layout_nest
-    for name in display_columns:
-        data[name] = assembled.cells[name]
-
-    leading = [c for c in (table.groups, table.rows, table.nest) if c]
-    markdown = [c for c in (table.rows, table.nest) if c] + display_columns
+    native_frame = _build_output_frame(table, frame, assembled, display_columns)
+    display, markdown = _build_display_and_markdown_columns(table, display_columns)
 
     return Resolved(
-        frame=nw.from_dict(data, backend=nw.get_native_namespace(frame)).to_native(),
-        display_columns=[*(leading[1:] if table.groups else leading), *display_columns],
+        frame=native_frame,
+        display_columns=display,
         labels=labels,
         spanners=spanners,
         group_column=table.groups,

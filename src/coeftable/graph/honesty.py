@@ -351,3 +351,105 @@ def tradeoff_pairs(
             if correlation < TRADEOFF_R:
                 found.append((left_name, right_name, correlation))
     return tuple(found)
+
+
+def endpoint_identity_gap(
+    parent_series: Sequence[float], children_series: Sequence[Sequence[float]], op: str
+) -> float:
+    """Relative discrepancy between the parent and its implied children.
+
+    Computed at the first and last observation only, the larger of the two.
+
+    `identity_gap` averages that discrepancy over every observation, so a
+    decomposition that tracks its parent closely for most of the window but
+    diverges badly only at the endpoint still reports a small mean gap. The
+    edge labels this gates are themselves computed from the endpoints alone
+    (`log_ratio(child[-1], child[0])`), so whether to trust them has to be
+    judged at the endpoints too, not smoothed away by an in-between average.
+    """
+    implied = implied_series(children_series, op)
+    # Coerced the way `identity_gap` coerces its own parent, so this public
+    # function meets the module's one contract -- only `SpecError` escapes --
+    # for non-numeric input as well as for zero and non-finite input.
+    try:
+        first, last = float(parent_series[0]), float(parent_series[-1])
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise SpecError("decomposition parent values must be finite numbers") from exc
+    for value in (first, last):
+        if not math.isfinite(value) or value == 0.0:
+            raise SpecError("decomposition parent values must be finite and non-zero")
+    return max(
+        abs(first - implied[0]) / abs(first),
+        abs(last - implied[-1]) / abs(last),
+    )
+
+
+def combined_identity_gap(
+    parent_series: Sequence[float], children_series: Sequence[Sequence[float]], op: str
+) -> float:
+    """Take the larger of a decomposition's whole-series and endpoint identity gaps.
+
+    Either one exceeding `RESIDUAL_WARN` means the labels -- which describe the
+    endpoint change specifically -- do not reconcile with the parent. Every
+    consumer keys off this same combined value rather than picking its own
+    measure: implied-identity scaling, a clean unbadged card, and operator
+    inference all require *both* the whole-series mean and the endpoints alone
+    to agree with the parent.
+
+    This applies to both operators. An additive slice's contributions are
+    endpoint deltas just as a factorization's are endpoint log shares, so a
+    shortfall confined to the last observation dilutes below the mean threshold
+    in exactly the same way -- injecting no residual and refusing nothing,
+    while the numbers on the page fail to add up to the parent's own move.
+    """
+    return max(
+        identity_gap(parent_series, children_series, op),
+        endpoint_identity_gap(parent_series, children_series, op),
+    )
+
+
+def infer_op(parent: Sequence[float], children: Sequence[Sequence[float]]) -> str:
+    """Derive whether `children` combine into `parent` additively or multiplicatively.
+
+    The two candidates are not close together on real data: a genuine sum
+    reconciles exactly under `"+"` and is off by orders of magnitude under
+    `"x"`, and vice versa, so picking the smaller identity gap recovers the
+    caller's intent rather than guessing at it. Declaring the operator is
+    therefore optional -- it is derivable from the numbers the caller already
+    supplied.
+
+    A genuine additive series with signed or zero children still scores under
+    `"x"`; its product simply has a much larger gap, so `"+"` wins by score.
+    A candidate is undefined only when the shared gap calculation cannot be
+    made, such as when a parent value is zero or non-finite.
+
+    Raises `SpecError` when neither reading explains the parent, which is a
+    more useful failure than arbitrarily adopting one and then blaming the
+    caller's arithmetic for the gap it leaves.
+    """
+    scored: dict[str, float] = {}
+    failures: list[SpecError] = []
+    for candidate in ("+", "x"):
+        try:
+            scored[candidate] = combined_identity_gap(parent, children, candidate)
+        except SpecError as exc:
+            # Undefined for this candidate, so eliminate it rather than
+            # ranking it last.
+            failures.append(exc)
+            continue
+    if not scored:
+        if failures and all(str(exc) == str(failures[0]) for exc in failures[1:]):
+            raise failures[0]
+        raise SpecError(
+            "a decomposition's operator could not be inferred: these children combine "
+            "into neither a sum nor a product of the parent"
+        )
+    best = min(scored, key=lambda candidate: scored[candidate])
+    if scored[best] > RESIDUAL_FAIL:
+        coverage = (1.0 - scored[best]) * 100.0
+        raise SpecError(
+            "a decomposition's operator could not be inferred: the closest reading "
+            f"({best!r}) explains only {coverage:.1f}% of the parent, and a "
+            "decomposition explaining under 80% is not a decomposition"
+        )
+    return best

@@ -537,9 +537,9 @@ def _graph_rules(
             if atom.predicate == "checked":
                 if atom.control.card_id not in collapsible:
                     raise SpecError("Graph.rules checked controls must be collapsible cards")
-            elif atom.control.key not in options:
+            elif (key := atom.control.key) is None or key not in options:
                 raise SpecError("Graph.rules option controls must reference known selects")
-            elif atom.option not in options[atom.control.key]:
+            elif atom.option not in options[key]:
                 raise SpecError("Graph.rules option must reference a known select option")
     return cast(tuple[StateRule, ...], rules)
 
