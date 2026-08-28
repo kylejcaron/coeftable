@@ -1,3 +1,20 @@
+<a id="v0.8.0"></a>
+# [v0.8.0](https://github.com/kylejcaron/coeftable/releases/tag/v0.8.0) - 2026-08-27
+
+<!-- Release notes generated using configuration in .github/release.yml at v0.8.0 -->
+
+## What's Changed
+### New Features
+* Label periods through one caller-supplied formatter by [@kylejcaron](https://github.com/kylejcaron) in [#49](https://github.com/kylejcaron/coeftable/pull/49)
+### Maintenance
+* Update changelog for v0.7.0 by [@github-actions](https://github.com/github-actions)[bot] in [#48](https://github.com/kylejcaron/coeftable/pull/48)
+
+
+**Full Changelog**: https://github.com/kylejcaron/coeftable/compare/v0.7.0...v0.8.0
+
+[Changes][v0.8.0]
+
+
 <a id="v0.7.0"></a>
 # [v0.7.0](https://github.com/kylejcaron/coeftable/releases/tag/v0.7.0) - 2026-08-27
 
@@ -167,6 +184,7 @@
 [Changes][v0.1.0]
 
 
+[v0.8.0]: https://github.com/kylejcaron/coeftable/compare/v0.7.0...v0.8.0
 [v0.7.0]: https://github.com/kylejcaron/coeftable/compare/v0.6.0...v0.7.0
 [v0.6.0]: https://github.com/kylejcaron/coeftable/compare/v0.5.0...v0.6.0
 [v0.5.0]: https://github.com/kylejcaron/coeftable/compare/v0.4.0...v0.5.0
