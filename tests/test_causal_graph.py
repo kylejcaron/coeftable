@@ -1,3 +1,5 @@
+from typing import cast
+
 import pytest
 
 from coeftable.cards import Card
@@ -64,13 +66,11 @@ def test_causal_graph_lets_graph_reject_malformed_entries():
     with pytest.raises(SpecError, match=r"Graph\.nodes\[0\] must be an \(id, Card\) pair"):
         CausalGraph((7,), ())  # ty: ignore[invalid-argument-type]
     for malformed_id in (["a"], {"a": True}):
-        with pytest.raises(
-            SpecError, match=r"Graph\.nodes\[0\]\.id must be a non-empty str"
-        ):
+        with pytest.raises(SpecError, match=r"Graph\.nodes\[0\]\.id must be a non-empty str"):
             CausalGraph(
-                ((malformed_id, Card("A")),),
+                cast("tuple[tuple[str, Card], ...]", ((malformed_id, Card("A")),)),
                 (Wire("a-b", "a", "b"),),
-            )  # ty: ignore[invalid-argument-type]
+            )
 
 
 def test_causal_graph_derives_layer_gap_for_stacked_labeled_wires():

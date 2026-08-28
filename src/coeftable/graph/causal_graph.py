@@ -68,7 +68,7 @@ def CausalGraph(
         nodes=cast("tuple[tuple[str, Card], ...]", node_values),
         layout=LayeredDag(),
         wires=cast("tuple[Wire, ...]", wire_values),
-        collapsible=cast("tuple[str, ...]", collapsible),
+        collapsible=collapsible,
         theme=theme,
         chrome=chrome,
         dom_prefix=dom_prefix,
