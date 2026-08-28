@@ -55,11 +55,15 @@ def _wire_svg(graph: Graph, layout: _GraphLayout, compiled: _CompiledState) -> s
     styles = _edge_styles(graph)
     used_kinds = sorted({wire.kind for wire in graph.wires if wire.kind is not None})
     kind_markers = {kind: f"{marker_id}-{kind}" for kind in used_kinds}
-    defs = [
-        f'<marker id="{marker_id}" markerWidth="8" markerHeight="8" '
-        f'refX="6" refY="3" orient="auto" markerUnits="strokeWidth">'
-        f'<path d="M 0 0 L 6 3 L 0 6 z" fill="{axis}"/></marker>'
-    ]
+    defs = (
+        [
+            f'<marker id="{marker_id}" markerWidth="8" markerHeight="8" '
+            f'refX="6" refY="3" orient="auto" markerUnits="strokeWidth">'
+            f'<path d="M 0 0 L 6 3 L 0 6 z" fill="{axis}"/></marker>'
+        ]
+        if any(wire.kind is None for wire in graph.wires)
+        else []
+    )
     for kind in used_kinds:
         stroke = _esc(styles[kind].stroke)
         defs.append(

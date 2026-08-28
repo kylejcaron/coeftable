@@ -661,6 +661,29 @@ def _graph_validate_flow_geometry(
             raise SpecError("back edge must stay in or return to an earlier stage")
 
 
+def _pill_width(label: str, chrome: CardChrome) -> float:
+    """Return a flow wire label pill's exact rendered width."""
+    return 2 * chrome.chip_padding_x + len(label) * chrome.caption_size * chrome.char_width_ratio
+
+
+def _graph_validate_forward_pill_width(
+    wires: tuple[Wire, ...], *, stage_gap: int, chrome: CardChrome
+) -> None:
+    """Reject a labeled forward pill wide enough to overlap the next stage.
+
+    A forward wire always crosses at least one ``stage_gap`` of clear space
+    between adjacent stage columns (a box narrower than its column's widest
+    occupant only widens that gap further), so a pill wider than the gap
+    itself would spill onto a neighboring stage's cards no matter where it
+    lands along the route.
+    """
+    for wire in wires:
+        if wire.kind != "forward" or wire.label is None:
+            continue
+        if _pill_width(wire.label, chrome) > stage_gap:
+            raise SpecError("forward wire label pill is wider than Graph.layer_gap")
+
+
 def _graph_collapsible(value: object, known_cards: set[str]) -> tuple[str, ...]:
     """Canonicalize and validate collapsible card ids."""
     collapsible = _canonical(value, name="Graph.collapsible")
@@ -696,8 +719,13 @@ def _graph_visibility(
     *,
     wires: tuple[Wire, ...],
     wire_ids: tuple[str, ...],
+    all_wire_ids: tuple[str, ...],
 ) -> tuple[tuple[str, ...] | None, tuple[Wire, ...]]:
-    """Canonicalize the selected visibility wires."""
+    """Canonicalize the selected visibility wires.
+
+    A wire id is checked against every known wire first, so an unknown id
+    and a known but paint-only back-wire id get distinct errors.
+    """
     if value is None:
         return None, wires
     visibility_value = _canonical(value, name="Graph.visibility")
@@ -705,8 +733,10 @@ def _graph_visibility(
         _non_empty_str(wire_id, name=f"Graph.visibility[{index}]")
     if len(set(visibility_value)) != len(visibility_value):
         raise SpecError("Graph.visibility entries must be unique")
-    if any(wire_id not in wire_ids for wire_id in visibility_value):
+    if any(wire_id not in all_wire_ids for wire_id in visibility_value):
         raise SpecError("Graph.visibility references an unknown wire")
+    if any(wire_id not in wire_ids for wire_id in visibility_value):
+        raise SpecError("Graph.visibility cannot select a paint-only back wire")
     visibility = cast(tuple[str, ...], visibility_value)
     selected = set(visibility)
     return visibility, tuple(wire for wire in wires if wire.id in selected)
@@ -717,18 +747,25 @@ def _graph_rules(
     *,
     known_cards: set[str],
     wire_ids: tuple[str, ...],
+    all_wire_ids: tuple[str, ...],
     collapsible: tuple[str, ...],
     card_options: Mapping[str, Mapping[str, tuple[str, ...]]],
 ) -> tuple[StateRule, ...]:
-    """Canonicalize and validate graph state rules."""
+    """Canonicalize and validate graph state rules.
+
+    A ``hide_wires`` id is checked against every known wire first, so an
+    unknown id and a known but paint-only back-wire id get distinct errors.
+    """
     rules = _canonical(value, name="Graph.rules")
     for index, rule in enumerate(rules):
         if not isinstance(rule, StateRule):
             raise SpecError(f"Graph.rules[{index}] must be a StateRule")
         if any(card_id not in known_cards for card_id in rule.hide_cards):
             raise SpecError("Graph.rules hide_cards must reference known cards")
-        if any(wire_id not in wire_ids for wire_id in rule.hide_wires):
+        if any(wire_id not in all_wire_ids for wire_id in rule.hide_wires):
             raise SpecError("Graph.rules hide_wires must reference known wires")
+        if any(wire_id not in wire_ids for wire_id in rule.hide_wires):
+            raise SpecError("Graph.rules hide_wires cannot target a paint-only back wire")
         for atom in rule.when_all:
             if atom.control.card_id not in known_cards:
                 raise SpecError("Graph.rules controls must reference known cards")
@@ -1044,7 +1081,7 @@ def _pill_bounds(
     label_anchor: AnchorOffset, label: str, chrome: CardChrome
 ) -> tuple[float, float, float, float]:
     """Return the centered (x, y, width, height) rect for a flow wire's pill."""
-    width = 2 * chrome.chip_padding_x + len(label) * chrome.caption_size * chrome.char_width_ratio
+    width = _pill_width(label, chrome)
     height = line_height(chrome.caption_size, chrome) + 2 * chrome.chip_padding_y
     x, y = label_anchor
     return (x - width / 2, y - height / 2, width, height)
@@ -1103,7 +1140,14 @@ def _graph_measure_staged(
     collapsible: tuple[str, ...],
     chrome: CardChrome,
 ) -> _GraphLayout:
-    """Measure rebound cards, resolve staged boxes, and route flow wires."""
+    """Measure rebound cards, resolve staged boxes, and route flow wires.
+
+    Every staged collapsible card folds along its right edge, wireless or
+    wired: ``Graph.layer_gap``'s validated >= 18 minimum already reserves
+    enough horizontal room for an interior column's nub, but the last stage
+    has no following column to absorb it, so its collapsible cards' own
+    actual box widths grow the canvas instead.
+    """
     measured = {card_id: card.measure() for card_id, card in nodes}
     slot_by_id = {slot.card_id: slot for slot in slots}
     entries = tuple(
@@ -1126,22 +1170,20 @@ def _graph_measure_staged(
         )
         for card_id, (_x, _y, box_width, box_height) in boxes
     )
-    if not wires:
-        # No flow wires: nubs fold along the bottom, as in a plain staged layout.
-        # Reserve room from each card's actual bottom for its circular fold
-        # nub; lane gaps and taller same-lane siblings already absorb the
-        # rest of that footprint.
-        for card_id, (_x, y, _width, box_height) in boxes:
-            if card_id in collapsible:
-                height = max(height, y + box_height + 18)
-        return _GraphLayout(MeasuredGraph(width, height, boxes), anchors, ())
-
-    # A staged graph with wires is an event flow: nubs fold along the right
-    # edge instead, so reserve width (not height) for the last stage.
     last_stage = max(slot.stage for slot in slots)
     for card_id, (x, _y, box_width, _height) in boxes:
         if card_id in collapsible and slot_by_id[card_id].stage == last_stage:
             width = max(width, x + box_width + 18)
+
+    if not wires:
+        nub_anchors = tuple(
+            (card_id, (float(x + box_width), y + box_height / 2, "right"))
+            for card_id, (x, y, box_width, box_height) in boxes
+            if card_id in collapsible
+        )
+        return _GraphLayout(
+            MeasuredGraph(width, height, boxes), anchors, (), nub_anchors=nub_anchors
+        )
 
     offsets = _flow_offsets(wires, chip_gap=chrome.chip_gap)
     boxes_by_id = dict(boxes)
@@ -1223,9 +1265,9 @@ class Graph:
         collapsible = _graph_collapsible(self.collapsible, known_cards)
         edge_styles = _graph_edge_styles(self.edge_styles)
         if isinstance(self.layout, Staged):
-            if collapsible and self.gap < 18:
+            if collapsible and self.layer_gap < 18:
                 raise SpecError(
-                    "Graph.gap must be at least 18 when staged collapsible cards are present"
+                    "Graph.layer_gap must be at least 18 when staged collapsible cards are present"
                 )
             staged_slots = self.layout.slots
             _graph_validate_staged(staged_slots, known_cards)
@@ -1237,11 +1279,13 @@ class Graph:
             layers_by_id = {slot.card_id: slot.layer for slot in slots}
             _graph_validate_wire_layers(wires, layers_by_id=layers_by_id)
         _graph_validate_flow_geometry(self.layout, wires)
+        _graph_validate_forward_pill_width(wires, stage_gap=self.layer_gap, chrome=self.chrome)
         # Back edges are paint-only: they never enter visibility topology,
         # blocker families, or derived/injected hide rules; only forward and
         # skip wires ("topology_wires") do.
         topology_wires = tuple(wire for wire in wires if wire.kind != "back")
         wire_ids = tuple(wire.id for wire in topology_wires)
+        all_wire_ids = tuple(wire.id for wire in wires)
         label_offset = self.chrome.caption_size + 2
         labeled_layer_gap = label_offset + self.chrome.caption_size + 4
         if not isinstance(self.layout, Staged):
@@ -1276,12 +1320,13 @@ class Graph:
         cards, rebound_nodes = _graph_rebound_nodes(nodes, theme=self.theme, chrome=self.chrome)
         card_options = {node_id: card.control_options() for node_id, card in rebound_nodes}
         visibility, visibility_wires = _graph_visibility(
-            self.visibility, wires=topology_wires, wire_ids=wire_ids
+            self.visibility, wires=topology_wires, wire_ids=wire_ids, all_wire_ids=all_wire_ids
         )
         rules = _graph_rules(
             self.rules,
             known_cards=known_cards,
             wire_ids=wire_ids,
+            all_wire_ids=all_wire_ids,
             collapsible=collapsible,
             card_options=card_options,
         )
@@ -1309,7 +1354,6 @@ class Graph:
             _compile_state(
                 nodes=rebound_nodes,
                 wires=wires,
-                topology_wires=topology_wires,
                 collapsible=collapsible,
                 blockers=blockers,
                 rules=rules,

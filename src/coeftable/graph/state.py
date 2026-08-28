@@ -119,7 +119,15 @@ def _emit_rules(
     nub_dom_ids: Mapping[str, str],
     control_dom_ids: Mapping[str, Mapping[str, str]],
 ) -> tuple[tuple[tuple[str, ...], tuple[str, ...]], ...]:
-    """Emit derived and injected rules, merging identical conditions."""
+    """Emit derived and injected rules, merging identical conditions.
+
+    ``wires`` is the graph's full wire set, back edges included: a wire's
+    derived and injected hide rules are endpoint-based paint suppression,
+    not topology, so a back edge hides exactly like any other wire whenever
+    either of its own endpoints is hidden. Only ``blockers`` (computed
+    upstream from the acyclic topology-only visibility graph) restricts
+    which collapsed ancestors can drive that suppression.
+    """
     compiled: dict[tuple[str, ...], set[str]] = {}
     for card_id, _ in nodes:
         for blocker_set in blockers[card_id]:
@@ -162,7 +170,6 @@ def _compile_state(
     *,
     nodes: Sequence[tuple[str, object]],
     wires: Sequence[Wire],
-    topology_wires: Sequence[Wire],
     collapsible: Iterable[str],
     blockers: Mapping[str, frozenset[frozenset[str]]],
     rules: Sequence[StateRule],
@@ -172,7 +179,6 @@ def _compile_state(
     """Compile validated graph values into the renderer's state contract."""
     node_values = tuple(nodes)
     wire_values = tuple(wires)
-    topology_wire_values = tuple(topology_wires)
     collapsible_set = frozenset(collapsible)
     card_dom_ids = tuple(f"{dom_prefix}-card-{index}" for index, _ in enumerate(node_values))
     wire_dom_ids = tuple(f"{dom_prefix}-edge-{index}" for index, _ in enumerate(wire_values))
@@ -199,7 +205,7 @@ def _compile_state(
     frozen_nub_ids = MappingProxyType(nub_dom_ids)
     compiled_rules = _emit_rules(
         nodes=node_values,
-        wires=topology_wire_values,
+        wires=wire_values,
         collapsible=collapsible_set,
         blockers=blockers,
         injected=tuple(rules),
