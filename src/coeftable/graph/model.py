@@ -10,6 +10,7 @@ from typing import Literal, cast
 from coeftable.cards.card import Card
 from coeftable.cards.chrome import DEFAULT_CHROME, CardChrome
 from coeftable.errors import SpecError
+from coeftable.graph._layered import layered_positions
 from coeftable.graph.state import _compile_state, _CompiledState
 from coeftable.graph.topology import blocker_families, check_acyclic
 from coeftable.theme import DEFAULT, Role, Theme
@@ -157,6 +158,11 @@ class Slotted:
             if not isinstance(slot, Slot):
                 raise SpecError(f"Slotted.slots[{index}] must be a Slot")
         object.__setattr__(self, "slots", cast(tuple[Slot, ...], slots))
+
+
+@dataclass(frozen=True, slots=True)
+class LayeredDag:
+    """Derive deterministic slots from graph nodes and wires."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -409,8 +415,8 @@ def _graph_shared_slot_proof(
 
 def _graph_validate_settings(graph: Graph) -> None:
     """Validate graph-wide scalar settings and object types."""
-    if not isinstance(graph.layout, Slotted):
-        raise SpecError("Graph.layout must be a Slotted")
+    if not isinstance(graph.layout, (Slotted, LayeredDag)):
+        raise SpecError("Graph.layout must be a Slotted or LayeredDag")
     if not isinstance(graph.theme, Theme):
         raise SpecError("Graph.theme must be a Theme")
     if not isinstance(graph.chrome, CardChrome):
@@ -441,7 +447,6 @@ def _graph_wires(
     value: object,
     *,
     known_cards: set[str],
-    layers_by_id: Mapping[str, int],
 ) -> tuple[Wire, ...]:
     """Canonicalize and validate graph wires."""
     wires = _canonical(value, name="Graph.wires")
@@ -457,9 +462,32 @@ def _graph_wires(
         raise SpecError("Graph.wires must not contain duplicate pairs")
     if any(wire.src not in known_cards or wire.dst not in known_cards for wire in result):
         raise SpecError("Graph.wires endpoints must reference known cards")
-    if any(layers_by_id[wire.src] >= layers_by_id[wire.dst] for wire in result):
-        raise SpecError("Graph.wires must route strictly downward")
     return result
+
+
+def _graph_resolve_slots(
+    layout: Slotted | LayeredDag,
+    *,
+    node_ids: tuple[str, ...],
+    wires: tuple[Wire, ...],
+) -> tuple[Slot, ...]:
+    """Return explicit slots as-is, or derive them from wires for a LayeredDag."""
+    if isinstance(layout, Slotted):
+        return layout.slots
+    return tuple(
+        Slot(card_id, layer, slot)
+        for card_id, layer, slot in layered_positions(
+            node_ids, tuple((wire.src, wire.dst) for wire in wires)
+        )
+    )
+
+
+def _graph_validate_wire_layers(
+    wires: tuple[Wire, ...], *, layers_by_id: Mapping[str, int]
+) -> None:
+    """Reject a wire that does not strictly descend across layout layers."""
+    if any(layers_by_id[wire.src] >= layers_by_id[wire.dst] for wire in wires):
+        raise SpecError("Graph.wires must route strictly downward")
 
 
 def _graph_collapsible(value: object, known_cards: set[str]) -> tuple[str, ...]:
@@ -818,7 +846,7 @@ class Graph:
     """A validated, themed graph of cards and explicit vertical wires."""
 
     nodes: tuple[tuple[str, Card], ...]
-    layout: Slotted
+    layout: Slotted | LayeredDag
     wires: tuple[Wire, ...] = ()
     collapsible: tuple[str, ...] = ()
     visibility: tuple[str, ...] | None = None
@@ -841,10 +869,11 @@ class Graph:
         nodes = _graph_nodes(self.nodes)
         node_ids = tuple(node_id for node_id, _ in nodes)
         known_cards = set(node_ids)
-        slots = self.layout.slots
+        wires = _graph_wires(self.wires, known_cards=known_cards)
+        slots = _graph_resolve_slots(self.layout, node_ids=node_ids, wires=wires)
         _graph_validate_layout(slots, known_cards)
         layers_by_id = {slot.card_id: slot.layer for slot in slots}
-        wires = _graph_wires(self.wires, known_cards=known_cards, layers_by_id=layers_by_id)
+        _graph_validate_wire_layers(wires, layers_by_id=layers_by_id)
         wire_ids = tuple(wire.id for wire in wires)
         collapsible = _graph_collapsible(self.collapsible, known_cards)
         if collapsible and self.layer_gap < 18:
