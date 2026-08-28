@@ -15,6 +15,7 @@ from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 
 from coeftable.cards.adornments import Adornment, SelectControl, TextBlock
+from coeftable.cards.appearance import DEFAULT_APPEARANCE, CardAppearance, appearance_theme
 from coeftable.cards.chrome import DEFAULT_CHROME, CardChrome
 from coeftable.cards.measure import MeasuredCard
 from coeftable.cards.regions import Region, _canonical, resolve_content
@@ -33,6 +34,7 @@ class Card:
     width: int = 256
     chrome: CardChrome = DEFAULT_CHROME
     theme: Theme = DEFAULT
+    appearance: CardAppearance = DEFAULT_APPEARANCE
     _template: CardTemplate = field(init=False, repr=False, compare=False)
     _control_options: Mapping[str, tuple[str, ...]] = field(init=False, repr=False, compare=False)
 
@@ -50,12 +52,20 @@ class Card:
             raise SpecError("Card.chrome must be a CardChrome")
         if not isinstance(self.theme, Theme):
             raise SpecError("Card.theme must be a Theme")
+        if not isinstance(self.appearance, CardAppearance):
+            raise SpecError("Card.appearance must be a CardAppearance")
         object.__setattr__(self, "content", _canonical(self.content, name="Card.content"))
         usable = self.width - 2 * (self.chrome.padding + self.chrome.border_width)
         header: tuple[Adornment, ...] = (TextBlock(self.title, variant="title"),)
         if self.subtitle is not None:
             header = (*header, TextBlock(self.subtitle, variant="subtitle"))
-        body = resolve_content(self.content, width=usable, theme=self.theme, chrome=self.chrome)
+        resolved_theme = appearance_theme(self.theme, self.appearance)
+        body = resolve_content(
+            self.content,
+            width=usable,
+            theme=resolved_theme,
+            chrome=self.chrome,
+        )
         control_options: dict[str, tuple[str, ...]] = {}
         for adornment in body:
             if isinstance(adornment, SelectControl) and adornment.key is not None:
@@ -75,7 +85,9 @@ class Card:
 
     def as_raw_html(self, *, control_dom_ids: Mapping[str, str] | None = None) -> str:
         """Render the card as a self-contained HTML string."""
-        return self._template.render(theme=self.theme, control_dom_ids=control_dom_ids)
+        return self._template.render(
+            theme=self.theme, appearance=self.appearance, control_dom_ids=control_dom_ids
+        )
 
     def control_options(self) -> Mapping[str, tuple[str, ...]]:
         """Return keyed select option values resolved for this card."""

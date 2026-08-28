@@ -13,6 +13,7 @@ from coeftable.cards.adornments import (
     SelectControl,
     TextBlock,
 )
+from coeftable.cards.appearance import DEFAULT_APPEARANCE, CardAppearance
 from coeftable.cards.card import Card, CardGrid
 from coeftable.cards.chrome import DEFAULT_CHROME, CardChrome
 from coeftable.cards.fragments import render_adornment
@@ -31,6 +32,7 @@ from coeftable.cards.regions import (
 from coeftable.cards.template import CardTemplate
 
 __all__ = [
+    "DEFAULT_APPEARANCE",
     "DEFAULT_CHROME",
     "Adornment",
     "Anchor",
@@ -38,6 +40,7 @@ __all__ = [
     "Callout",
     "CaptionRow",
     "Card",
+    "CardAppearance",
     "CardChrome",
     "CardGrid",
     "CardTemplate",

@@ -13,6 +13,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from coeftable.cards.adornments import Adornment, KeyValuePopover, SelectControl
+from coeftable.cards.appearance import DEFAULT_APPEARANCE, CardAppearance, appearance_theme
 from coeftable.cards.chrome import DEFAULT_CHROME, CardChrome, line_height
 from coeftable.cards.fragments import _esc, _wrap
 from coeftable.cards.measure import MeasuredCard, _est, measure_card
@@ -58,6 +59,7 @@ class CardTemplate:
         self,
         *,
         theme: Theme = DEFAULT,
+        appearance: CardAppearance = DEFAULT_APPEARANCE,
         control_dom_ids: Mapping[str, str] | None = None,
     ) -> str:
         """Render the pinned-box shell for this card."""
@@ -65,9 +67,15 @@ class CardTemplate:
         measured, header_rows, body_rows, chip = measure_card(
             width=self.width, header=self.header, body=self.body, chrome=chrome
         )
+        render_theme = appearance_theme(theme, appearance)
+        border_style = "dashed" if appearance.border == "dashed" else "solid"
+        border_color = render_theme.axis if appearance.border == "strong" else render_theme.rule
+        background = "transparent" if appearance.fill == "transparent" else render_theme.surface
+        opacity = ";opacity:0.78" if appearance.emphasis == "muted" else ""
         summary_content = measured.header_height - chrome.border_width - chrome.padding
         header_html = "".join(
-            _wrap(row, theme, chrome, control_dom_ids=control_dom_ids) for row in header_rows
+            _wrap(row, render_theme, chrome, control_dom_ids=control_dom_ids)
+            for row in header_rows
         )
         chip_html = ""
         if chip is not None:
@@ -78,10 +86,11 @@ class CardTemplate:
                 f'<span class="ct-card-chip" style="flex:none;font-size:{chrome.value_size}px;'
                 f"line-height:{chip_lh}px;font-weight:600;white-space:nowrap;"
                 f"max-width:{math.ceil(chip_est)}px;overflow:hidden;"
-                f'text-overflow:ellipsis;color:{_esc(theme.color(chip_role))}">{_esc(chip_value)}</span>'
+                f'text-overflow:ellipsis;color:{_esc(render_theme.color(chip_role))}">'
+                f"{_esc(chip_value)}</span>"
             )
         body_html = "".join(
-            _wrap(row, theme, chrome, control_dom_ids=control_dom_ids) for row in body_rows
+            _wrap(row, render_theme, chrome, control_dom_ids=control_dom_ids) for row in body_rows
         )
         body_block = (
             ""
@@ -95,9 +104,9 @@ class CardTemplate:
         return (
             f'<details open style="box-sizing:border-box;width:{self.width}px;'
             f"margin:0;padding:0 0 {chrome.padding}px 0;"
-            f"border-width:{chrome.border_width}px;border-style:solid;"
-            f"border-color:{_esc(theme.rule)};"
-            f"border-radius:{chrome.radius}px;background:{_esc(theme.surface)};"
+            f"border-width:{chrome.border_width}px;border-style:{border_style};"
+            f"border-color:{_esc(border_color)};"
+            f"border-radius:{chrome.radius}px;background:{_esc(background)}{opacity};"
             f'overflow:visible">'
             f'<summary style="box-sizing:content-box;display:flex;'
             f"column-gap:{chrome.gap}px;list-style:none;margin:0;"
