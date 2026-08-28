@@ -242,25 +242,31 @@ def test_product_flow_header_omits_title_and_note_when_absent():
     assert isinstance(report.header[0], RuleStrip)
 
 
-def test_product_flow_legend_matches_the_exact_resolved_edge_styles():
+def test_product_flow_default_graph_and_legend_distinguish_skip_from_back():
     report = _funnel_report()
-    resolved = report.header[1]
-    assert isinstance(resolved, RuleStrip)
-    entries = dict((label, (color, dash)) for label, color, dash in resolved.entries)
+    graph_styles = dict(report.graph.edge_styles)
+    assert "skip" not in graph_styles
+    assert graph_styles["back"] == EdgeStyle(DEFAULT.unfavorable, dash=(2.0, 3.0))
+
+    legend = report.header[1]
+    assert isinstance(legend, RuleStrip)
+    entries = dict((label, (color, dash)) for label, color, dash in legend.entries)
     assert entries["forward"] == (DEFAULT.axis, "solid")
     assert entries["skip"] == (DEFAULT.muted, "dashed")
-    assert entries["loop / back"] == (DEFAULT.muted, "dashed")
+    assert entries["loop / back"] == (DEFAULT.unfavorable, "dashed")
+    assert entries["skip"] != entries["loop / back"]
 
 
-def test_product_flow_legend_reflects_caller_style_overrides():
+def test_product_flow_caller_back_style_override_wins_in_graph_and_legend():
     styles = {"back": EdgeStyle("#123456", dash=())}
     report = _funnel_report(styles=styles)
+    graph_styles = dict(report.graph.edge_styles)
+    assert graph_styles["back"] == styles["back"]
+
     legend = report.header[1]
     assert isinstance(legend, RuleStrip)
     entries = dict((label, (color, dash)) for label, color, dash in legend.entries)
     assert entries["loop / back"] == ("#123456", "solid")
-    graph_styles = dict(report.graph.edge_styles)
-    assert graph_styles["back"].stroke == "#123456"
 
 
 def test_product_flow_collapsible_inference_ignores_paint_only_back_edges():

@@ -410,13 +410,21 @@ def ProductFlow(
         for entry in step_entries
         if any(edge.src == entry.id and edge.kind in ("forward", "skip") for edge in edge_entries)
     )
+    product_styles: dict[EdgeKind, EdgeStyle] = {
+        "back": EdgeStyle(theme.unfavorable, dash=(2.0, 3.0))
+    }
+    if isinstance(styles, Mapping):
+        product_styles.update(styles)
+    flow_styles = (
+        styles if styles is not None and not isinstance(styles, Mapping) else product_styles
+    )
 
     graph = EventFlow(
         nodes,
         placements,
         edge_entries,
         stage_labels=stage_entries,
-        styles=styles,
+        styles=flow_styles,
         collapsible=collapsible,
         theme=theme,
         chrome=chrome,
