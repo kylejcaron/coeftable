@@ -1,3 +1,20 @@
+<a id="v0.9.0"></a>
+# [v0.9.0](https://github.com/kylejcaron/coeftable/releases/tag/v0.9.0) - 2026-08-28
+
+<!-- Release notes generated using configuration in .github/release.yml at v0.9.0 -->
+
+## What's Changed
+### New Features
+* Infer the operator, allow signed terms, and state each card's own change by [@kylejcaron](https://github.com/kylejcaron) in [#51](https://github.com/kylejcaron/coeftable/pull/51)
+### Maintenance
+* Update changelog for v0.8.0 by [@github-actions](https://github.com/github-actions)[bot] in [#50](https://github.com/kylejcaron/coeftable/pull/50)
+
+
+**Full Changelog**: https://github.com/kylejcaron/coeftable/compare/v0.8.0...v0.9.0
+
+[Changes][v0.9.0]
+
+
 <a id="v0.8.0"></a>
 # [v0.8.0](https://github.com/kylejcaron/coeftable/releases/tag/v0.8.0) - 2026-08-27
 
@@ -184,6 +201,7 @@
 [Changes][v0.1.0]
 
 
+[v0.9.0]: https://github.com/kylejcaron/coeftable/compare/v0.8.0...v0.9.0
 [v0.8.0]: https://github.com/kylejcaron/coeftable/compare/v0.7.0...v0.8.0
 [v0.7.0]: https://github.com/kylejcaron/coeftable/compare/v0.6.0...v0.7.0
 [v0.6.0]: https://github.com/kylejcaron/coeftable/compare/v0.5.0...v0.6.0
