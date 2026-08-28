@@ -22,8 +22,17 @@ from coeftable.graph import (
     StateRule,
     Wire,
 )
-from coeftable.graph._routes import route_across, route_back_sag, route_skip_bow
-from coeftable.graph.model import _stage_extents, _stage_gap_midpoint, _stage_vertical_extents
+from coeftable.graph._routes import Route, route_across, route_back_sag, route_skip_bow
+from coeftable.graph.model import (
+    _pack_forward_pills,
+    _rects_intersect,
+    _stage_extents,
+    _stage_gap_midpoint,
+    _stage_vertical_extents,
+)
+from coeftable.graph.model import (
+    _painted_pill_rect as _model_painted_pill_rect,
+)
 
 
 def _rects_overlap(
@@ -450,7 +459,11 @@ def test_event_flow_omits_the_legacy_marker_def():
 
 
 def test_back_wire_hides_via_either_collapsed_endpoint():
-    """A back edge is endpoint-based paint suppression: either end can hide it."""
+    """A back edge is endpoint-based paint suppression: either end can hide it.
+
+    The back wire's own label pill renders as a separate group from its
+    path (see `_wire_svg`), so every hide rule naming it must target both.
+    """
     graph = EventFlow(
         (("a", Card("A")), ("b", Card("B")), ("c", Card("C"))),
         (StageSlot("a", 0, 0), StageSlot("b", 1, 0), StageSlot("c", 0, 1)),
@@ -464,9 +477,12 @@ def test_back_wire_hides_via_either_collapsed_endpoint():
     assert graph._compiled.rules == (
         (
             ("#collapse-nub-0:checked",),
-            ("collapse-card-1", "collapse-edge-0", "collapse-edge-1"),
+            ("collapse-card-1", "collapse-edge-0", "collapse-edge-1", "collapse-edge-1-pill"),
         ),
-        (("#collapse-nub-1:checked",), ("collapse-edge-1",)),
+        (
+            ("#collapse-nub-1:checked",),
+            ("collapse-edge-1", "collapse-edge-1-pill"),
+        ),
     )
 
 
@@ -1527,4 +1543,246 @@ def test_equal_height_crossing_forward_pills_pack_apart_in_the_same_gap():
 
     wires_by_id = {wire.id: wire for wire in graph.wires}
     assert wires_by_id["a-d"].label != wires_by_id["b-c"].label
+    _assert_pill_bounds_inside(graph)
+
+
+def _assert_every_painted_pill_pair_disjoint(graph: Graph) -> None:
+    """Assert every two rendered flow pills' painted (border-expanded) rects
+    are pairwise disjoint, across every wire kind in one graph at once."""
+    pills = list(graph._layout.flow_pills)
+    for i, (_id_a, rect_a) in enumerate(pills):
+        for _id_b, rect_b in pills[i + 1 :]:
+            assert not _rects_overlap(
+                _painted_pill_rect(rect_a, graph), _painted_pill_rect(rect_b, graph)
+            )
+
+
+def test_thick_pill_border_forces_touching_forward_pills_apart():
+    """`_pack_forward_pills` compares *painted* rects, not nominal ones: two
+    forward pills that only nominally touch (a zero-width shared edge, not
+    a real overlap) still collide once each pill's own border halo is
+    added, and must be packed apart exactly like a real overlap would be.
+    Comparing bare nominal rects (the pre-fix behavior) would have found
+    this pair already disjoint and left them touching border-to-border.
+    """
+    chrome = CardChrome(border_width=2)
+    slot_by_id = {
+        "a": StageSlot("a", 0, 0),
+        "b": StageSlot("b", 1, 0),
+        "c": StageSlot("c", 0, 1),
+        "d": StageSlot("d", 1, 1),
+    }
+    wires = (
+        Wire("w1", "a", "b", label="x", kind="forward"),
+        Wire("w2", "c", "d", label="y", kind="forward"),
+    )
+    routes = {
+        "w1": Route("M0,0", (10.0, 5.0), (0.0, 0.0, 0.0, 0.0)),
+        "w2": Route("M0,0", (10.0, 15.0), (0.0, 0.0, 0.0, 0.0)),
+    }
+    pills = {
+        "w1": (0.0, 0.0, 20.0, 10.0),
+        "w2": (0.0, 10.0, 20.0, 10.0),
+    }
+    assert not _rects_intersect(pills["w1"], pills["w2"])  # nominally already disjoint
+    packed_routes, packed_pills = _pack_forward_pills(wires, routes, pills, slot_by_id, chrome)
+    assert packed_pills["w1"] == pills["w1"]  # declared first, never moves
+    assert packed_pills["w2"] == (0.0, 30.0, 20.0, 10.0)  # shifted one step past the touch
+    halo = chrome.border_width / 2
+    assert not _rects_intersect(
+        _model_painted_pill_rect(packed_pills["w1"], halo),
+        _model_painted_pill_rect(packed_pills["w2"], halo),
+    )
+    assert packed_routes["w2"].label_anchor == (10.0, 35.0)
+
+
+def test_three_coincident_forward_pills_pack_around_a_same_gap_back_pill():
+    """Non-forward obstacles are seeded once, up front, from every labeled
+    non-forward wire regardless of declaration order: a same-gap back pill
+    that happens to sit exactly where pure forward-vs-forward stacking
+    would otherwise land the third pill must still push it one slot
+    further, even though the back wire is declared last.
+    """
+    chrome = CardChrome(border_width=2)
+    slot_by_id = {
+        "a": StageSlot("a", 0, 0),
+        "b": StageSlot("b", 1, 0),
+        "c": StageSlot("c", 0, 1),
+        "d": StageSlot("d", 1, 1),
+        "e": StageSlot("e", 0, 2),
+        "f": StageSlot("f", 1, 2),
+    }
+    wires = (
+        Wire("fwd1", "a", "b", label="p1", kind="forward"),
+        Wire("fwd2", "c", "d", label="p2", kind="forward"),
+        Wire("fwd3", "e", "f", label="p3", kind="forward"),
+        Wire("blocker", "b", "a", label="retry", kind="back"),
+    )
+    routes = {
+        "fwd1": Route("M0,0", (10.0, 5.0), (0.0, 0.0, 0.0, 0.0)),
+        "fwd2": Route("M0,0", (10.0, 5.0), (0.0, 0.0, 0.0, 0.0)),
+        "fwd3": Route("M0,0", (10.0, 5.0), (0.0, 0.0, 0.0, 0.0)),
+        "blocker": Route("M0,0", (10.0, 45.0), (0.0, 0.0, 0.0, 0.0)),
+    }
+    pills = {
+        "fwd1": (0.0, 0.0, 20.0, 10.0),
+        "fwd2": (0.0, 0.0, 20.0, 10.0),
+        "fwd3": (0.0, 0.0, 20.0, 10.0),
+        "blocker": (0.0, 40.0, 20.0, 10.0),
+    }
+    packed_routes, packed_pills = _pack_forward_pills(wires, routes, pills, slot_by_id, chrome)
+    assert packed_pills["fwd1"] == (0.0, 0.0, 20.0, 10.0)
+    assert packed_pills["fwd2"] == (0.0, 20.0, 20.0, 10.0)
+    # Pure forward-vs-forward stacking alone would land "fwd3" at y=40,
+    # exactly where the declared-last back pill already sits.
+    assert packed_pills["fwd3"] == (0.0, 60.0, 20.0, 10.0)
+    halo = chrome.border_width / 2
+    all_rects = [
+        packed_pills["fwd1"],
+        packed_pills["fwd2"],
+        packed_pills["fwd3"],
+        packed_pills["blocker"],
+    ]
+    assert packed_pills["blocker"] == pills["blocker"]  # never a forward pill, never moves
+    for i, rect_a in enumerate(all_rects):
+        for rect_b in all_rects[i + 1 :]:
+            assert not _rects_intersect(
+                _model_painted_pill_rect(rect_a, halo), _model_painted_pill_rect(rect_b, halo)
+            )
+    assert packed_routes["fwd3"].label_anchor == (10.0, 65.0)
+
+
+def test_every_painted_pill_pair_stays_disjoint_across_mixed_wire_kinds():
+    """One graph with a coincident-crossing forward pair, a same-stage back
+    loop, and a skip bow: every rendered pill's painted rect must clear
+    every other one, whichever kind produced it."""
+    nodes = (
+        ("a", Card("A")),
+        ("b", Card("B")),
+        ("c", Card("C")),
+        ("d", Card("D")),
+        ("e", Card("E")),
+    )
+    slots = (
+        StageSlot("a", 0, 0),
+        StageSlot("b", 0, 1),
+        StageSlot("c", 1, 0),
+        StageSlot("d", 1, 1),
+        StageSlot("e", 2, 0),
+    )
+    edges = (
+        FlowEdge("a-d", "a", "d", "forward", "aaa"),
+        FlowEdge("b-c", "b", "c", "forward", "bbb"),
+        FlowEdge("b-a", "b", "a", "back", "loop"),
+        FlowEdge("a-e", "a", "e", "skip", "skip"),
+    )
+    graph = EventFlow(nodes, slots, edges, dom_prefix="mix", stage_gap=200)
+    assert len(graph._layout.flow_pills) == 4
+    _assert_every_painted_pill_pair_disjoint(graph)
+    _assert_no_wire_samples_enter_any_card(graph)
+    _assert_pill_bounds_inside(graph)
+
+
+def test_flow_wire_paths_render_before_every_pill_group_in_the_svg():
+    """No later path can visually paint over an earlier pill: every flow
+    wire's <path> lands before every flow wire's pill <g>, regardless of
+    wire declaration order.
+    """
+    graph = _flow(
+        FlowEdge("a-b", "a", "b", "forward", "go"),
+        FlowEdge("b-a", "b", "a", "back", "retry"),
+    )
+    html = graph.as_raw_html()
+    svg = html[: html.index("</svg>")]
+    last_path_index = svg.rindex("<path ")
+    pill_group_indices = [
+        svg.index(f'<g id="{pill_dom_id}">')
+        for pill_dom_id in graph._compiled.pill_dom_ids.values()
+    ]
+    assert len(pill_group_indices) == 2  # both flow wires are labeled here
+    assert all(last_path_index < index for index in pill_group_indices)
+
+
+def test_collapse_and_injected_hides_set_display_none_on_both_path_and_pill_groups():
+    """A wire hidden by either a derived collapse rule or an injected
+    `StateRule.hide_wires` entry must vanish entirely: the rendered CSS
+    must target both its path group and its pill group, or the pill would
+    be left floating with no wire drawn underneath it.
+    """
+    graph = Graph(
+        (("a", Card("A")), ("b", Card("B")), ("c", Card("C"))),
+        Staged((StageSlot("a", 0, 0), StageSlot("b", 1, 0), StageSlot("c", 0, 1))),
+        wires=(
+            Wire("a-b", "a", "b", label="go", kind="forward"),
+            Wire("b-c", "b", "c", label="ret", kind="back"),
+        ),
+        visibility=("a-b",),
+        collapsible=("a",),
+        rules=(StateRule((Atom(ControlRef("a"), "checked"),), hide_wires=("a-b",)),),
+        dom_prefix="inj",
+        layer_gap=150,
+    )
+    # One merged rule: "a-b" is hidden by the injected rule naming it
+    # directly, "b-c" by the derived collapse rule (it descends from "a"),
+    # and both conditions happen to be identical so they share one bucket.
+    assert graph._compiled.rules == (
+        (
+            ("#inj-nub-0:checked",),
+            ("inj-card-1", "inj-edge-0", "inj-edge-0-pill", "inj-edge-1", "inj-edge-1-pill"),
+        ),
+    )
+    style = graph.as_raw_html()
+    style = style[style.rindex("<style>") :]
+    prefix = ".inj-canvas:has(#inj-nub-0:checked)"
+    for target in (
+        "inj-card-1",
+        "inj-edge-0",
+        "inj-edge-0-pill",
+        "inj-edge-1",
+        "inj-edge-1-pill",
+    ):
+        assert f"{prefix} #{target}" in style
+
+
+def test_thick_opposing_loop_tracks_keep_disjoint_painted_stroke_corridors():
+    """Two independent single-occupant ("first track") loop pools sharing
+    one physical stage boundary, both with a thick custom stroke, must
+    still clear each other by their real painted stroke width — proving
+    `_flow_offsets` applies `_painted_extent` to a pool's very first track,
+    not only to later tracks stacked on top of it.
+    """
+    chrome = CardChrome(border_width=2)
+    styles = {"back": EdgeStyle("#000000", width=50.0)}
+    nodes = (
+        ("a", Card("A", chrome=chrome)),
+        ("b", Card("B", chrome=chrome)),
+        ("c", Card("C", chrome=chrome)),
+        ("d", Card("D", chrome=chrome)),
+    )
+    slots = (
+        StageSlot("a", 0, 0),
+        StageSlot("b", 0, 1),
+        StageSlot("c", 1, 0),
+        StageSlot("d", 1, 1),
+    )
+    edges = (
+        FlowEdge("a-b", "a", "b", "back", "r1"),  # stage 0's right loop
+        FlowEdge("d-c", "d", "c", "back", "r2"),  # stage 1's left loop
+    )
+    graph = EventFlow(
+        nodes,
+        slots,
+        edges,
+        styles=styles,  # ty: ignore[invalid-argument-type]
+        chrome=chrome,
+        dom_prefix="opploop",
+        stage_gap=250,
+    )
+    wire_geometry = dict(graph._layout.wire_geometry)
+    stroke_half = 25.0  # custom back style width(50)/2
+    corridor_right = wire_geometry["a-b"][1][0]
+    corridor_left = wire_geometry["d-c"][1][0]
+    assert abs(corridor_right - corridor_left) >= 2 * stroke_half + graph.chrome.chip_gap
+    _assert_every_painted_pill_pair_disjoint(graph)
+    _assert_no_wire_samples_enter_any_card(graph)
     _assert_pill_bounds_inside(graph)

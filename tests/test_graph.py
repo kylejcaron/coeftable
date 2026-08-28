@@ -1584,6 +1584,7 @@ def test_graph_compiles_diamond_state_to_exact_record():
     assert graph._compiled == _CompiledState(
         card_dom_ids=("g-card-0", "g-card-1", "g-card-2", "g-card-3"),
         wire_dom_ids=("g-edge-0", "g-edge-1", "g-edge-2", "g-edge-3"),
+        pill_dom_ids={},
         nub_dom_ids={"a": "g-nub-1", "b": "g-nub-2"},
         control_dom_ids={},
         rules=(
@@ -1815,6 +1816,7 @@ def test_graph_state_is_empty_and_byte_deterministic():
     assert first._compiled == _CompiledState(
         card_dom_ids=("x-card-0", "x-card-1", "x-card-2", "x-card-3"),
         wire_dom_ids=("x-edge-0", "x-edge-1", "x-edge-2", "x-edge-3"),
+        pill_dom_ids={},
         nub_dom_ids={},
         control_dom_ids={},
         rules=(),

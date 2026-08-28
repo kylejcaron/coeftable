@@ -75,6 +75,7 @@ def _wire_svg(graph: Graph, layout: _GraphLayout, compiled: _CompiledState) -> s
             f"<defs>{''.join(defs)}</defs>"
         )
     ]
+    pill_fragments: list[str] = []
     for wire, wire_dom_id in zip(graph.wires, compiled.wire_dom_ids, strict=True):
         path_d, label_anchor = geometry[wire.id]
         label_x, label_y = label_anchor
@@ -92,7 +93,12 @@ def _wire_svg(graph: Graph, layout: _GraphLayout, compiled: _CompiledState) -> s
                     f"paint-order:stroke;stroke:{surface};stroke-width:4px;"
                     f'stroke-linejoin:round">{_esc(wire.label)}</text>'
                 )
+            fragments.append(f'<g id="{wire_dom_id}">{path}{label}</g>')
         else:
+            # A flow wire's path renders here, alongside every other wire's
+            # path; its labeled pill (if any) is collected separately and
+            # appended only after every path has been emitted, so no later
+            # path can ever paint over an earlier wire's pill or label.
             style = styles[wire.kind]
             stroke = _esc(style.stroke)
             dash_values = " ".join(_number(value) for value in style.dash)
@@ -102,9 +108,10 @@ def _wire_svg(graph: Graph, layout: _GraphLayout, compiled: _CompiledState) -> s
                 f'stroke-width="{_number(style.width)}"{dash} '
                 f'marker-end="url(#{kind_markers[wire.kind]})"/>'
             )
-            label = ""
+            fragments.append(f'<g id="{wire_dom_id}">{path}</g>')
             if wire.label is not None:
                 px, py, pw, ph = pills[wire.id]
+                pill_dom_id = compiled.pill_dom_ids[wire.id]
                 label = (
                     f'<rect x="{_number(px)}" y="{_number(py)}" width="{_number(pw)}" '
                     f'height="{_number(ph)}" fill="{surface}" stroke="{stroke}" '
@@ -114,7 +121,8 @@ def _wire_svg(graph: Graph, layout: _GraphLayout, compiled: _CompiledState) -> s
                     f'style="font-size:{graph.chrome.caption_size}px">'
                     f"{_esc(wire.label)}</text>"
                 )
-        fragments.append(f'<g id="{wire_dom_id}">{path}{label}</g>')
+                pill_fragments.append(f'<g id="{pill_dom_id}">{label}</g>')
+    fragments.extend(pill_fragments)
     fragments.append("</svg>")
     return "".join(fragments)
 

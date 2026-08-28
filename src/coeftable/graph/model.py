@@ -1183,6 +1183,18 @@ def _rects_intersect(
     return ax < bx + bw and bx < ax + aw and ay < by + bh and by < ay + ah
 
 
+def _painted_pill_rect(
+    rect: tuple[float, float, float, float], pill_halo: float
+) -> tuple[float, float, float, float]:
+    """Return a pill's actual rendered rect, its border straddling the nominal edge.
+
+    Matches `_flow_bounds_extrema`'s own definition of a pill's real paint:
+    the nominal rect expanded by half the chrome border width on every side.
+    """
+    x, y, width, height = rect
+    return (x - pill_halo, y - pill_halo, width + 2 * pill_halo, height + 2 * pill_halo)
+
+
 type _TrackAxis = Literal["height", "width"]
 
 
@@ -1457,22 +1469,37 @@ def _pack_forward_pills(
     slot_by_id: Mapping[str, StageSlot],
     chrome: CardChrome,
 ) -> tuple[dict[str, Route], dict[str, tuple[float, float, float, float]]]:
-    """Stack a stage gap's labeled forward pills so a later one never collides.
+    """Stack a stage gap's labeled forward pills clear of every other painted pill.
 
     A forward wire's pill always centers on the exact physical midpoint
     between its two stages (`route_across`'s fixed anchor), so two forward
     wires sharing a source stage — and therefore the same physical gap —
     can land at an identical pill x, and even the same y whenever their
-    endpoints happen to sit at equal painted heights. Declaration order
-    breaks the tie: each pill keeps its own gap-midpoint x exactly and,
-    only if it actually intersects an earlier pill already packed into
-    that same stage gap, shifts straight down by one pill height plus one
-    `chrome.chip_gap` at a time until it clears every one of them. Only
-    forward pills are packed here; every other wire kind already reserves
-    its own exterior track pool in `_flow_offsets`.
+    endpoints happen to sit at equal painted heights. Every non-forward
+    labeled wire (skip, back, and same-stage loop) already owns a fixed,
+    disjoint track from `_flow_offsets`, so its own pill never moves; those
+    painted rects are seeded once, up front, as one flat obstacle set with
+    no per-gap bucketing — a skip/back pill's bow/sag can span several
+    stages, so a real rect-intersection test against every one of them is
+    the only reliable answer to "does this actually share my gap", not
+    which pool the wire nominally belongs to. Declaration order then
+    breaks ties between forward pills themselves: each keeps its own
+    gap-midpoint x exactly and, only if its *painted* rect (nominal,
+    expanded by half the chrome border width on every side, matching
+    `_flow_bounds_extrema`'s own definition of a pill's actual paint)
+    actually intersects an obstacle or an earlier forward pill already
+    packed into that same physical stage gap, shifts straight down by one
+    pill height plus one `chrome.chip_gap` at a time until it clears every
+    one of them.
     """
     packed_routes = dict(routes)
     packed_pills = dict(pills)
+    pill_halo = chrome.border_width / 2
+    obstacles = [
+        _painted_pill_rect(pills[wire.id], pill_halo)
+        for wire in wires
+        if wire.kind != "forward" and wire.label is not None
+    ]
     placed_by_gap: dict[int, list[tuple[float, float, float, float]]] = {}
     for wire in wires:
         if wire.kind != "forward" or wire.label is None:
@@ -1480,7 +1507,10 @@ def _pack_forward_pills(
         gap = slot_by_id[wire.src].stage
         placed = placed_by_gap.setdefault(gap, [])
         x, y, width, height = packed_pills[wire.id]
-        while any(_rects_intersect((x, y, width, height), other) for other in placed):
+        while any(
+            _rects_intersect(_painted_pill_rect((x, y, width, height), pill_halo), other)
+            for other in (*obstacles, *placed)
+        ):
             y += height + chrome.chip_gap
         rect = (x, y, width, height)
         if rect != packed_pills[wire.id]:
@@ -1488,7 +1518,7 @@ def _pack_forward_pills(
             route = packed_routes[wire.id]
             anchor_x, _anchor_y = route.label_anchor
             packed_routes[wire.id] = replace(route, label_anchor=(anchor_x, y + height / 2))
-        placed.append(rect)
+        placed.append(_painted_pill_rect(rect, pill_halo))
     return packed_routes, packed_pills
 
 
@@ -1519,11 +1549,12 @@ def _flow_bounds_extrema(
         ys0.append(y0 - half)
         xs1.append(x1 + half)
         ys1.append(y1 + half)
-    for px, py, pw, ph in pills.values():
-        xs0.append(px - pill_halo)
-        ys0.append(py - pill_halo)
-        xs1.append(px + pw + pill_halo)
-        ys1.append(py + ph + pill_halo)
+    for rect in pills.values():
+        px, py, pw, ph = _painted_pill_rect(rect, pill_halo)
+        xs0.append(px)
+        ys0.append(py)
+        xs1.append(px + pw)
+        ys1.append(py + ph)
     return (
         min(xs0, default=0.0),
         min(ys0, default=0.0),
