@@ -46,6 +46,7 @@ def CausalGraph(
         if isinstance(entry, Sequence)
         and not isinstance(entry, (str, bytes))
         and len(entry) == 2
+        and isinstance(entry[0], str)
         and entry[0] in outgoing
     )
     if layer_gap is None:
