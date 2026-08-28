@@ -40,11 +40,19 @@ def route_across(src: Box, dst: Box) -> Route:
     )
 
 
-def route_skip_bow(src: Box, dst: Box, *, offset: float) -> Route:
+def route_skip_bow(src: Box, dst: Box, *, offset: float, bound: float | None = None) -> Route:
+    """Route a skip edge's bow above ``src`` and ``dst``.
+
+    ``bound`` overrides the corridor's base edge; pass the minimum top
+    across every stage the wire spans (not just its own two endpoints) so
+    the bow clears every card sharing an intervening stage, not only
+    ``src`` and ``dst``. Omitting it falls back to the two boxes' own tops.
+    """
     sx, sy = _right(src)
     dx, dy = _left(dst)
     middle = (sx + dx) / 2
-    corridor = min(src[1], dst[1]) - offset
+    top = min(src[1], dst[1]) if bound is None else bound
+    corridor = top - offset
     path = (
         f"M{_n(sx)},{_n(sy)} C{_n(sx + offset)},{_n(sy)} "
         f"{_n(sx + offset)},{_n(corridor)} {_n(middle)},{_n(corridor)} "
@@ -58,11 +66,20 @@ def route_skip_bow(src: Box, dst: Box, *, offset: float) -> Route:
     )
 
 
-def route_back_sag(src: Box, dst: Box, *, offset: float) -> Route:
+def route_back_sag(src: Box, dst: Box, *, offset: float, bound: float | None = None) -> Route:
+    """Route a back edge's sag below ``src`` and ``dst``.
+
+    ``bound`` overrides the corridor's base edge; pass the maximum bottom
+    across every stage the wire spans (not just its own two endpoints) so
+    the sag clears every card sharing an intervening stage, not only
+    ``src`` and ``dst``. Omitting it falls back to the two boxes' own
+    bottoms.
+    """
     sx, sy = _left(src)
     dx, dy = _right(dst)
     middle = (sx + dx) / 2
-    corridor = max(src[1] + src[3], dst[1] + dst[3]) + offset
+    bottom = max(src[1] + src[3], dst[1] + dst[3]) if bound is None else bound
+    corridor = bottom + offset
     path = (
         f"M{_n(sx)},{_n(sy)} C{_n(sx - offset)},{_n(sy)} "
         f"{_n(sx - offset)},{_n(corridor)} {_n(middle)},{_n(corridor)} "

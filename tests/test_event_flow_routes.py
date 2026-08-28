@@ -52,3 +52,17 @@ def test_c_loop_bound_override_clears_a_wider_sibling_in_the_column():
     assert downward.path == "M310,30 C424,30 424,130 310,130"
     assert downward.label_anchor == (424.0, 80.0)
     assert downward.bounds == (310.0, 30.0, 424.0, 130.0)
+
+
+def test_skip_bow_bound_override_clears_a_taller_intervening_card():
+    route = route_skip_bow(SRC, DST, offset=24, bound=0)
+    assert route.path == "M110,50 C134,50 134,-24 160,-24 S186,130 210,130"
+    assert route.label_anchor == (160.0, -24.0)
+    assert route.bounds == (110.0, -24.0, 210.0, 130.0)
+
+
+def test_back_sag_bound_override_clears_a_taller_intervening_card():
+    route = route_back_sag(DST, SRC, offset=24, bound=200)
+    assert route.path == "M210,130 C186,130 186,224 160,224 S134,50 110,50"
+    assert route.label_anchor == (160.0, 224.0)
+    assert route.bounds == (110.0, 50.0, 210.0, 224.0)

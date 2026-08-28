@@ -1093,14 +1093,20 @@ def _flow_route(
     dst_lane: int,
     offset: float,
     stage_extents: Mapping[int, tuple[float, float]],
+    stage_vertical_extents: Mapping[int, tuple[float, float]],
 ) -> Route:
     """Choose the pure route for one flow wire by kind and relative placement."""
     if wire.kind == "forward":
         return route_across(src_box, dst_box)
+    low_stage, high_stage = min(src_stage, dst_stage), max(src_stage, dst_stage)
     if wire.kind == "skip":
-        return route_skip_bow(src_box, dst_box, offset=offset)
+        top = min(stage_vertical_extents[stage][0] for stage in range(low_stage, high_stage + 1))
+        return route_skip_bow(src_box, dst_box, offset=offset, bound=top)
     if dst_stage < src_stage:
-        return route_back_sag(src_box, dst_box, offset=offset)
+        bottom = max(
+            stage_vertical_extents[stage][1] for stage in range(low_stage, high_stage + 1)
+        )
+        return route_back_sag(src_box, dst_box, offset=offset, bound=bottom)
     side: Literal["left", "right"] = "left" if dst_lane < src_lane else "right"
     left_edge, right_edge = stage_extents[src_stage]
     return route_c_loop(
@@ -1126,6 +1132,24 @@ def _stage_extents(
         stage = slot_by_id[card_id].stage
         left, right = extents.get(stage, (x, x + width))
         extents[stage] = (min(left, x), max(right, x + width))
+    return extents
+
+
+def _stage_vertical_extents(
+    boxes_by_id: Mapping[str, Box], slot_by_id: Mapping[str, StageSlot]
+) -> dict[int, tuple[float, float]]:
+    """Return each stage's outer (min_top, max_bottom) across every card in it.
+
+    A skip bow or back sag must clear every card in every stage it spans,
+    not only its own two endpoints, so its corridor is anchored to the
+    full span's shared extent (see `_flow_route`) rather than to the two
+    boxes the wire happens to connect.
+    """
+    extents: dict[int, tuple[float, float]] = {}
+    for card_id, (_x, y, _width, height) in boxes_by_id.items():
+        stage = slot_by_id[card_id].stage
+        top, bottom = extents.get(stage, (y, y + height))
+        extents[stage] = (min(top, y), max(bottom, y + height))
     return extents
 
 
@@ -1224,6 +1248,48 @@ def _flow_offsets(
     return offsets
 
 
+def _graph_validate_c_loop_track_width(
+    wires: tuple[Wire, ...],
+    *,
+    slot_by_id: Mapping[str, StageSlot],
+    offsets: Mapping[str, float],
+    chrome: CardChrome,
+    styles: Mapping[EdgeKind, EdgeStyle],
+    stage_gap: int,
+    max_stage: int,
+) -> None:
+    """Reject an interior same-stage C-loop pool wide enough to overlap a neighbor.
+
+    A same-stage back edge's C-loop pool packed against the first stage's
+    left side or the last stage's right side has open canvas to expand
+    into (see `_graph_measure_staged`'s width/height growth), but a pool
+    packed against any *interior* stage's boundary is bounded on that side
+    by the neighboring stage's own cards. `_flow_offsets` already packs
+    each pool's tracks closest-first, so the last track packed into a pool
+    carries that pool's total reach from the stage boundary; checked here
+    against the one `stage_gap` of clear space actually available there.
+    """
+    reach_by_group: dict[str, float] = {}
+    for wire in wires:
+        group = _flow_track_group(wire, slot_by_id=slot_by_id)
+        if group is None or group[1] != "width":
+            continue
+        stage = slot_by_id[wire.src].stage
+        side = "left" if slot_by_id[wire.dst].lane < slot_by_id[wire.src].lane else "right"
+        if (side == "left" and stage == 0) or (side == "right" and stage == max_stage):
+            continue
+        key, _axis = group
+        extent = _flow_track_extent(wire, axis="width", chrome=chrome, styles=styles)
+        reach = offsets[wire.id] + extent
+        reach_by_group[key] = max(reach_by_group.get(key, 0.0), reach)
+    for reach in reach_by_group.values():
+        if reach > stage_gap:
+            raise SpecError(
+                f"same-stage back-loop track requires {reach:g}px but "
+                f"Graph.layer_gap is {stage_gap}px"
+            )
+
+
 def _flow_geometry(
     wires: tuple[Wire, ...],
     boxes_by_id: dict[str, Box],
@@ -1233,6 +1299,7 @@ def _flow_geometry(
 ) -> tuple[dict[str, Route], dict[str, tuple[float, float, float, float]]]:
     """Resolve every wire's route and each labeled wire's pill bounds."""
     stage_extents = _stage_extents(boxes_by_id, slot_by_id)
+    stage_vertical_extents = _stage_vertical_extents(boxes_by_id, slot_by_id)
     routes: dict[str, Route] = {}
     for wire in wires:
         src_slot = slot_by_id[wire.src]
@@ -1247,6 +1314,7 @@ def _flow_geometry(
             dst_lane=dst_slot.lane,
             offset=offsets.get(wire.id, 0.0),
             stage_extents=stage_extents,
+            stage_vertical_extents=stage_vertical_extents,
         )
     pills = {
         wire.id: _pill_bounds(routes[wire.id].label_anchor, wire.label, chrome)
@@ -1357,6 +1425,15 @@ def _graph_measure_staged(
     styles = _resolve_edge_styles(theme, edge_styles)
     pill_halo = chrome.border_width / 2
     offsets = _flow_offsets(wires, slot_by_id=slot_by_id, chrome=chrome, styles=styles)
+    _graph_validate_c_loop_track_width(
+        wires,
+        slot_by_id=slot_by_id,
+        offsets=offsets,
+        chrome=chrome,
+        styles=styles,
+        stage_gap=stage_gap,
+        max_stage=last_stage,
+    )
     boxes_by_id = dict(boxes)
     routes, pills = _flow_geometry(wires, boxes_by_id, slot_by_id, offsets, chrome)
 

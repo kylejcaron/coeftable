@@ -5,7 +5,7 @@ from typing import cast
 
 import pytest
 
-from coeftable.cards import Card, CardChrome
+from coeftable.cards import Card, CardChrome, TextBlock
 from coeftable.errors import SpecError
 from coeftable.graph import (
     Atom,
@@ -47,6 +47,18 @@ def _path_points(path_d: str) -> list[tuple[float, float]]:
     """Extract every (x, y) coordinate pair from a rendered SVG path string."""
     numbers = [float(token) for token in re.findall(r"-?\d+(?:\.\d+)?", path_d)]
     return list(zip(numbers[0::2], numbers[1::2], strict=True))
+
+
+def _point_inside_box(point: tuple[float, float], box: tuple[float, float, float, float]) -> bool:
+    """Return whether ``point`` lies strictly inside ``box``, not merely on its edge.
+
+    A route's own endpoints sit exactly on their source/destination box's
+    edge; a strict inequality excludes that expected touch while still
+    catching a genuine interior crossing of an unrelated card.
+    """
+    px, py = point
+    bx, by, bw, bh = box
+    return bx < px < bx + bw and by < py < by + bh
 
 
 def test_staged_layout_places_cards_left_to_right_and_top_to_bottom():
@@ -539,3 +551,134 @@ def test_thick_edge_style_widths_stay_inside_the_measured_canvas():
             assert x + half <= measured.width + 1e-6
             assert y - half >= -1e-6
             assert y + half <= measured.height + 1e-6
+
+
+def test_back_sag_clears_a_taller_intervening_stage_card():
+    """A back edge's sag must clear every stage it spans, not just its own two boxes."""
+    tall = Card(
+        "Middle",
+        content=(
+            TextBlock("one"),
+            TextBlock("two"),
+            TextBlock("three"),
+            TextBlock("four"),
+            TextBlock("five"),
+        ),
+    )
+    nodes = (("start", Card("Start")), ("middle", tall), ("end", Card("End")))
+    slots = (StageSlot("start", 0, 0), StageSlot("middle", 1, 0), StageSlot("end", 2, 0))
+    graph = EventFlow(
+        nodes,
+        slots,
+        (FlowEdge("end-start", "end", "start", "back", "retry"),),
+        dom_prefix="span",
+    )
+    boxes = dict(graph.measure().boxes)
+    middle_box = boxes["middle"]
+    (path_d, _anchor) = dict(graph._layout.wire_geometry)["end-start"]
+    points = _path_points(path_d)
+    pill = dict(graph._layout.flow_pills)["end-start"]
+    for box in boxes.values():
+        for point in points:
+            assert not _point_inside_box(point, box)
+        assert not _rects_overlap(pill, box)
+    # The taller intervening card is the binding constraint, not the wire's
+    # own shorter endpoints: prove the sag actually reaches past it.
+    corridor_y = max(y for _x, y in points)
+    assert corridor_y > middle_box[1] + middle_box[3]
+    _assert_pill_bounds_inside(graph)
+
+
+def test_stacked_back_tracks_clear_a_taller_intervening_lane():
+    """Packed offsets stack on top of a per-wire span bound, never inside it."""
+    tall = Card(
+        "B1",
+        content=(
+            TextBlock("one"),
+            TextBlock("two"),
+            TextBlock("three"),
+            TextBlock("four"),
+            TextBlock("five"),
+        ),
+    )
+    nodes = (("a", Card("A")), ("b0", Card("B0")), ("b1", tall), ("c", Card("C")))
+    slots = (
+        StageSlot("a", 0, 0),
+        StageSlot("b0", 1, 0),
+        StageSlot("b1", 1, 1),
+        StageSlot("c", 2, 0),
+    )
+    graph = EventFlow(
+        nodes,
+        slots,
+        (
+            FlowEdge("c-a", "c", "a", "back", "retry"),
+            FlowEdge("b0-a", "b0", "a", "back", "reset"),
+        ),
+        dom_prefix="stack",
+    )
+    boxes = dict(graph.measure().boxes)
+    wire_geometry = dict(graph._layout.wire_geometry)
+    pills = dict(graph._layout.flow_pills)
+    for wire_id in ("c-a", "b0-a"):
+        points = _path_points(wire_geometry[wire_id][0])
+        pill = pills[wire_id]
+        for box in boxes.values():
+            for point in points:
+                assert not _point_inside_box(point, box)
+            assert not _rects_overlap(pill, box)
+    assert not _rects_overlap(pills["c-a"], pills["b0-a"])
+    _assert_pill_bounds_inside(graph)
+
+
+def test_same_stage_c_loop_pill_rejected_when_wider_than_stage_gap_at_interior_stage():
+    nodes = (("s", Card("S")), ("p", Card("P")), ("q", Card("Q")))
+    slots = (StageSlot("s", 0, 0), StageSlot("p", 1, 0), StageSlot("q", 1, 1))
+    with pytest.raises(SpecError, match=re.escape("same-stage back-loop track requires 111.8px")):
+        EventFlow(
+            nodes,
+            slots,
+            (FlowEdge("q-p", "q", "p", "back", "retry payment"),),
+            dom_prefix="long",
+        )
+
+
+def test_same_stage_c_loop_exterior_pool_ignores_the_stage_gap_bound():
+    """The outermost pool (first stage's left loop) has open canvas, not a neighbor."""
+    nodes = (("p", Card("P")), ("q", Card("Q")), ("s", Card("S")))
+    slots = (StageSlot("p", 0, 0), StageSlot("q", 0, 1), StageSlot("s", 1, 0))
+    graph = EventFlow(
+        nodes,
+        slots,
+        (FlowEdge("q-p", "q", "p", "back", "retry payment"),),
+        dom_prefix="ext",
+    )
+    _assert_pill_bounds_inside(graph)
+
+
+def test_same_stage_c_loop_accumulated_tracks_exact_boundary_and_rejection():
+    """Two 5-char-labeled tracks in one interior pool reach exactly 118px."""
+
+    def build(stage_gap: int) -> Graph:
+        nodes = (("s", Card("S")), ("p", Card("P")), ("q", Card("Q")), ("r", Card("R")))
+        slots = (
+            StageSlot("s", 0, 0),
+            StageSlot("p", 1, 0),
+            StageSlot("q", 1, 1),
+            StageSlot("r", 1, 2),
+        )
+        return EventFlow(
+            nodes,
+            slots,
+            (
+                FlowEdge("q-p", "q", "p", "back", "abcde"),
+                FlowEdge("r-q", "r", "q", "back", "fghij"),
+            ),
+            stage_gap=stage_gap,
+            dom_prefix="acc",
+        )
+
+    graph = build(118)
+    _assert_pill_bounds_inside(graph)
+    with pytest.raises(SpecError, match=re.escape("same-stage back-loop track requires 118px")):
+        build(117)
