@@ -830,6 +830,89 @@ width, and dash. Omitting `stage_gap`, as
 above, derives a safe gap for labels, routes, and fold nubs, never narrower
 than 108px. Rendering and folding use HTML and CSS with zero JavaScript.
 
+## Product-flow reports (experimental)
+
+`coeftable.graph.ProductFlow` is the composition root over `EventFlow` for a
+staged product funnel: give it stage names, `ProductStep`s, and `FlowEdge`s
+and it builds every card's appearance, metric, trend, and diagnostics
+popover itself, places them on a labeled staged canvas, and wraps the whole
+thing in a `GraphReport` with a title, a per-edge-kind legend, and an
+optional note. The API is experimental and deliberately not exported from
+the top-level `coeftable` namespace yet.
+
+```python
+from coeftable.graph import FlowEdge, ProductFlow, ProductStep
+
+stages = ("Viewed", "Checkout", "Purchased")
+steps = (
+    ProductStep(
+        "viewed", "Viewed product", stage=0, lane=0,
+        series=(1200.0, 1230.0, 1180.0, 1260.0),
+    ),
+    ProductStep(
+        "checkout", "/checkout", stage=1, lane=0,
+        kind="decision", note="Routes by cart size: a single item skips review.",
+    ),
+    ProductStep(
+        "purchased", "Order placed", stage=2, lane=0,
+        kind="terminal", series=(150.0, 158.0, 149.0, 165.0), share_of="viewed",
+    ),
+)
+edges = (
+    FlowEdge("viewed-checkout", "viewed", "checkout", "forward", label="continue"),
+    FlowEdge("checkout-purchased", "checkout", "purchased", "forward"),
+    FlowEdge("purchased-checkout", "purchased", "checkout", "back", label="amend order"),
+)
+
+report = ProductFlow(
+    stages,
+    steps,
+    edges,
+    title="Purchase funnel",
+    note="Back edges show rework paths; they never change what is visible.",
+)
+html = report.as_raw_html()
+```
+
+`series` holds actual event volumes in declared order -- there is no fixed
+period count, denominator step, or ×1000 scaling convention baked in; each
+card's own metric, badge, and trend come straight from that step's series.
+A `"decision"` step (like `checkout` above) carries no series at all: its
+card renders `note` as explanatory text instead of a metric. The optional
+`share_of` names another step whose current value this step's current value
+is expressed as a percentage of, so `purchased` above also reports its share
+of `viewed`; a step cannot reference itself, a decision step, or a step
+whose current value is zero.
+
+A step's `kind` and `muted` flag drive its card's appearance: `"decision"`
+renders a dashed, transparent card; `"terminal"` renders a strong border;
+`muted=True` dims every color role without changing layout. `stages` supply
+the labeled columns steps sit in by `stage`/`lane`, exactly like `EventFlow`'s
+`StageSlot`. The header's `RuleStrip` legend derives each edge kind's exact
+resolved color and solid/dashed category from the graph's own `EdgeStyle`s
+-- `forward` solid, `skip` dashed, and `back` (labeled "loop / back") dashed
+by default -- so the legend can never drift from what is actually painted.
+Back edges, like `purchased-checkout` above, are paint-only: they route and
+label like any other edge but never change what is visible, exactly as in
+`EventFlow`. Omitting `stage_gap` derives a safe gap for labels, routes, and
+fold nubs from the graph's own content, the same derivation `EventFlow`
+uses.
+
+Every step that originates a `"forward"` or `"skip"` edge automatically gets
+a right-edge fold nub -- no `collapsible` list to maintain by hand -- so
+folding `viewed` above hides `checkout`, `purchased`, and every wire between
+them, back edge included. Each event/terminal card's own metric sits under
+its title; its diagnostics (current value, start value, percent change, and
+`share_of` when set) fold behind a "stats" chip and pop up on demand.
+Rendering, folding, and the diagnostics popover use HTML and CSS only, with
+zero JavaScript, exactly like a plain `EventFlow` graph.
+
+`ProductFlow` returns a `GraphReport`, so `report.measure()`,
+`report.as_raw_html()`, and its `_repr_html_` notebook display all work the
+same way they do for a plain `Graph`. For the literal 9-card, 12-edge,
+5-label checkout funnel this API is built to reproduce in full, see
+`tests/test_product_flow_reference.py`.
+
 ## Plot annotations
 
 `ct.Rule` draws a line and `ct.Band` shades an interval in a forest plot or
