@@ -2009,3 +2009,97 @@ def test_stage_label_with_long_text_and_custom_leading_stays_on_one_line():
         f"font-weight:650;color:{graph.theme.muted}"
     )
     assert f'<div style="{expected_style}">{long_label.upper()}</div>' in html
+
+
+def test_staged_labels_with_sparse_per_stage_lanes_keep_multiple_skip_tracks_clear_of_the_header():
+    """Multiple packed skip tracks must clear the header band even when no
+    single stage any of them spans reaches the layout's own global top
+    lane row.
+
+    Stages 0-2 each place their cards in lane 1 or lane 2 -- never lane
+    0 -- while stage 3's card is the lone occupant of lane 0. Lane
+    indices are only required to be dense from zero *across the whole
+    layout* (`Graph.layout`), never within one stage, so this is a valid
+    sparse per-stage-lane fixture. Both skip wires span only stages 0-2
+    (never stage 3), sharing one packed track pool (`_flow_track_group`
+    groups every skip wire together), so pooling the header base to only
+    those spanned stages' own minimum top would land inside the header
+    band above stage 3's actual lane-0 row -- the exact regression
+    `_flow_vertical_bases` must avoid by using the layout's global top.
+    """
+    nodes = (
+        ("a1", Card("A1")),
+        ("a2", Card("A2")),
+        ("b", Card("B")),
+        ("c1", Card("C1")),
+        ("c2", Card("C2")),
+        ("d", Card("D")),
+    )
+    slots = (
+        StageSlot("a1", 0, 1),
+        StageSlot("a2", 0, 2),
+        StageSlot("b", 1, 1),
+        StageSlot("c1", 2, 1),
+        StageSlot("c2", 2, 2),
+        StageSlot("d", 3, 0),
+    )
+    edges = (
+        FlowEdge("a1-c1", "a1", "c1", "skip", "skip-1"),
+        FlowEdge("a2-c2", "a2", "c2", "skip", "skip-2"),
+        FlowEdge("c1-d", "c1", "d", "forward"),
+    )
+    labeled = EventFlow(
+        nodes,
+        slots,
+        edges,
+        gap=18,
+        stage_gap=18,
+        dom_prefix="sparse",
+        stage_labels=["Browse", "Compare", "Cart", "Done"],
+    )
+    unlabeled = EventFlow(nodes, slots, edges, gap=18, stage_gap=18, dom_prefix="base2")
+    explicit_empty = EventFlow(
+        nodes, slots, edges, gap=18, stage_gap=18, dom_prefix="base2", stage_labels=()
+    )
+    assert explicit_empty.measure() == unlabeled.measure()
+    assert explicit_empty.as_raw_html() == unlabeled.as_raw_html()
+
+    layout = labeled._layout
+    header_height = (
+        line_height(DEFAULT_CHROME.caption_size, DEFAULT_CHROME) + 2 * DEFAULT_CHROME.gap
+    )
+    # Two packed skip tracks (not just one) reserve more vertical room than
+    # a single header height alone, but never less -- the header is always
+    # at least one more obstacle the canvas-growth shift must clear.
+    assert layout.measured.height >= unlabeled._layout.measured.height + header_height
+
+    boxes = dict(layout.measured.boxes)
+    top_row_y = min(y for _x, y, _w, _h in boxes.values())
+    label_boxes = []
+    for _label, left, width, header_top in layout.stage_columns:
+        # `header_top` reflects the *final* shifted top padding, and must
+        # stay the layout's one shared datum regardless of which stages
+        # any given skip wire happens to span.
+        assert header_top == top_row_y - header_height
+        caption_top = header_top + DEFAULT_CHROME.gap
+        caption_height = line_height(DEFAULT_CHROME.caption_size, DEFAULT_CHROME)
+        label_boxes.append((left, caption_top, width, caption_height))
+    assert len(label_boxes) == 4
+
+    pill_halo = labeled.chrome.border_width / 2
+    assert len(layout.flow_pills) == 2  # both skip tracks kept their pills
+    for wire_id, pill in layout.flow_pills:
+        painted = _model_painted_pill_rect(pill, pill_halo)
+        for label_box in label_boxes:
+            assert not _rects_overlap(painted, label_box), (
+                f"pill for wire {wire_id!r} {painted} overlaps label box {label_box}"
+            )
+
+    for wire_id, points in _all_wire_samples(labeled).items():
+        for label_box in label_boxes:
+            for point in points:
+                assert not _point_inside_box(point, label_box), (
+                    f"wire {wire_id!r} sample {point} enters label box {label_box}"
+                )
+    _assert_no_wire_samples_enter_any_card(labeled)
+    _assert_pill_bounds_inside(labeled)

@@ -1162,6 +1162,18 @@ def _stage_extents(
     return extents
 
 
+def _stage_header_height(chrome: CardChrome) -> int:
+    """Return a `Staged` label header band's exact reserved pixel height.
+
+    One caption line plus a `chrome.gap` above and below it. Shared by
+    measurement (`_graph_measure_staged`, which reserves this as top
+    padding and as the flow-geometry header base) and rendering
+    (`_stage_markup`, which sizes the label `<div>` to it), so the two
+    can never drift apart.
+    """
+    return line_height(chrome.caption_size, chrome) + 2 * chrome.gap
+
+
 def _stage_columns(
     boxes: tuple[tuple[str, Box], ...],
     slot_by_id: Mapping[str, StageSlot],
@@ -1220,11 +1232,22 @@ def _flow_vertical_bases(
     keeps every wire in a pool on the one shared datum its offset assumes.
 
     `header_height` treats a `Staged` graph's reserved label band as
-    occupied geometry: it is subtracted from the skip pool's top datum so
-    a skip bow (and its pill) shifts above the whole band, not only the
-    cards below it. It never affects `back_base` — the header only
-    reserves space above the top row. Zero (the unlabeled/non-staged
-    default) is a no-op, so every existing caller stays byte-identical.
+    occupied geometry. The band sits at the *same* height behind every
+    stage, so its top edge is not "one `header_height` above whichever
+    stage this skip pool happens to span" — with sparse per-stage lanes a
+    spanned stage's own topmost card can sit well below lane 0's shared
+    global row, and subtracting `header_height` from that stage-local
+    minimum would still land inside the header band above a *different*,
+    unspanned stage that does reach lane 0. Some stage always occupies
+    lane 0 (`Graph.layout` requires dense lane indices), so the layout's
+    global minimum card top across *every* stage, minus `header_height`,
+    is the header's true top edge regardless of which stages this pool
+    spans. The skip base takes whichever of that header edge and the
+    pool's own spanned-stage card minimum is smaller, so it still clears
+    every card in its own spanned stages too. It never affects
+    `back_base` — the header only reserves space above the top row.
+    Zero (the unlabeled/non-staged default) skips the header comparison
+    entirely, so every existing caller stays byte-identical.
     """
     skip_stages: set[int] = set()
     back_stages: set[int] = set()
@@ -1239,11 +1262,13 @@ def _flow_vertical_bases(
     # A pool with no members never reaches its bound at the call site
     # (`_flow_route` only reads it for a wire that is itself in the pool),
     # so 0.0 is an inert placeholder, never an actual corridor.
-    skip_base = (
-        min(stage_vertical_extents[stage][0] for stage in skip_stages) - header_height
-        if skip_stages
-        else 0.0
-    )
+    if skip_stages:
+        skip_base = min(stage_vertical_extents[stage][0] for stage in skip_stages)
+        if header_height:
+            global_top = min(top for top, _bottom in stage_vertical_extents.values())
+            skip_base = min(skip_base, global_top - header_height)
+    else:
+        skip_base = 0.0
     back_base = (
         max(stage_vertical_extents[stage][1] for stage in back_stages) if back_stages else 0.0
     )
@@ -1696,7 +1721,7 @@ def _graph_measure_staged(
         )
         for card_id, _ in nodes
     )
-    stage_header_height = line_height(chrome.caption_size, chrome) + 2 * chrome.gap
+    stage_header_height = _stage_header_height(chrome)
     header_height = stage_header_height if labels else 0.0
     if labels:
         width, height, boxes = staged_boxes(

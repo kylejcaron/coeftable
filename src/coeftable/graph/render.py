@@ -6,7 +6,7 @@ import html
 from typing import TYPE_CHECKING
 
 from coeftable.cards.chrome import line_height
-from coeftable.graph.model import _resolve_edge_styles
+from coeftable.graph.model import _resolve_edge_styles, _stage_header_height
 from coeftable.theme import Theme
 
 if TYPE_CHECKING:
@@ -174,7 +174,7 @@ def _stage_markup(graph: Graph, layout: _GraphLayout) -> str:
     """
     if not layout.stage_columns:
         return ""
-    header_height = line_height(graph.chrome.caption_size, graph.chrome) + 2 * graph.chrome.gap
+    header_height = _stage_header_height(graph.chrome)
     label_line_height = line_height(graph.chrome.caption_size, graph.chrome)
     fragments = []
     for index, (label, left, width, header_top) in enumerate(layout.stage_columns):
