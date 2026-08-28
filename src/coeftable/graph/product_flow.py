@@ -4,10 +4,10 @@ Composes only public ``Card``, ``EventFlow``, and ``GraphReport`` contracts:
 every step becomes a Card whose appearance and content are derived from its
 kind, direction, and series; steps are placed on an ``EventFlow`` staged
 canvas; and the whole thing is wrapped in a ``GraphReport`` with a title, an
-edge-kind legend, and a note. ``_resolve_edge_styles`` is the one private
-``graph.model`` helper reused here -- it is the sole source the renderer
-itself resolves per-kind stroke/dash from, so building the legend any other
-way risks it drifting from what ``EventFlow`` actually paints.
+edge-kind legend, and a note. The legend derives each kind's exact resolved
+color and solid/dashed semantic category from the ``EventFlow`` styles.
+``EdgeStyle.width`` and numeric dash periods remain rendered-edge-only
+details rather than miniature legend styling.
 """
 
 from __future__ import annotations
@@ -364,9 +364,11 @@ def ProductFlow(
     badge, ordinal trend, and diagnostics popover are derived from its own
     ``series``; a decision step's card instead renders its ``note`` as
     explanatory text. Steps are placed on an :func:`EventFlow` staged canvas
-    labeled with ``stages``, and the returned report's header carries an
-    optional title, an edge-kind legend resolved from the exact styles
-    ``EventFlow`` paints with, and an optional note.
+    labeled with ``stages``. The returned report's header carries an optional
+    title, a legend deriving each edge kind's exact resolved color and
+    solid/dashed semantic category from the ``EventFlow`` styles, and an
+    optional note. ``EdgeStyle.width`` and numeric dash periods affect only
+    rendered edges, not the categorical legend.
     """
     stage_entries = _validate_stages(stages)
     step_entries = _validate_steps(steps, stage_count=len(stage_entries))
