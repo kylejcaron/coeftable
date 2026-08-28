@@ -457,12 +457,12 @@ shaded intervals via each function's `annotations=` parameter. Because a
 standalone plot and a table column share one `Theme`, a report that mixes
 both stays visually consistent.
 
-## Metric cards (experimental)
+## Metric cards
 
 `coeftable.cards` composes the standalone plots into measured, foldable
 metric cards — the same formatters, themes, and SVG primitives as the
-tables. The API is experimental and may change; it is deliberately not
-exported from the top-level `coeftable` namespace yet.
+tables. Metric cards are provided under the stable `coeftable.cards`
+namespace rather than the top-level `coeftable` namespace.
 
 ```python
 import coeftable as ct
@@ -496,12 +496,12 @@ and is omitted otherwise). A standalone card collapses to
 its header; inside a `CardGrid` each card's expanded footprint stays
 reserved, so folding never reflows neighbors.
 
-## Metric panels (experimental)
+## Metric panels
 
 `coeftable.cards` panels put named side-by-side panes in one bordered shell
-with a shared header and footer: the compositional step above cards. The API
-is experimental and may change; it is deliberately not exported from the
-top-level `coeftable` namespace yet.
+with a shared header and footer: the compositional step above cards. Metric
+panels are provided under the stable `coeftable.cards` namespace rather than
+the top-level `coeftable` namespace.
 
 ```python
 import coeftable as ct
