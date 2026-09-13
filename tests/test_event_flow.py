@@ -706,11 +706,12 @@ def test_back_route_offset_beyond_padding_expands_the_canvas():
 
 
 def test_adjacent_stage_back_edge_arcs_under_the_endpoint_row_not_below_the_stage():
-    """A back edge returning exactly one stage arcs under its own two
-    endpoints -- leaving the source's bottom edge and entering the
-    destination's bottom edge -- instead of sagging below every card in
-    both stages and folding a hairpin into the single gap they share. A
-    taller sibling in a lower lane of either stage must not push it down."""
+    """A back edge returning exactly one stage within its own lane arcs
+    under its own two endpoints -- leaving the source's bottom edge and
+    entering the destination's bottom edge -- instead of sagging below every
+    card in both stages and folding a hairpin into the single gap they
+    share. A taller sibling in a lower lane of either stage must not push it
+    down."""
     nodes = (
         ("cart", Card("Cart")),
         ("checkout", Card("Checkout")),

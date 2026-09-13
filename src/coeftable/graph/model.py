@@ -1449,14 +1449,14 @@ def _flow_track_group(
     would (`route_across`), so it reserves no exterior track either; only a
     skip spanning more than one stage still bows above every stage it
     crosses and shares that upper corridor (`_flow_skip_bows`). A back wire
-    returning to a strictly earlier stage always sags below every stage it
-    crosses, so every such wire shares one lower corridor; a back wire
-    returning exactly one stage instead arcs under its own endpoint row
-    (`_flow_back_arcs`) and, like a same-stage forward, reserves no
-    exterior track. A back wire that stays within its own stage loops
-    around that stage's own left or right side instead; a stage's left
-    loops and right loops each pack their own independent corridor, so a
-    loop in one stage never reserves room in another.
+    returning to an earlier stage sags below every stage it crosses and
+    shares one lower corridor — except a same-lane, one-stage return, which
+    arcs under its own endpoint row (`_flow_back_arcs`) and, like a
+    same-stage forward, reserves no exterior track; a one-stage return into
+    a different lane still sags. A back wire that stays within its own
+    stage loops around that stage's own left or right side instead; a
+    stage's left loops and right loops each pack their own independent
+    corridor, so a loop in one stage never reserves room in another.
     """
     src_stage = slot_by_id[wire.src].stage
     dst_stage = slot_by_id[wire.dst].stage
