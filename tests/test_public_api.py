@@ -102,6 +102,9 @@ def test_every_public_symbol_is_exported():
     assert expected <= set(ct.__all__)
     for name in expected:
         assert hasattr(ct, name)
+    assert "Card" not in ct.__all__
+    with pytest.raises(AttributeError):
+        _ = ct.Card
 
 
 def test_card_column_renders_through_top_level_public_api():
