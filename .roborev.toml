@@ -1,5 +1,6 @@
-# roborev config for coeftable. Read by the local daemon and, for CI reviews,
-# from the base commit of the reviewed range (see .github/workflows/roborev.yml).
+# roborev config for coeftable. The local daemon reads this file from the
+# default branch when it reviews pull requests, so changes bind once merged;
+# `make review PR=<n>` reads the checked-out copy instead.
 agent = "codex"
 model = "gpt-5.6-sol"
 review_reasoning = "maximum"
