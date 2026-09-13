@@ -18,6 +18,12 @@ permissions:
   contents: read
   pull-requests: write
 
+# A new push makes an in-flight review's verdict stale, and the model spend is
+# billed per run. Cancel the superseded run instead of paying for both.
+concurrency:
+  group: roborev-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   review:
     runs-on: ubuntu-latest
