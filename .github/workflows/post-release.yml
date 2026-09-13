@@ -23,3 +23,19 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           commit_summary_template: "update changelog for %s changes"
           pull_request: true
+
+      # The roborev daemon polls every open pull request, including generated
+      # ones. Label this PR so `[ci] skip_labels` exempts it from review.
+      - name: Exempt the changelog pull request from review
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          pr=$(gh pr list --state open --json number,headRefName \
+            --jq 'map(select(.headRefName | startswith("changelog-")))
+                  | max_by(.number) | .number // empty')
+          if [ -z "$pr" ]; then
+            echo "no open changelog pull request to label"
+            exit 0
+          fi
+          gh pr edit "$pr" --add-label skip-review
