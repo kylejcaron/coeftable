@@ -1,11 +1,14 @@
 """The public card entry points: `Card` and `CardGrid`.
 
-Thin sugar over templates and regions: a `Card` resolves its content
-exactly once at construction into a cached template, so every validation
-error surfaces immediately and rendering is pure reads. A `CardGrid` is a
-flex-wrap row of fixed-basis items sized to each card's measured
-footprint — narrow containers cannot shrink cards and folding one card
-never moves its siblings.
+Thin sugar over templates and regions: a `Card` resolves its content at
+construction into a cached template, so every validation error surfaces
+immediately and rendering is pure reads. That resolution happens once,
+except for a muted card, which resolves a second time against the
+unmuted theme purely to prove that emphasis changed no geometry — so a
+custom `Region.resolve` must be pure: same inputs, same output, no side
+effects. A `CardGrid` is a flex-wrap row of fixed-basis items sized to
+each card's measured footprint — narrow containers cannot shrink cards
+and folding one card never moves its siblings.
 """
 
 from __future__ import annotations

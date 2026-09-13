@@ -781,6 +781,29 @@ def test_adjacent_back_arcs_and_same_stage_down_pills_share_the_lane_gap_disjoin
         )
 
 
+def test_thick_unlabeled_back_arc_stroke_must_fit_the_lane_gap():
+    """An adjacent back arc's flat apex run paints `EdgeStyle.width` tall
+    centered in the lane gap, labeled or not, so a stroke wider than
+    `Graph.gap` would overlap the next lane's cards and is rejected."""
+    nodes = (("a", Card("A")), ("b", Card("B")), ("a1", Card("A1")), ("b1", Card("B1")))
+    slots = (
+        StageSlot("a", 0, 0),
+        StageSlot("b", 1, 0),
+        StageSlot("a1", 0, 1),
+        StageSlot("b1", 1, 1),
+    )
+    edges = (FlowEdge("b-a", "b", "a", "back"),)
+    thick = {"back": EdgeStyle("#000000", width=40.0, dash=(2.0, 3.0))}
+    graph = EventFlow(nodes, slots, edges, styles=thick, gap=40, dom_prefix="thickarc")  # ty: ignore[invalid-argument-type]
+    boxes = dict(graph.measure().boxes)
+    path, _anchor = dict(graph._layout.wire_geometry)["b-a"]
+    apex = max(y for _x, y in _sample_path_points(path))
+    next_row_top = min(boxes["a1"][1], boxes["b1"][1])
+    assert apex + 20.0 <= next_row_top
+    with pytest.raises(SpecError, match=r"Graph\.gap must be at least 40px .*back arc stroke"):
+        EventFlow(nodes, slots, edges, styles=thick, gap=39, dom_prefix="thickarc-bad")  # ty: ignore[invalid-argument-type]
+
+
 def test_adjacent_back_arc_centers_its_pill_under_unequal_endpoint_heights():
     """A taller source and a shorter destination share one arc apex: the
     pill sits at the lane-gap center below the *deeper* bottom, clear of

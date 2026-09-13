@@ -1727,37 +1727,46 @@ def _back_arc_offset(lane_gap: int) -> float:
     return lane_gap / 2
 
 
-def _graph_validate_lane_gap_pills(
+def _graph_validate_lane_gap(
     wires: tuple[Wire, ...],
     *,
     slot_by_id: Mapping[str, StageSlot],
     chrome: CardChrome,
+    styles: Mapping[EdgeKind, EdgeStyle],
     lane_gap: int,
 ) -> None:
-    """Reject a `Graph.gap` too narrow for any labeled pill living in a lane gap.
+    """Reject a `Graph.gap` too narrow for the paint living in a lane gap.
 
-    Two kinds of pill sit in the empty lane gap rather than the physical
-    inter-stage gap `_graph_validate_stage_gap` guards, so `Graph.gap` alone
-    — never `Graph.layer_gap` — must contain their full painted height
-    (`_pill_painted_height`): a same-stage forward/skip pill centers at
-    `route_down`'s midpoint, and an adjacent-stage back arc's pill centers
-    at the arc's apex, which `_back_arc_offset` places at that same gap
-    center. The requirement is independent of the label text, since a
-    pill's height never varies with its width.
+    Two kinds of route occupy the empty lane gap rather than the physical
+    inter-stage gap `_graph_validate_stage_gap` guards, so `Graph.gap`
+    alone — never `Graph.layer_gap` — must contain their paint. A labeled
+    pill (a same-stage forward/skip at `route_down`'s midpoint, or an
+    adjacent-stage back arc at its apex, which `_back_arc_offset` places at
+    that same gap center) needs its full painted height
+    (`_pill_painted_height`), independent of the label text. A back arc's
+    flat apex run additionally paints its resolved stroke width centered
+    on that same line, labeled or not — a `route_down` stroke is vertical
+    there, so only the arc's width matters — and a stroke wider than the
+    gap would cross into the next row's cards.
     """
-    required = 0.0
+    pill_required = 0.0
+    stroke_required = 0.0
     for wire in wires:
-        if wire.label is None:
-            continue
         same_stage = slot_by_id[wire.dst].stage == slot_by_id[wire.src].stage
-        if (wire.kind in ("forward", "skip") and same_stage) or _flow_back_arcs(
-            wire, slot_by_id=slot_by_id
-        ):
-            required = _pill_painted_height(chrome)
-    if required > lane_gap:
+        arcs = _flow_back_arcs(wire, slot_by_id=slot_by_id)
+        if wire.label is not None and ((wire.kind in ("forward", "skip") and same_stage) or arcs):
+            pill_required = _pill_painted_height(chrome)
+        if arcs:
+            stroke_required = max(stroke_required, styles[cast(EdgeKind, wire.kind)].width)
+    if pill_required > lane_gap:
         raise SpecError(
-            f"Graph.gap must be at least {required:g}px for a labeled lane-gap "
+            f"Graph.gap must be at least {pill_required:g}px for a labeled lane-gap "
             f"flow pill but is {lane_gap}px"
+        )
+    if stroke_required > lane_gap:
+        raise SpecError(
+            f"Graph.gap must be at least {stroke_required:g}px for an adjacent-stage "
+            f"back arc stroke but is {lane_gap}px"
         )
 
 
@@ -2074,10 +2083,11 @@ def _graph_measure_staged(
         stage_gap=stage_gap,
         stage_inset=stage_inset,
     )
-    _graph_validate_lane_gap_pills(
+    _graph_validate_lane_gap(
         wires,
         slot_by_id=slot_by_id,
         chrome=chrome,
+        styles=styles,
         lane_gap=lane_gap,
     )
     boxes_by_id = dict(boxes)
