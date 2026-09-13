@@ -50,6 +50,21 @@ jobs:
           set -euo pipefail
           npm install -g @openai/codex@latest
 
+      # TEMPORARY diagnostic: prints the provider's status and error type so a
+      # 429/403/404 from the API key can be told apart from a roborev failure.
+      - name: Probe provider
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          set -uo pipefail
+          code=$(curl -s -o /tmp/probe.json -w '%{http_code}' \
+            https://api.openai.com/v1/responses \
+            -H "Authorization: Bearer $OPENAI_API_KEY" \
+            -H 'content-type: application/json' \
+            -d '{"model":"gpt-5.6-sol","input":"ping","max_output_tokens":16}')
+          echo "status=$code"
+          jq -r '"type=\(.error.type // "-") code=\(.error.code // "-") message=\(.error.message // "ok")"' /tmp/probe.json
+
       - name: Run review
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
