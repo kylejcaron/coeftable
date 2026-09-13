@@ -252,6 +252,38 @@ def route_back_sag(
     )
 
 
+def route_back_arc(
+    src: Box,
+    dst: Box,
+    *,
+    offset: float,
+    inset: float,
+    bound: float,
+) -> Route:
+    """Route an adjacent-stage back edge as one arc under the endpoint row.
+
+    ``src`` sits exactly one stage after ``dst``, so the two cards share a
+    single physical gap; sagging below every card in both stages (as
+    `route_back_sag` must for a multi-stage return) would only fold a
+    hairpin into that gap. Instead the edge leaves ``src``'s *bottom* edge
+    ``inset`` in from its left corner, arcs down to ``bound + offset`` (the
+    caller passes the endpoint row's lower extent as ``bound``, not the
+    whole stages'), and enters ``dst``'s bottom edge ``inset`` in from its
+    right corner. Both controls sit directly under their anchors, so the
+    arc's apex — and the pill anchored there — is the horizontal midpoint,
+    inside the gap the two cards straddle. A cubic with both controls at
+    the same ``corridor`` y peaks at three quarters of that depth.
+    """
+    sx = src[0] + inset
+    sy = float(src[1] + src[3])
+    dx = dst[0] + dst[2] - inset
+    dy = float(dst[1] + dst[3])
+    corridor = bound + offset
+    path = f"M{_n(sx)},{_n(sy)} C{_n(sx)},{_n(corridor)} {_n(dx)},{_n(corridor)} {_n(dx)},{_n(dy)}"
+    apex_y = (sy + dy) / 8 + corridor * 0.75
+    return Route(path, ((sx + dx) / 2, apex_y), (min(sx, dx), min(sy, dy), max(sx, dx), apex_y))
+
+
 def route_c_loop(
     src: Box,
     dst: Box,

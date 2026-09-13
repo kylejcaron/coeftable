@@ -1,5 +1,6 @@
 from coeftable.graph._routes import (
     route_across,
+    route_back_arc,
     route_back_sag,
     route_c_loop,
     route_down,
@@ -205,3 +206,26 @@ def test_down_centers_the_control_hull_between_unequal_lane_widths():
     assert route.path == "M90,80 C90,140 110,140 110,200"
     assert route.label_anchor == (100.0, 140.0)
     assert route.bounds == (90.0, 80.0, 110.0, 200.0)
+
+
+def test_back_arc_leaves_and_enters_bottom_edges_beside_the_gap():
+    """An adjacent-stage back edge arcs under the endpoint row: it leaves
+    ``src``'s bottom edge one ``inset`` in from its left corner, dips to
+    ``bound + offset``, and enters ``dst``'s bottom edge one ``inset`` in
+    from its right corner, with the pill anchored at the arc's apex, which
+    is the horizontal midpoint between the two anchors."""
+    src = (300, 20, 100, 60)
+    dst = (100, 20, 100, 60)
+    route = route_back_arc(src, dst, offset=24, inset=40, bound=80)
+    assert route.path == "M340,80 C340,104 160,104 160,80"
+    assert route.label_anchor == (250.0, 98.0)
+    assert route.bounds == (160.0, 80.0, 340.0, 98.0)
+
+
+def test_back_arc_bound_clears_a_taller_endpoint():
+    src = (300, 20, 100, 60)
+    dst = (100, 20, 100, 90)
+    route = route_back_arc(src, dst, offset=24, inset=40, bound=110)
+    assert route.path == "M340,80 C340,134 160,134 160,110"
+    assert route.label_anchor == (250.0, 124.25)
+    assert route.bounds == (160.0, 80.0, 340.0, 124.25)

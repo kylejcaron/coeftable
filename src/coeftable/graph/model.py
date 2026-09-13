@@ -15,6 +15,7 @@ from coeftable.graph._layered import layered_positions
 from coeftable.graph._routes import (
     Route,
     route_across,
+    route_back_arc,
     route_back_sag,
     route_c_loop,
     route_down,
@@ -1098,6 +1099,8 @@ def _flow_route(
     stage_extents: Mapping[int, tuple[float, float]],
     skip_base: float,
     back_base: float,
+    arc_inset: float = 0.0,
+    arc_offset: float = 0.0,
 ) -> Route:
     """Choose the graph-integrated route for one flow wire by kind and placement.
 
@@ -1115,7 +1118,11 @@ def _flow_route(
     exterior bow — it crosses the same single physical gap a forward wire
     would, so it reuses `route_across` with skip's own dashed styling; only
     a skip spanning more than one stage still bows over the intervening
-    columns.
+    columns. Symmetrically, a back wire returning exactly one stage arcs
+    under its own two endpoints (`route_back_arc`, `arc_inset` in from each
+    card's gap-side bottom corner and `arc_offset` deep) rather than
+    sagging below every card in both stages; only a back wire spanning two
+    or more stages still takes the pooled lower sag.
     """
     if src_stage == dst_stage and wire.kind in ("forward", "skip"):
         return route_down(src_box, dst_box)
@@ -1145,6 +1152,14 @@ def _flow_route(
             dst_gate=dst_gate,
             src_edge=stage_extents[src_stage][1],
             dst_edge=stage_extents[dst_stage][0],
+        )
+    if dst_stage == src_stage - 1:
+        return route_back_arc(
+            src_box,
+            dst_box,
+            offset=arc_offset,
+            inset=arc_inset,
+            bound=float(max(src_box[1] + src_box[3], dst_box[1] + dst_box[3])),
         )
     if dst_stage < src_stage:
         src_gate = _stage_gap_midpoint(stage_extents, src_stage - 1, src_stage)
@@ -1277,6 +1292,20 @@ def _flow_skip_bows(wire: Wire, *, slot_by_id: Mapping[str, StageSlot]) -> bool:
     return dst_stage > src_stage + 1
 
 
+def _flow_back_arcs(wire: Wire, *, slot_by_id: Mapping[str, StageSlot]) -> bool:
+    """Return whether a back wire arcs under its own endpoint row.
+
+    A back wire returning exactly one stage shares a single physical gap
+    with its destination, so it takes `route_back_arc` under the two
+    endpoints' own row; only a back wire spanning two or more stages still
+    sags below every column it crosses (`route_back_sag`), and a same-stage
+    back wire loops around its own column (`route_c_loop`).
+    """
+    if wire.kind != "back":
+        return False
+    return slot_by_id[wire.dst].stage == slot_by_id[wire.src].stage - 1
+
+
 def _flow_routes_across(wire: Wire, *, slot_by_id: Mapping[str, StageSlot]) -> bool:
     """Return whether a forward/skip wire crosses via `route_across`.
 
@@ -1342,7 +1371,7 @@ def _flow_vertical_bases(
         low_stage, high_stage = min(src_stage, dst_stage), max(src_stage, dst_stage)
         if _flow_skip_bows(wire, slot_by_id=slot_by_id):
             skip_stages.update(range(low_stage, high_stage + 1))
-        elif wire.kind == "back" and dst_stage < src_stage:
+        elif wire.kind == "back" and dst_stage < src_stage - 1:
             back_stages.update(range(low_stage, high_stage + 1))
     # A pool with no members never reaches its bound at the call site
     # (`_flow_route` only reads it for a wire that is itself in the pool),
@@ -1408,11 +1437,13 @@ def _flow_track_group(
     skip spanning more than one stage still bows above every stage it
     crosses and shares that upper corridor (`_flow_skip_bows`). A back wire
     returning to a strictly earlier stage always sags below every stage it
-    crosses, so every such wire shares one lower corridor. A back wire that
-    stays within its own stage loops around that stage's own left or right
-    side instead; a stage's left loops and right loops each pack their own
-    independent corridor, so a loop in one stage never reserves room in
-    another.
+    crosses, so every such wire shares one lower corridor; a back wire
+    returning exactly one stage instead arcs under its own endpoint row
+    (`_flow_back_arcs`) and, like a same-stage forward, reserves no
+    exterior track. A back wire that stays within its own stage loops
+    around that stage's own left or right side instead; a stage's left
+    loops and right loops each pack their own independent corridor, so a
+    loop in one stage never reserves room in another.
     """
     src_stage = slot_by_id[wire.src].stage
     dst_stage = slot_by_id[wire.dst].stage
@@ -1423,6 +1454,8 @@ def _flow_track_group(
     if wire.kind == "skip":
         if _flow_skip_bows(wire, slot_by_id=slot_by_id):
             return ("skip", "height")
+        return None
+    if _flow_back_arcs(wire, slot_by_id=slot_by_id):
         return None
     if dst_stage < src_stage:
         return ("back", "height")
@@ -1664,34 +1697,54 @@ def _graph_validate_stage_gap(
         )
 
 
-def _graph_validate_same_stage_pill_height(
+def _pill_painted_height(chrome: CardChrome) -> float:
+    """Return a flow pill's full painted height: nominal plus both border halos."""
+    nominal = line_height(chrome.caption_size, chrome) + 2 * chrome.chip_padding_y
+    return nominal + chrome.border_width
+
+
+def _back_arc_offset(lane_gap: int) -> float:
+    """Return how far below the endpoint row an adjacent back arc's controls sit.
+
+    `route_back_arc`'s apex — where its pill centers — reaches three
+    quarters of this depth, so the depth is chosen to land that apex at
+    the exact center of the row's lane gap: the arc dips as far as the
+    gap allows without its pill leaving the gap, and the pill keeps equal
+    clearance above and below.
+    """
+    return lane_gap / 2 / 0.75
+
+
+def _graph_validate_lane_gap_pills(
     wires: tuple[Wire, ...],
     *,
     slot_by_id: Mapping[str, StageSlot],
     chrome: CardChrome,
     lane_gap: int,
 ) -> None:
-    """Reject a `Graph.gap` too narrow for a labeled same-stage flow pill.
+    """Reject a `Graph.gap` too narrow for any labeled pill living in a lane gap.
 
-    A same-stage forward/skip pill centers in the empty lane gap
-    (`route_down`'s midpoint), not the physical inter-stage gap
-    `_graph_validate_stage_gap` guards, so `Graph.gap` alone — never
-    `Graph.layer_gap` — must independently contain its full painted height:
-    the nominal pill height plus both border halos, matching
-    `_flow_bounds_extrema`'s own definition of a pill's actual paint.
+    Two kinds of pill sit in the empty lane gap rather than the physical
+    inter-stage gap `_graph_validate_stage_gap` guards, so `Graph.gap` alone
+    — never `Graph.layer_gap` — must contain their full painted height
+    (`_pill_painted_height`): a same-stage forward/skip pill centers at
+    `route_down`'s midpoint, and an adjacent-stage back arc's pill centers
+    at the arc's apex, which `_back_arc_offset` places at that same gap
+    center. The requirement is independent of the label text, since a
+    pill's height never varies with its width.
     """
     required = 0.0
     for wire in wires:
-        if wire.kind not in ("forward", "skip") or wire.label is None:
+        if wire.label is None:
             continue
-        if slot_by_id[wire.dst].stage != slot_by_id[wire.src].stage:
-            continue
-        nominal_height = line_height(chrome.caption_size, chrome) + 2 * chrome.chip_padding_y
-        painted_height = nominal_height + chrome.border_width
-        required = max(required, painted_height)
+        same_stage = slot_by_id[wire.dst].stage == slot_by_id[wire.src].stage
+        if (wire.kind in ("forward", "skip") and same_stage) or _flow_back_arcs(
+            wire, slot_by_id=slot_by_id
+        ):
+            required = _pill_painted_height(chrome)
     if required > lane_gap:
         raise SpecError(
-            f"Graph.gap must be at least {required:g}px for a labeled same-stage "
+            f"Graph.gap must be at least {required:g}px for a labeled lane-gap "
             f"flow pill but is {lane_gap}px"
         )
 
@@ -1703,6 +1756,7 @@ def _flow_geometry(
     offsets: Mapping[str, float],
     chrome: CardChrome,
     header_height: float = 0.0,
+    lane_gap: int = 0,
 ) -> tuple[dict[str, Route], dict[str, tuple[float, float, float, float]]]:
     """Resolve every wire's route and each labeled wire's pill bounds."""
     stage_extents = _stage_extents(boxes_by_id, slot_by_id)
@@ -1729,6 +1783,8 @@ def _flow_geometry(
             stage_extents=stage_extents,
             skip_base=skip_base,
             back_base=back_base,
+            arc_inset=float(chrome.padding),
+            arc_offset=_back_arc_offset(lane_gap),
         )
     pills = {
         wire.id: _pill_bounds(routes[wire.id].label_anchor, wire.label, chrome)
@@ -2006,7 +2062,7 @@ def _graph_measure_staged(
         stage_gap=stage_gap,
         stage_inset=stage_inset,
     )
-    _graph_validate_same_stage_pill_height(
+    _graph_validate_lane_gap_pills(
         wires,
         slot_by_id=slot_by_id,
         chrome=chrome,
@@ -2014,7 +2070,13 @@ def _graph_measure_staged(
     )
     boxes_by_id = dict(boxes)
     routes, pills = _flow_geometry(
-        wires, boxes_by_id, slot_by_id, offsets, chrome, header_height=header_height
+        wires,
+        boxes_by_id,
+        slot_by_id,
+        offsets,
+        chrome,
+        header_height=header_height,
+        lane_gap=lane_gap,
     )
 
     min_x0, min_y0, _max_x0, _max_y0 = _flow_bounds_extrema(
@@ -2033,7 +2095,13 @@ def _graph_measure_staged(
         width += shift_x
         height += shift_y
         routes, pills = _flow_geometry(
-            wires, boxes_by_id, slot_by_id, offsets, chrome, header_height=header_height
+            wires,
+            boxes_by_id,
+            slot_by_id,
+            offsets,
+            chrome,
+            header_height=header_height,
+            lane_gap=lane_gap,
         )
 
     routes, pills = _pack_forward_pills(wires, routes, pills, slot_by_id, chrome)

@@ -826,9 +826,12 @@ to the next lane in the same stage; together they define downstream
 visibility. `back` edges return to the same or an earlier stage but are
 paint-only: they never change which cards are visible. A same-stage
 forward/skip pill routes and centers inside the lane gap (`gap`) it crosses,
-not the inter-stage `stage_gap`; every cross-stage forward/adjacent-skip
+not the inter-stage `stage_gap`, and a `back` edge returning exactly one
+stage arcs under its own two cards with its pill centered in that same lane
+gap; every cross-stage forward/adjacent-skip
 pill packs into `stage_gap` instead, alongside exterior skip bows, back
-loops, and collapsible fold nubs. A card listed in `collapsible` gets a
+sags spanning two or more stages, same-stage back loops, and collapsible
+fold nubs. A card listed in `collapsible` gets a
 right-edge fold nub that hides downstream cards, every wire touching them,
 and every wire leaving the folded card, back edges included. Per-kind
 `EdgeStyle` values override the default stroke, width, and dash.

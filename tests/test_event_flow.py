@@ -705,6 +705,81 @@ def test_back_route_offset_beyond_padding_expands_the_canvas():
     _assert_pill_bounds_inside(graph)
 
 
+def test_adjacent_stage_back_edge_arcs_under_the_endpoint_row_not_below_the_stage():
+    """A back edge returning exactly one stage arcs under its own two
+    endpoints -- leaving the source's bottom edge and entering the
+    destination's bottom edge -- instead of sagging below every card in
+    both stages and folding a hairpin into the single gap they share. A
+    taller sibling in a lower lane of either stage must not push it down."""
+    nodes = (
+        ("cart", Card("Cart")),
+        ("checkout", Card("Checkout")),
+        ("tall", Card("Tall", content=(TextBlock("x", max_lines=6),))),
+    )
+    slots = (StageSlot("cart", 0, 0), StageSlot("checkout", 1, 0), StageSlot("tall", 1, 1))
+    edges = (
+        FlowEdge("cart-checkout", "cart", "checkout", "forward"),
+        FlowEdge("checkout-tall", "checkout", "tall", "forward"),
+        FlowEdge("checkout-cart", "checkout", "cart", "back", "edit cart"),
+    )
+    graph = EventFlow(nodes, slots, edges, dom_prefix="arc")
+    boxes = dict(graph.measure().boxes)
+    cart_x, cart_y, cart_w, cart_h = boxes["cart"]
+    co_x, co_y, _co_w, co_h = boxes["checkout"]
+    tall_bottom = boxes["tall"][1] + boxes["tall"][3]
+    points = _path_points(dict(graph._layout.wire_geometry)["checkout-cart"][0])
+    start, end = points[0], points[-1]
+    assert start[1] == co_y + co_h  # leaves the source's bottom edge
+    assert co_x < start[0] < co_x + graph.chrome.padding + 1
+    assert end[1] == cart_y + cart_h  # enters the destination's bottom edge
+    assert cart_x + cart_w - graph.chrome.padding - 1 < end[0] < cart_x + cart_w
+    assert max(y for _x, y in points) < tall_bottom  # never sags below the taller sibling
+    pill = dict(graph._layout.flow_pills)["checkout-cart"]
+    gap_left, gap_right = cart_x + cart_w, co_x
+    assert gap_left < pill[0] + pill[2] / 2 < gap_right  # pill sits in the shared gap
+    for card_id, box in boxes.items():
+        for point in _sample_path_points(dict(graph._layout.wire_geometry)["checkout-cart"][0]):
+            assert not _point_inside_box(point, box), (card_id, point)
+        assert not _rects_overlap(pill, box)
+    _assert_pill_bounds_inside(graph)
+
+
+def test_adjacent_back_arcs_and_same_stage_down_pills_share_the_lane_gap_disjointly():
+    """The arc's pill sits in the lane gap beneath the endpoint row -- the
+    same band a same-stage forward pill occupies -- so `Graph.gap` must hold
+    both, and the two pills are packed apart rather than painted over one
+    another."""
+    nodes = (("a", Card("A")), ("b", Card("B")), ("c", Card("C")))
+    slots = (StageSlot("a", 0, 0), StageSlot("b", 1, 0), StageSlot("c", 1, 1))
+    edges = (
+        FlowEdge("b-c", "b", "c", "forward", "continue to next"),
+        FlowEdge("b-a", "b", "a", "back", "edit"),
+    )
+    graph = EventFlow(nodes, slots, edges, dom_prefix="arcpack")
+    boxes = dict(graph.measure().boxes)
+    pills = dict(graph._layout.flow_pills)
+    assert not _rects_overlap(
+        _painted_pill_rect(pills["b-c"], graph), _painted_pill_rect(pills["b-a"], graph)
+    )
+    for pill in pills.values():
+        for box in boxes.values():
+            assert not _rects_overlap(pill, box)
+    _assert_pill_bounds_inside(graph)
+    painted_height = (
+        line_height(graph.chrome.caption_size, graph.chrome)
+        + 2 * (graph.chrome.chip_padding_y)
+        + graph.chrome.border_width
+    )
+    with pytest.raises(SpecError, match=r"Graph\.gap must be at least .* lane-gap flow pill"):
+        EventFlow(
+            nodes,
+            slots,
+            (FlowEdge("b-a", "b", "a", "back", "edit"),),
+            dom_prefix="arcpack-tight",
+            gap=int(painted_height) - 1,
+        )
+
+
 def test_same_stage_back_wires_loop_left_and_right_without_overlapping_cards():
     nodes = (("a", Card("A")), ("b", Card("B")), ("c", Card("C")))
     slots = (StageSlot("a", 0, 0), StageSlot("b", 0, 1), StageSlot("c", 0, 2))
@@ -1303,20 +1378,22 @@ def test_pooled_back_tracks_share_one_datum_across_different_stage_subsets():
             TextBlock("five"),
         ),
     )
-    nodes = (("a", Card("A")), ("b", Card("B")), ("c", tall), ("d", Card("D")))
+    nodes = (("a", Card("A")), ("b", Card("B")), ("c", tall), ("d", Card("D")), ("e", Card("E")))
     slots = (
         StageSlot("a", 0, 0),
         StageSlot("b", 1, 0),
         StageSlot("c", 2, 0),
         StageSlot("d", 3, 0),
+        StageSlot("e", 4, 0),
     )
     edges = (
         # Declared first (smaller offset): spans stages 1-3, so its own
         # span includes the tall stage-2 card.
         FlowEdge("d-b", "d", "b", "back", "retry"),
-        # Declared second (larger offset): spans stages 0-1 only, so its
-        # own span never touches the tall stage-2 card.
-        FlowEdge("b-a", "b", "a", "back", "reset"),
+        # Declared second (larger offset): spans stages 2-4 only; an
+        # adjacent-stage return would arc under its own row instead of
+        # joining this sag pool, so it must reach back two stages.
+        FlowEdge("e-c", "e", "c", "back", "reset"),
     )
     # A "public small gap": the narrowest stage_gap the public API itself
     # derives as sufficient, re-applied explicitly instead of left implicit.
@@ -1326,10 +1403,10 @@ def test_pooled_back_tracks_share_one_datum_across_different_stage_subsets():
     _assert_every_painted_pill_pair_disjoint(graph)
     wire_geometry = dict(graph._layout.wire_geometry)
     pills = dict(graph._layout.flow_pills)
-    assert not _rects_overlap(pills["d-b"], pills["b-a"])
-    assert wire_geometry["d-b"][1][1] != wire_geometry["b-a"][1][1]
-    # Packed `_flow_offsets` spacing is +28; per-wire bases inverted it to -94.
-    assert wire_geometry["b-a"][1][1] - wire_geometry["d-b"][1][1] == 28.0
+    assert not _rects_overlap(pills["d-b"], pills["e-c"])
+    assert wire_geometry["d-b"][1][1] != wire_geometry["e-c"][1][1]
+    # Packed `_flow_offsets` spacing is +28; per-wire bases inverted it.
+    assert wire_geometry["e-c"][1][1] - wire_geometry["d-b"][1][1] == 28.0
     _assert_pill_bounds_inside(graph)
 
 
@@ -2418,7 +2495,7 @@ def test_same_stage_pill_height_rejected_one_pixel_below_boundary_and_accepted_a
     slots = (StageSlot("a", 0, 0), StageSlot("b", 0, 1))
     edges = (FlowEdge("a-b", "a", "b", "forward", "next"),)
     message = re.escape(
-        f"Graph.gap must be at least {painted_height:g}px for a labeled same-stage flow pill"
+        f"Graph.gap must be at least {painted_height:g}px for a labeled lane-gap flow pill"
     )
     with pytest.raises(SpecError, match=message):
         EventFlow(nodes, slots, edges, dom_prefix="gapbad", gap=painted_height - 1)
