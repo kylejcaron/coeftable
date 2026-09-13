@@ -1541,7 +1541,7 @@ def _stage_gap_requirements(
     styles: Mapping[EdgeKind, EdgeStyle],
     max_stage: int,
     include_centered_pills: bool = True,
-    include_labeled_loops: bool = True,
+    include_labeled_loop_pills: bool = True,
 ) -> dict[int, float]:
     """Return each stage boundary's minimum physical gap requirement.
 
@@ -1558,25 +1558,28 @@ def _stage_gap_requirements(
 
     A forward or adjacent-skip pill's x never shifts off that exact midpoint,
     so an asymmetric pair of loop pools still forces both halves of the gap
-    to fit it. Positive-inset compact layouts set both
-    `include_centered_pills=False` and `include_labeled_loops=False` because
-    final painted pill/card/nub rectangles are checked exactly after routing;
-    unlabeled exterior loop pools and wireless nubs always remain in this
-    conservative planner.
+    to fit it. Positive-inset compact layouts omit centered and loop-pill
+    footprints because their final painted rectangles are checked exactly
+    after routing. A labeled loop's stroke reach remains here: its cubic's
+    exact maximum horizontal excursion is three quarters of the packed
+    control offset. Unlabeled exterior loop pools and wireless nubs retain
+    their full conservative clearance.
     """
     pill_halo = chrome.border_width / 2
     collapsible_stages = {slot_by_id[card_id].stage for card_id in collapsible}
     loop_reach: dict[str, float] = {}
     for wire in wires:
         group = _flow_track_group(wire, slot_by_id=slot_by_id)
-        if not include_labeled_loops and wire.label is not None:
-            continue
         if group is None or group[1] != "width":
             continue
         key, _axis = group
-        nominal = _flow_track_extent(wire, axis="width", chrome=chrome, styles=styles)
-        extent = _painted_extent(wire, nominal, styles=styles, pill_halo=pill_halo)
-        reach = offsets[wire.id] + extent
+        if wire.label is not None and not include_labeled_loop_pills:
+            stroke_half = styles[cast(EdgeKind, wire.kind)].width / 2
+            reach = offsets[wire.id] * 0.75 + stroke_half
+        else:
+            nominal = _flow_track_extent(wire, axis="width", chrome=chrome, styles=styles)
+            extent = _painted_extent(wire, nominal, styles=styles, pill_halo=pill_halo)
+            reach = offsets[wire.id] + extent
         loop_reach[key] = max(loop_reach.get(key, 0.0), reach)
     centered_reach: dict[int, float] = {}
     if include_centered_pills:
@@ -1628,9 +1631,10 @@ def _graph_validate_stage_gap(
     each column is real corridor space too, not merely a card margin. With
     `stage_inset=0` this reduces to the plain `stage_gap` bound exactly.
 
-    Positive inset enables compact padded columns: labeled routes use exact
-    final card/nub/pill collision checks, while unlabeled exterior loop pools
-    and wireless nubs retain conservative pre-measure clearance validation.
+    Positive inset enables compact padded columns: labeled pills use exact
+    final card/nub/pill collision checks, labeled loop strokes retain their
+    exact cubic reach, and unlabeled exterior loop pools plus wireless nubs
+    retain conservative pre-measure clearance validation.
     """
     requirements = _stage_gap_requirements(
         wires,
@@ -1641,7 +1645,7 @@ def _graph_validate_stage_gap(
         styles=styles,
         max_stage=max_stage,
         include_centered_pills=stage_inset == 0,
-        include_labeled_loops=stage_inset == 0,
+        include_labeled_loop_pills=stage_inset == 0,
     )
     available = stage_gap + 2 * stage_inset
     for stage, required in requirements.items():

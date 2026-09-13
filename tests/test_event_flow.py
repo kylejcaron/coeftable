@@ -864,6 +864,24 @@ def test_stacked_back_tracks_clear_a_taller_intervening_lane():
     _assert_pill_bounds_inside(graph)
 
 
+def test_positive_stage_inset_rejects_labeled_c_loop_stroke_entering_neighbor_card():
+    nodes = (("a0", Card("A0")), ("a1", Card("A1")), ("b0", Card("B0")))
+    slots = (
+        StageSlot("a0", 0, 0),
+        StageSlot("a1", 0, 1),
+        StageSlot("b0", 1, 0),
+    )
+    edges = (
+        FlowEdge("forward", "a0", "b0", "forward"),
+        FlowEdge("loop", "a0", "a1", "back", "retry authorization after hold"),
+    )
+    with pytest.raises(
+        SpecError,
+        match=r"Graph\.layer_gap must be at least .* between stage 0 and stage 1 .*but is 44px",
+    ):
+        EventFlow(nodes, slots, edges, stage_inset=14, stage_gap=44)
+
+
 def test_same_stage_c_loop_pill_rejected_when_wider_than_an_explicit_stage_gap_at_interior_stage():
     nodes = (("s", Card("S")), ("p", Card("P")), ("q", Card("Q")))
     slots = (StageSlot("s", 0, 0), StageSlot("p", 1, 0), StageSlot("q", 1, 1))
@@ -1925,10 +1943,12 @@ def test_staged_labels_are_snapshotted_and_must_match_dense_stages():
 
 def test_staged_labels_reserve_exact_header_and_render_behind_wires_and_cards():
     nodes = (("a", Card("A", width=120)), ("b", Card("B", width=120)))
+    wires = (Wire("a-b", "a", "b", kind="forward"),)
     plain = Graph(
         nodes,
         Staged((StageSlot("a", 0, 0), StageSlot("b", 1, 0))),
         dom_prefix="plain-stages",
+        wires=wires,
     )
     labeled = Graph(
         nodes,
@@ -1937,6 +1957,7 @@ def test_staged_labels_reserve_exact_header_and_render_behind_wires_and_cards():
             labels=("Browse", "Checkout"),
         ),
         dom_prefix="named-stages",
+        wires=wires,
     )
     header = line_height(DEFAULT_CHROME.caption_size, DEFAULT_CHROME) + 2 * DEFAULT_CHROME.gap
     plain_boxes = dict(plain.measure().boxes)
@@ -1952,6 +1973,7 @@ def test_staged_labels_reserve_exact_header_and_render_behind_wires_and_cards():
         nodes,
         Staged((StageSlot("a", 0, 0), StageSlot("b", 1, 0)), labels=()),
         dom_prefix="plain-stages",
+        wires=wires,
     )
     assert explicit_empty.measure() == plain.measure()
     assert explicit_empty.as_raw_html() == plain.as_raw_html()

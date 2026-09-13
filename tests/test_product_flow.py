@@ -24,6 +24,7 @@ from coeftable.theme import DEFAULT, Theme
 
 _VALUE_FMT = Number(compact=True)
 _CHANGE_FMT = Percent(signed=True, decimals=1)
+_SHARE_FMT = Percent(signed=False, decimals=1)
 
 
 def step(**changes: object) -> ProductStep:
@@ -427,15 +428,13 @@ def test_terminal_card_adds_a_terminal_badge_and_strong_appearance():
     assert card.appearance == CardAppearance(border="strong", fill="surface")
 
 
-def test_decision_card_is_dashed_transparent_and_holds_only_its_note():
+def test_decision_card_is_dashed_transparent_and_wraps_only_its_note():
     report = _funnel_report()
     card = _card(report, "decide")
     assert card.appearance == CardAppearance(border="dashed", fill="transparent")
-    assert len(card.content) == 1
-    text_block = card.content[0]
-    assert isinstance(text_block, TextBlock)
-    assert text_block.text == "Reader picks monthly or annual"
-    assert text_block.variant == "caption"
+    assert card.content == (
+        TextBlock("Reader picks monthly or annual", variant="caption", max_lines=3),
+    )
 
 
 def test_event_card_uses_default_appearance():
@@ -468,7 +467,7 @@ def test_share_of_diagnostic_reports_the_referenced_steps_percentage():
     labels = [label for label, _value in diagnostics.items]
     assert "Share of Viewed" in labels
     share_value = dict(diagnostics.items)["Share of Viewed"]
-    assert share_value == _CHANGE_FMT(150.0 / 1200.0 * 100.0)
+    assert share_value == _SHARE_FMT(150.0 / 1200.0 * 100.0)
 
 
 def test_caller_diagnostics_are_appended_after_derived_entries():

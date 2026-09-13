@@ -344,6 +344,7 @@ def test_staged_graph_caches_stage_columns_matching_measured_extents():
     assert left1 == boxes["b"][0]
     assert width1 == boxes["b"][2]
     assert header_top0 == header_top1 == graph.chrome.padding
+    assert "<svg" not in graph.as_raw_html()
 
 
 def test_staged_labeled_flow_renders_bands_matching_cached_stage_columns():

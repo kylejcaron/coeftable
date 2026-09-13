@@ -54,6 +54,7 @@ _LEGEND_KINDS: tuple[tuple[EdgeKind, str], ...] = (
 )
 _DEFAULT_VALUE_FMT: Format = Number(compact=True)
 _DEFAULT_CHANGE_FMT: Format = Percent(signed=True, decimals=1)
+_SHARE_FMT: Format = Percent(signed=False, decimals=1)
 # ProductFlow's default uses the prototype's translucent neutral stage band.
 # Explicit themes, including DEFAULT itself, bypass this default value.
 _DEFAULT_THEME: Theme = replace(DEFAULT, band="rgba(20,24,31,.035)")
@@ -232,7 +233,7 @@ def _series_content(
     if step.share_of is not None:
         referenced = steps_by_id[step.share_of]
         share = current / current_by_id[referenced.id] * 100.0
-        items.append((f"Share of {referenced.title}", change_fmt(share)))
+        items.append((f"Share of {referenced.title}", _SHARE_FMT(share)))
     items.extend(step.diagnostics)
     content: tuple[Region | Adornment, ...] = (
         Metric(current, value_fmt, direction=step.direction, role=role),
@@ -268,7 +269,7 @@ def _build_card(
     """Build one step's fully resolved Card: appearance, content, and geometry."""
     content: tuple[Region | Adornment, ...]
     if step.kind == "decision":
-        content = (TextBlock(cast(str, step.note), variant="caption"),)
+        content = (TextBlock(cast(str, step.note), variant="caption", max_lines=3),)
     else:
         content = _series_content(
             step,

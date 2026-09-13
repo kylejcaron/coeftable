@@ -18,6 +18,7 @@ from coeftable.theme import DEFAULT
 
 _VALUE_FMT = Number(compact=True)
 _CHANGE_FMT = Percent(signed=True, decimals=1)
+_SHARE_FMT = Percent(signed=False, decimals=1)
 
 # --- The literal prototype topology ----------------------------------------
 
@@ -265,10 +266,10 @@ def test_reference_html_paints_exactly_one_dashed_and_one_strong_border():
 # --- Decision / terminal / muted content semantics --------------------------
 
 
-def test_decision_card_holds_only_its_nonempty_note():
+def test_decision_card_holds_only_its_wrapped_nonempty_note():
     report = _product_flow_reference()
     card = _card(report, "shipping")
-    assert card.content == (TextBlock(_DECISION_NOTE, variant="caption"),)
+    assert card.content == (TextBlock(_DECISION_NOTE, variant="caption", max_lines=3),)
 
 
 def test_terminal_card_appends_a_terminal_badge_after_its_series_content():
@@ -328,7 +329,7 @@ def test_every_non_viewed_step_reports_its_share_of_viewed():
         change_pct = (series[step_id][-1] / series[step_id][0] - 1.0) * 100.0
         assert change == ("Change", _CHANGE_FMT(change_pct))
         share_pct = series[step_id][-1] / viewed_now * 100.0
-        assert share == ("Share of Viewed product", _CHANGE_FMT(share_pct))
+        assert share == ("Share of Viewed product", _SHARE_FMT(share_pct))
 
     # viewed itself carries no share_of (would self-reference) and so has
     # exactly the three derived entries, no fourth "share" row.

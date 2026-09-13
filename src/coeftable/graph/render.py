@@ -215,7 +215,7 @@ def render_graph(graph: Graph) -> str:
     measured = layout.measured
     compiled = graph._compiled
     stage_markup = _stage_markup(graph, layout)
-    svg = _wire_svg(graph, layout, compiled) if (graph.wires or layout.stage_columns) else ""
+    svg = _wire_svg(graph, layout, compiled) if graph.wires else ""
     nubs, nub_rules = _nub_markup(graph, layout, compiled)
     cards_html: list[str] = []
     boxes = dict(measured.boxes)
