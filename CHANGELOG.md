@@ -1,3 +1,20 @@
+<a id="v0.11.0"></a>
+# [v0.11.0](https://github.com/kylejcaron/coeftable/releases/tag/v0.11.0) - 2026-09-13
+
+<!-- Release notes generated using configuration in .github/release.yml at v0.11.0 -->
+
+## What's Changed
+### New Features
+* Add product-flow reports  by [@kylejcaron](https://github.com/kylejcaron) in [#55](https://github.com/kylejcaron/coeftable/pull/55)
+### Maintenance
+* Update changelog for v0.10.0 by [@github-actions](https://github.com/github-actions)[bot] in [#54](https://github.com/kylejcaron/coeftable/pull/54)
+
+
+**Full Changelog**: https://github.com/kylejcaron/coeftable/compare/v0.10.0...v0.11.0
+
+[Changes][v0.11.0]
+
+
 <a id="v0.10.0"></a>
 # [v0.10.0](https://github.com/kylejcaron/coeftable/releases/tag/v0.10.0) - 2026-08-28
 
@@ -217,6 +234,7 @@
 [Changes][v0.1.0]
 
 
+[v0.11.0]: https://github.com/kylejcaron/coeftable/compare/v0.10.0...v0.11.0
 [v0.10.0]: https://github.com/kylejcaron/coeftable/compare/v0.9.0...v0.10.0
 [v0.9.0]: https://github.com/kylejcaron/coeftable/compare/v0.8.0...v0.9.0
 [v0.8.0]: https://github.com/kylejcaron/coeftable/compare/v0.7.0...v0.8.0
