@@ -88,3 +88,15 @@ def test_report_gap_applies_only_between_present_sections():
     report = GraphReport(graph, footer=(strip,), gap=12)
     assert report.measure().graph_top == 0
     assert report.measure().height == graph.measure().height + 12 + 30
+
+
+def test_report_system_font_is_opt_in_and_default_html_still_inherits():
+    inherited = GraphReport(_graph()).as_raw_html()
+    system = GraphReport(_graph(), font="system").as_raw_html()
+    assert "font-family" not in inherited
+    assert "font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" in system
+
+
+def test_report_rejects_an_unknown_font():
+    with pytest.raises(SpecError, match=r"GraphReport\.font must be inherit or system"):
+        GraphReport(_graph(), font="serif")  # ty: ignore[invalid-argument-type]

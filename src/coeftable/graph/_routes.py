@@ -252,6 +252,46 @@ def route_back_sag(
     )
 
 
+def route_back_arc(
+    src: Box,
+    dst: Box,
+    *,
+    offset: float,
+    inset: float,
+    bound: float,
+) -> Route:
+    """Route a same-lane, adjacent-stage back edge as an arc under its row.
+
+    ``src`` sits exactly one stage after ``dst`` in the same lane, so the
+    two cards share a single physical gap; sagging below every card in
+    both stages (as `route_back_sag` must for a multi-stage return) would
+    only fold a hairpin into that gap. Instead the edge leaves ``src``'s
+    *bottom* edge ``inset`` in from its left corner, drops to the apex
+    depth ``bound + offset`` (the caller passes the endpoint row's lower
+    extent as ``bound``, not the whole stages'), runs across, and rises
+    into ``dst``'s bottom edge ``inset`` in from its right corner.
+
+    The arc is two cubics meeting at the horizontal midpoint with a shared
+    horizontal tangent. Each half's y is monotone between its own endpoint
+    bottom and the apex depth, so the apex — where the pill anchors — and
+    the route's bounds are exact for any pair of endpoint heights, not
+    only equal ones; a single cubic's true extremum would drift toward the
+    shallower card whenever the two bottoms differ.
+    """
+    sx = src[0] + inset
+    sy = float(src[1] + src[3])
+    dx = dst[0] + dst[2] - inset
+    dy = float(dst[1] + dst[3])
+    apex = bound + offset
+    mx = (sx + dx) / 2
+    path = (
+        f"M{_n(sx)},{_n(sy)} "
+        f"C{_n(sx)},{_n(apex)} {_n((sx + mx) / 2)},{_n(apex)} {_n(mx)},{_n(apex)} "
+        f"C{_n((mx + dx) / 2)},{_n(apex)} {_n(dx)},{_n(apex)} {_n(dx)},{_n(dy)}"
+    )
+    return Route(path, (mx, apex), (min(sx, dx), min(sy, dy), max(sx, dx), apex))
+
+
 def route_c_loop(
     src: Box,
     dst: Box,
@@ -303,4 +343,25 @@ def route_c_loop(
         path,
         (corridor, middle_y),
         (min(xs), min(sy, dy), max(xs), max(sy, dy)),
+    )
+
+
+def route_down(src: Box, dst: Box) -> Route:
+    """Route a same-stage forward/skip edge from ``src``'s bottom to ``dst``'s top.
+
+    Both endpoints and the cubic's own controls stay in the empty lane gap
+    between two adjacent lanes in the same stage: the destination is entered
+    from directly above, so no horizontal destination tangent is needed the
+    way `route_across`'s cross-stage arrival needs one.
+    """
+    sx = src[0] + src[2] / 2
+    sy = src[1] + src[3]
+    dx = dst[0] + dst[2] / 2
+    dy = dst[1]
+    middle_y = (sy + dy) / 2
+    path = f"M{_n(sx)},{_n(sy)} C{_n(sx)},{_n(middle_y)} {_n(dx)},{_n(middle_y)} {_n(dx)},{_n(dy)}"
+    return Route(
+        path,
+        ((sx + dx) / 2, middle_y),
+        (min(sx, dx), min(sy, dy), max(sx, dx), max(sy, dy)),
     )

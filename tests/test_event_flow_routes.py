@@ -1,7 +1,9 @@
 from coeftable.graph._routes import (
     route_across,
+    route_back_arc,
     route_back_sag,
     route_c_loop,
+    route_down,
     route_skip_bow,
 )
 
@@ -182,3 +184,51 @@ def test_skip_bow_missing_either_gate_keeps_the_pure_continuous_bow():
     pure = route_skip_bow(SRC, DST, offset=24)
     assert only_src.path == pure.path
     assert only_dst.path == pure.path
+
+
+def test_down_uses_bottom_and_top_midpoints_when_lane_widths_match():
+    upper = (10, 20, 100, 60)
+    lower = (10, 200, 100, 60)
+    route = route_down(upper, lower)
+    assert route.path == "M60,80 C60,140 60,140 60,200"
+    assert route.label_anchor == (60.0, 140.0)
+    assert route.bounds == (60.0, 80.0, 60.0, 200.0)
+
+
+def test_down_centers_the_control_hull_between_unequal_lane_widths():
+    """Every card keeps its own width rather than its stage's shared max, so
+    a same-stage source and destination can have different centers; the
+    cubic's controls still sit directly beneath each anchor, not on some
+    shared column x."""
+    narrow = (40, 20, 100, 60)
+    wide = (40, 200, 140, 60)
+    route = route_down(narrow, wide)
+    assert route.path == "M90,80 C90,140 110,140 110,200"
+    assert route.label_anchor == (100.0, 140.0)
+    assert route.bounds == (90.0, 80.0, 110.0, 200.0)
+
+
+def test_back_arc_leaves_and_enters_bottom_edges_beside_the_gap():
+    """A same-lane adjacent-stage back edge arcs under the endpoint row: it
+    leaves ``src``'s bottom edge one ``inset`` in from its left corner, meets
+    the apex depth ``bound + offset`` at the horizontal midpoint with a flat
+    tangent, and rises into ``dst``'s bottom edge one ``inset`` in from its
+    right corner; the pill anchors at that apex."""
+    src = (300, 20, 100, 60)
+    dst = (100, 20, 100, 60)
+    route = route_back_arc(src, dst, offset=24, inset=40, bound=80)
+    assert route.path == "M340,80 C340,104 295,104 250,104 C205,104 160,104 160,80"
+    assert route.label_anchor == (250.0, 104.0)
+    assert route.bounds == (160.0, 80.0, 340.0, 104.0)
+
+
+def test_back_arc_apex_and_bounds_stay_exact_for_unequal_endpoint_heights():
+    """Each half is monotone from its own bottom to the shared apex, so a
+    taller destination changes only the second half's rise, never the apex
+    the pill sits on or the route's measured depth."""
+    src = (300, 20, 100, 60)
+    dst = (100, 20, 100, 90)
+    route = route_back_arc(src, dst, offset=24, inset=40, bound=110)
+    assert route.path == "M340,80 C340,134 295,134 250,134 C205,134 160,134 160,110"
+    assert route.label_anchor == (250.0, 134.0)
+    assert route.bounds == (160.0, 80.0, 340.0, 134.0)

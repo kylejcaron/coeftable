@@ -1,11 +1,14 @@
 """The public card entry points: `Card` and `CardGrid`.
 
-Thin sugar over templates and regions: a `Card` resolves its content
-exactly once at construction into a cached template, so every validation
-error surfaces immediately and rendering is pure reads. A `CardGrid` is a
-flex-wrap row of fixed-basis items sized to each card's measured
-footprint — narrow containers cannot shrink cards and folding one card
-never moves its siblings.
+Thin sugar over templates and regions: a `Card` resolves its content at
+construction into a cached template, so every validation error surfaces
+immediately and rendering is pure reads. That resolution happens once,
+except for a muted card, which resolves a second time against the
+unmuted theme purely to prove that emphasis changed no geometry — so a
+custom `Region.resolve` must be pure: same inputs, same output, no side
+effects. A `CardGrid` is a flex-wrap row of fixed-basis items sized to
+each card's measured footprint — narrow containers cannot shrink cards
+and folding one card never moves its siblings.
 """
 
 from __future__ import annotations
@@ -15,6 +18,7 @@ from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 
 from coeftable.cards.adornments import Adornment, SelectControl, TextBlock
+from coeftable.cards.appearance import DEFAULT_APPEARANCE, CardAppearance, appearance_theme
 from coeftable.cards.chrome import DEFAULT_CHROME, CardChrome
 from coeftable.cards.measure import MeasuredCard
 from coeftable.cards.regions import Region, _canonical, resolve_content
@@ -33,6 +37,7 @@ class Card:
     width: int = 256
     chrome: CardChrome = DEFAULT_CHROME
     theme: Theme = DEFAULT
+    appearance: CardAppearance = DEFAULT_APPEARANCE
     _template: CardTemplate = field(init=False, repr=False, compare=False)
     _control_options: Mapping[str, tuple[str, ...]] = field(init=False, repr=False, compare=False)
 
@@ -50,12 +55,36 @@ class Card:
             raise SpecError("Card.chrome must be a CardChrome")
         if not isinstance(self.theme, Theme):
             raise SpecError("Card.theme must be a Theme")
+        if not isinstance(self.appearance, CardAppearance):
+            raise SpecError("Card.appearance must be a CardAppearance")
         object.__setattr__(self, "content", _canonical(self.content, name="Card.content"))
         usable = self.width - 2 * (self.chrome.padding + self.chrome.border_width)
         header: tuple[Adornment, ...] = (TextBlock(self.title, variant="title"),)
         if self.subtitle is not None:
             header = (*header, TextBlock(self.subtitle, variant="subtitle"))
-        body = resolve_content(self.content, width=usable, theme=self.theme, chrome=self.chrome)
+        resolved_theme = appearance_theme(self.theme, self.appearance)
+        body = resolve_content(
+            self.content,
+            width=usable,
+            theme=resolved_theme,
+            chrome=self.chrome,
+        )
+        template = CardTemplate(width=self.width, header=header, body=body, chrome=self.chrome)
+        if self.appearance.emphasis == "muted":
+            base_body = resolve_content(
+                self.content,
+                width=usable,
+                theme=self.theme,
+                chrome=self.chrome,
+            )
+            base_template = CardTemplate(
+                width=self.width,
+                header=header,
+                body=base_body,
+                chrome=self.chrome,
+            )
+            if base_template.measure() != template.measure():
+                raise SpecError("Card.appearance emphasis must not change Region geometry")
         control_options: dict[str, tuple[str, ...]] = {}
         for adornment in body:
             if isinstance(adornment, SelectControl) and adornment.key is not None:
@@ -63,11 +92,7 @@ class Card:
                     raise SpecError(f"duplicate SelectControl.key {adornment.key!r} in card")
                 control_options[adornment.key] = tuple(value for value, _ in adornment.options)
         object.__setattr__(self, "_control_options", MappingProxyType(control_options))
-        object.__setattr__(
-            self,
-            "_template",
-            CardTemplate(width=self.width, header=header, body=body, chrome=self.chrome),
-        )
+        object.__setattr__(self, "_template", template)
 
     def measure(self) -> MeasuredCard:
         """Return this card's exact reserved footprints."""
@@ -75,7 +100,9 @@ class Card:
 
     def as_raw_html(self, *, control_dom_ids: Mapping[str, str] | None = None) -> str:
         """Render the card as a self-contained HTML string."""
-        return self._template.render(theme=self.theme, control_dom_ids=control_dom_ids)
+        return self._template.render(
+            theme=self.theme, appearance=self.appearance, control_dom_ids=control_dom_ids
+        )
 
     def control_options(self) -> Mapping[str, tuple[str, ...]]:
         """Return keyed select option values resolved for this card."""

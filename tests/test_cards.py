@@ -22,9 +22,12 @@ from coeftable.cards.adornments import (
     SelectControl,
     TextBlock,
 )
+from coeftable.cards.appearance import DEFAULT_APPEARANCE, CardAppearance
+from coeftable.cards.card import Card
 from coeftable.cards.chrome import DEFAULT_CHROME, CardChrome, line_height
 from coeftable.cards.fragments import _esc, render_adornment
 from coeftable.cards.measure import measure_card, resolve_rows, text_line_plan
+from coeftable.cards.regions import Trend
 from coeftable.cards.template import CardTemplate
 from coeftable.errors import SpecError
 from coeftable.theme import DEFAULT
@@ -592,6 +595,7 @@ EXPECTED_CARD_EXPORTS = {
     "render_adornment",
     "Anchor",
     "Card",
+    "CardAppearance",
     "CardGrid",
     "CardChrome",
     "CardTemplate",
@@ -609,6 +613,7 @@ EXPECTED_CARD_EXPORTS = {
     "Pane",
     "Panel",
     "Row",
+    "DEFAULT_APPEARANCE",
 }
 
 ALLOWED_CARDS_IMPORT_ROOTS = {
@@ -622,7 +627,7 @@ ALLOWED_CARDS_IMPORT_ROOTS = {
 
 
 def test_cards_export_surface_is_exactly_the_promised_set():
-    assert len(coeftable.cards.__all__) == 31
+    assert len(coeftable.cards.__all__) == 33
 
     assert set(coeftable.cards.__all__) == EXPECTED_CARD_EXPORTS
     for name in EXPECTED_CARD_EXPORTS:
@@ -1413,3 +1418,122 @@ def test_callout_too_narrow_for_its_accent_is_rejected():
             body=(Callout(text),),
         )
     assert "Callout" in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"border": "double"}, "CardAppearance.border"),
+        ({"fill": "band"}, "CardAppearance.fill"),
+        ({"emphasis": "quiet"}, "CardAppearance.emphasis"),
+    ],
+)
+def test_card_appearance_rejects_unknown_members(kwargs, message):
+    with pytest.raises(SpecError, match=message):
+        CardAppearance(**kwargs)
+
+
+def test_card_appearance_is_frozen_slotted_and_defaulted():
+    appearance = CardAppearance()
+    assert appearance == DEFAULT_APPEARANCE
+    assert dataclasses.is_dataclass(appearance)
+    assert hasattr(CardAppearance, "__slots__")
+    assert not hasattr(appearance, "__dict__")
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        appearance.border = "dashed"
+
+
+def test_card_appearances_change_paint_without_changing_measurement():
+    default = Card("Node", content=(TextBlock("Body"),), width=220)
+    decision = dataclasses.replace(
+        default,
+        appearance=CardAppearance(border="dashed", fill="transparent"),
+    )
+    terminal = dataclasses.replace(default, appearance=CardAppearance(border="strong"))
+    muted = dataclasses.replace(default, appearance=CardAppearance(emphasis="muted"))
+    assert default.measure() == decision.measure() == terminal.measure() == muted.measure()
+    assert "border-style:dashed" in decision.as_raw_html()
+    assert "background:transparent" in decision.as_raw_html()
+    assert f"border-color:{DEFAULT.axis}" in terminal.as_raw_html()
+    muted_html = muted.as_raw_html()
+    assert "opacity" not in muted_html
+    assert f"color:{DEFAULT.muted}" in muted_html
+
+
+def test_muted_emphasis_does_not_create_a_stacking_context_on_the_shell():
+    # A `<details>` opacity trap scopes every descendant z-index (including
+    # a KeyValuePopover's `position:absolute` panel) to that card's own
+    # stacking context, so a later sibling card paints over the popover
+    # regardless of z-index. Muted emphasis must de-emphasize purely
+    # through the derived muted `Theme`, never via shell opacity/filter.
+    card = Card(
+        "Node",
+        content=(KeyValuePopover("diagnostics", (("a", "1"),)),),
+        width=220,
+        appearance=CardAppearance(emphasis="muted"),
+    )
+    html_out = card.as_raw_html()
+    assert "opacity" not in html_out
+    assert "filter" not in html_out
+    assert f"background:{DEFAULT.surface}" in html_out
+
+
+def test_muted_card_bakes_muted_color_into_trend_svg_with_identical_measurement():
+    # `resolve_content` resolves regions (here `Trend`, which bakes its
+    # line colour into a static `InlineSvg`) under the appearance-derived
+    # theme, so a muted `Trend` region's colour comes from `theme.muted`
+    # baked directly into the SVG rather than any post-hoc paint on the
+    # card shell, and the resolved SVG geometry is untouched.
+    trend = Trend(x=(0.0, 1.0, 2.0), y=(0.0, 1.0, 0.5), x_domain=(0.0, 2.0), domain=(0.0, 1.0))
+    default = Card("Node", content=(trend,), width=256)
+    muted = dataclasses.replace(default, appearance=CardAppearance(emphasis="muted"))
+    assert default.measure() == muted.measure()
+    default_html = default.as_raw_html()
+    muted_html = muted.as_raw_html()
+    assert DEFAULT.neutral in default_html
+    assert DEFAULT.neutral not in muted_html
+    assert DEFAULT.muted in muted_html
+    assert "opacity" not in muted_html
+
+
+def test_muted_appearance_rejects_a_region_that_changes_measured_geometry_by_theme():
+    class ThemeSensitiveRegion:
+        def resolve(self, *, width, theme, chrome):
+            del width, chrome
+            rows = (TextBlock("one"),)
+            return rows if theme.text == DEFAULT.text else (*rows, TextBlock("two"))
+
+    with pytest.raises(
+        SpecError,
+        match=re.escape("Card.appearance emphasis must not change Region geometry"),
+    ):
+        Card(
+            "Node",
+            content=(ThemeSensitiveRegion(),),
+            appearance=CardAppearance(emphasis="muted"),
+        )
+
+
+def test_default_appearance_does_not_change_card_html():
+    card = Card("Node", content=(TextBlock("Body"),), width=220)
+    explicit = dataclasses.replace(card, appearance=DEFAULT_APPEARANCE)
+    assert explicit.as_raw_html() == card.as_raw_html()
+
+
+def test_muted_strong_appearance_escapes_a_hostile_theme_color():
+    # `muted` emphasis rebinds every colour role (including `axis`, used
+    # for a `strong` border) to `theme.muted`; a hostile value there must
+    # not break out of any style attribute in either the details shell or
+    # the resolved body content.
+    hostile_theme = dataclasses.replace(DEFAULT, muted=THEME_HOSTILE)
+    card = Card(
+        "Node",
+        content=(TextBlock("Body"), MetricValue("value", role="favorable")),
+        width=220,
+        theme=hostile_theme,
+        appearance=CardAppearance(border="strong", emphasis="muted"),
+    )
+    html_out = card.as_raw_html()
+    assert THEME_HOSTILE not in html_out
+    assert not re.search(r"\bid=", html_out)
+    assert THEME_HOSTILE_ESCAPED in html_out

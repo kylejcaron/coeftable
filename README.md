@@ -820,15 +820,123 @@ flow = EventFlow(
 html = flow.as_raw_html()
 ```
 
-Forward edges advance one stage and skip edges cross two or more; together
-they define downstream visibility. Back edges return to the same or an earlier
-stage but are paint-only: they never change which cards are visible. A card
-listed in `collapsible` gets a right-edge fold nub that hides downstream
-cards, every wire touching them, and every wire leaving the folded card, back
-edges included. Per-kind `EdgeStyle` values override the default stroke,
-width, and dash. Omitting `stage_gap`, as
-above, derives a safe gap for labels, routes, and fold nubs, never narrower
-than 108px. Rendering and folding use HTML and CSS with zero JavaScript.
+`forward` edges advance to the next stage or to the next lane in the same
+stage; `skip` edges advance to any later stage (adjacent stages included) or
+to the next lane in the same stage; together they define downstream
+visibility. `back` edges return to the same or an earlier stage but are
+paint-only: they never change which cards are visible. A same-stage
+forward/skip pill routes and centers inside the lane gap (`gap`) it crosses,
+not the inter-stage `stage_gap`, and a `back` edge returning exactly one
+stage *within its own lane* arcs under its own two cards with its pill
+centered in that same lane gap; every cross-stage forward/adjacent-skip
+pill packs into `stage_gap` instead, alongside exterior skip bows, back
+sags (returns spanning two or more stages, or one stage across lanes),
+same-stage back loops, and collapsible fold nubs. A card listed in
+`collapsible` gets a
+right-edge fold nub that hides downstream cards, every wire touching them,
+and every wire leaving the folded card, back edges included. Per-kind
+`EdgeStyle` values override the default stroke, width, and dash.
+
+`EventFlow` also takes an optional `stage_inset` (0 by default): a measured
+horizontal margin reserved inside each stage column, centering every
+intrinsic-width card in it rather than left-aligning it to the column's
+edge. `stage_gap` remains the empty distance between two adjacent *padded*
+column bounds, so a stage boundary's actual physical clearance for routes,
+pills, and fold nubs is `stage_gap + 2 * stage_inset` -- the inset margin is
+real corridor space, not merely a card margin. Omitting `stage_gap` preserves
+at least 108px of physical card-edge clearance, then subtracts the inset
+already supplying that space; the visible gap stays at least 18px when fold
+nubs are present and otherwise at least 1px. Rendering and folding use HTML
+and CSS with zero JavaScript.
+
+## Product-flow reports (experimental)
+
+`coeftable.graph.ProductFlow` is the composition root over `EventFlow` for a
+staged product funnel: give it stage names, `ProductStep`s, and `FlowEdge`s
+and it builds every card's appearance, metric, trend, and diagnostics
+popover itself, places them on a labeled staged canvas, and wraps the whole
+thing in a `GraphReport` with a title, a per-edge-kind legend, and an
+optional note. The API is experimental and deliberately not exported from
+the top-level `coeftable` namespace yet.
+
+```python
+from coeftable.graph import FlowEdge, ProductFlow, ProductStep
+
+stages = ("Viewed", "Checkout", "Purchased")
+steps = (
+    ProductStep(
+        "viewed", "Viewed product", stage=0, lane=0,
+        series=(1200.0, 1230.0, 1180.0, 1260.0),
+    ),
+    ProductStep(
+        "checkout", "/checkout", stage=1, lane=0,
+        kind="decision", note="Routes by cart size: a single item skips review.",
+    ),
+    ProductStep(
+        "purchased", "Order placed", stage=2, lane=0,
+        kind="terminal", series=(150.0, 158.0, 149.0, 165.0), share_of="viewed",
+    ),
+)
+edges = (
+    FlowEdge("viewed-checkout", "viewed", "checkout", "forward", label="continue"),
+    FlowEdge("checkout-purchased", "checkout", "purchased", "forward"),
+    FlowEdge("purchased-checkout", "purchased", "checkout", "back", label="amend order"),
+)
+
+report = ProductFlow(
+    stages,
+    steps,
+    edges,
+    title="Purchase funnel",
+    note="Back edges show rework paths; they never change what is visible.",
+)
+html = report.as_raw_html()
+```
+
+`series` holds actual event volumes in declared order -- there is no fixed
+period count, denominator step, or ×1000 scaling convention baked in; each
+card's own metric, badge, and trend come straight from that step's series.
+A `"decision"` step (like `checkout` above) carries no series at all: its
+card renders `note` as explanatory text instead of a metric. The optional
+`share_of` names another step whose current value this step's current value
+is expressed as a percentage of, so `purchased` above also reports its share
+of `viewed`; a step cannot reference itself, a decision step, or a step
+whose current value is zero.
+
+A step's `kind` and `muted` flag drive its card's appearance: `"decision"`
+renders a dashed, transparent card; `"terminal"` renders a strong border;
+`muted=True` dims every color role without changing layout. `stages` supply
+the labeled columns steps sit in by `stage`/`lane`, exactly like `EventFlow`'s
+`StageSlot`. The header's `RuleStrip` legend derives each edge kind's exact
+resolved color and solid/dashed category from the graph's own `EdgeStyle`s
+-- `forward` solid, `skip` dashed, and `back` (labeled "loop / back") dashed
+by default -- so the legend can never drift from what is actually painted.
+Back edges, like `purchased-checkout` above, are paint-only: they route and
+label like any other edge but never change what is visible, exactly as in
+`EventFlow`. `ProductFlow` matches the prototype's compact column rhythm by
+default: `stage_inset=14` places each intrinsic-width card inside a padded
+stage band, while `stage_gap=44` leaves 44px between bands and 72px between
+card edges. Pass `stage_gap=None` for EventFlow's conservative automatic gap
+derivation, or `stage_inset=0` for edge-to-edge bands. The ProductFlow default
+theme matches `DEFAULT` except for the prototype's translucent neutral stage
+fill (`rgba(20,24,31,.035)`); an explicit `theme` argument -- `DEFAULT`
+included -- is used unchanged. The report uses the prototype's system font
+stack: `-apple-system`, `"Segoe UI"`, Helvetica, Arial, then `sans-serif`.
+
+Every step that originates a `"forward"` or `"skip"` edge automatically gets
+a right-edge fold nub -- no `collapsible` list to maintain by hand -- so
+folding `viewed` above hides `checkout`, `purchased`, and every wire between
+them, back edge included. Each event/terminal card's own metric sits under
+its title; its diagnostics (current value, start value, percent change, and
+`share_of` when set) fold behind a "stats" chip and pop up on demand.
+Rendering, folding, and the diagnostics popover use HTML and CSS only, with
+zero JavaScript, exactly like a plain `EventFlow` graph.
+
+`ProductFlow` returns a `GraphReport`, so `report.measure()`,
+`report.as_raw_html()`, and its `_repr_html_` notebook display all work the
+same way they do for a plain `Graph`. For the literal 9-card, 12-edge,
+5-label checkout funnel this API is built to reproduce in full, see
+`tests/test_product_flow_reference.py`.
 
 ## Plot annotations
 
