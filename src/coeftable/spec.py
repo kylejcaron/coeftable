@@ -684,7 +684,9 @@ class CardColumn:
             else:
                 raise SpecError("CardColumn mapping input requires by=")
             if not by or any(not isinstance(name, str) or not name for name in by):
-                raise SpecError("CardColumn.by= must be a non-empty str or tuple of non-empty strings")
+                raise SpecError(
+                    "CardColumn.by= must be a non-empty str or tuple of non-empty strings"
+                )
             if len(set(by)) != len(by):
                 raise SpecError("CardColumn.by= column names must be unique")
             snapshot = dict(cards)
@@ -730,19 +732,20 @@ class CardColumn:
             for index, values in enumerate(zip(*columns, strict=True)):
                 key: object = values[0] if len(values) == 1 else values
                 try:
-                    prepared.append(cards.get(key))
+                    card = cards.get(key)
                 except TypeError as exc:
                     raise SpecError(
                         f"CardColumn {self.label!r} source row {index} has an unhashable "
                         f"key for by={by!r}"
                     ) from exc
+                if card is not None and not isinstance(card, Card):
+                    raise SpecError(f"CardColumn.cards[{key!r}] must be a Card or None")
+                prepared.append(card)
             return Prepared(payload=tuple(prepared))
 
         factory = self.factory
         assert factory is not None  # noqa: S101 - exclusive source validated in __post_init__
-        source = {
-            name: _nan_to_none(scan.frame[name].to_list()) for name in scan.frame.columns
-        }
+        source = {name: _nan_to_none(scan.frame[name].to_list()) for name in scan.frame.columns}
         prepared = []
         for index in range(count):
             row = MappingProxyType({name: values[index] for name, values in source.items()})

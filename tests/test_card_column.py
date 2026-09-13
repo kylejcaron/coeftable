@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 import narwhals as nw
 import pandas as pd
 import polars as pl
-import pyarrow as pa
 import pytest
 
 from coeftable.cards import Card, TextBlock
@@ -51,7 +50,7 @@ def test_card_column_snapshots_sequence_and_mapping_inputs():
     first = _card("A")
     second = _card("B")
     sequence = [first]
-    mapping = {"A": first}
+    mapping: dict[object, Card | None] = {"A": first}
     positional = CardColumn("Summary", cards=sequence)
     keyed = CardColumn("Summary", cards=mapping, by="metric")
 
@@ -59,8 +58,10 @@ def test_card_column_snapshots_sequence_and_mapping_inputs():
     mapping["A"] = second
 
     assert positional.cards == (first,)
-    assert isinstance(keyed.cards, Mapping)
-    assert keyed.cards["A"] is first
+    keyed_cards = keyed.cards
+    assert isinstance(keyed_cards, Mapping)
+    assert not isinstance(keyed_cards, Sequence)
+    assert keyed_cards["A"] is first
     assert keyed.by == ("metric",)
 
 
@@ -96,9 +97,7 @@ def test_sequence_length_must_match_source_rows():
 
 
 def test_mapping_supports_scalar_and_tuple_keys_blank_entries_and_reuse():
-    scalar_frame = pl.DataFrame(
-        {"metric": ["A", "A", "B"], "variant": ["x", "y", "z"]}
-    )
+    scalar_frame = pl.DataFrame({"metric": ["A", "A", "B"], "variant": ["x", "y", "z"]})
     scalar = CoefTable(
         scalar_frame,
         rows="metric",
@@ -179,14 +178,12 @@ def test_factory_receives_immutable_complete_rows_once_per_resolution():
 
     def factory(row: Mapping[str, Any]) -> Card:
         with pytest.raises(TypeError):
-            row["metric"] = "changed"  # type: ignore[index]
+            row["metric"] = "changed"  # ty: ignore[invalid-assignment]
         seen.append(row)
         return _card(f"{row['metric']}:{row['value']}")
 
     table = CoefTable(
-        pl.DataFrame(
-            {"metric": ["A", "B"], "method": ["OLS", "DiD"], "value": [1, 2]}
-        ),
+        pl.DataFrame({"metric": ["A", "B"], "method": ["OLS", "DiD"], "value": [1, 2]}),
         rows="metric",
         split_columns="method",
         columns=(CardColumn("Summary", factory=factory),),
@@ -210,7 +207,9 @@ def test_factory_receives_immutable_complete_rows_once_per_resolution():
 
 
 def test_factory_rejects_bad_return_and_chains_exceptions():
-    bad_factory: Any = lambda row: object()
+    def bad_factory(row: Mapping[str, Any]) -> Any:
+        return object()
+
     bad_return = CoefTable(
         pl.DataFrame({"metric": ["A"]}),
         rows="metric",
