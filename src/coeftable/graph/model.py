@@ -1118,11 +1118,12 @@ def _flow_route(
     exterior bow — it crosses the same single physical gap a forward wire
     would, so it reuses `route_across` with skip's own dashed styling; only
     a skip spanning more than one stage still bows over the intervening
-    columns. Symmetrically, a back wire returning exactly one stage arcs
-    under its own two endpoints (`route_back_arc`, `arc_inset` in from each
-    card's gap-side bottom corner and `arc_offset` deep) rather than
-    sagging below every card in both stages; only a back wire spanning two
-    or more stages still takes the pooled lower sag.
+    columns. Symmetrically, a back wire returning exactly one stage within
+    its own lane arcs under its own two endpoints (`route_back_arc`,
+    `arc_inset` in from each card's gap-side bottom corner, `arc_offset`
+    below the deeper card's bottom) rather than sagging below every card in
+    both stages; every other cross-stage return still takes the pooled
+    lower sag (`_back_arcs`).
     """
     if src_stage == dst_stage and wire.kind in ("forward", "skip"):
         return route_down(src_box, dst_box)
@@ -1153,7 +1154,7 @@ def _flow_route(
             src_edge=stage_extents[src_stage][1],
             dst_edge=stage_extents[dst_stage][0],
         )
-    if dst_stage == src_stage - 1:
+    if _back_arcs(src_stage, dst_stage, src_lane, dst_lane):
         return route_back_arc(
             src_box,
             dst_box,
@@ -1292,18 +1293,27 @@ def _flow_skip_bows(wire: Wire, *, slot_by_id: Mapping[str, StageSlot]) -> bool:
     return dst_stage > src_stage + 1
 
 
-def _flow_back_arcs(wire: Wire, *, slot_by_id: Mapping[str, StageSlot]) -> bool:
-    """Return whether a back wire arcs under its own endpoint row.
+def _back_arcs(src_stage: int, dst_stage: int, src_lane: int, dst_lane: int) -> bool:
+    """Return whether a back edge with these placements arcs under its own row.
 
-    A back wire returning exactly one stage shares a single physical gap
-    with its destination, so it takes `route_back_arc` under the two
-    endpoints' own row; only a back wire spanning two or more stages still
-    sags below every column it crosses (`route_back_sag`), and a same-stage
-    back wire loops around its own column (`route_c_loop`).
+    Only a return of exactly one stage *within the same lane* qualifies: the
+    arc descends straight out of the source's bottom edge inside its own
+    column, so a destination in another lane would put sibling cards of
+    that column directly in its path. Every other cross-stage return —
+    two or more stages back, or one stage back across lanes — keeps the
+    pooled lower sag (`route_back_sag`), which clears every card in every
+    stage it spans.
     """
+    return dst_stage == src_stage - 1 and dst_lane == src_lane
+
+
+def _flow_back_arcs(wire: Wire, *, slot_by_id: Mapping[str, StageSlot]) -> bool:
+    """Return whether a back wire arcs under its own endpoint row (`_back_arcs`)."""
     if wire.kind != "back":
         return False
-    return slot_by_id[wire.dst].stage == slot_by_id[wire.src].stage - 1
+    src_slot = slot_by_id[wire.src]
+    dst_slot = slot_by_id[wire.dst]
+    return _back_arcs(src_slot.stage, dst_slot.stage, src_slot.lane, dst_slot.lane)
 
 
 def _flow_routes_across(wire: Wire, *, slot_by_id: Mapping[str, StageSlot]) -> bool:
@@ -1333,9 +1343,10 @@ def _flow_vertical_bases(
 ) -> tuple[float, float]:
     """Return the flow's shared skip-top and cross-stage-back-bottom bases.
 
-    Every skip wire already shares one upper corridor pool, and every
-    cross-stage back wire (one returning to a strictly earlier stage, not
-    a same-stage loop) already shares one lower corridor pool
+    Every bowing skip wire already shares one upper corridor pool, and
+    every sagging back wire — one returning to an earlier stage, other than
+    a same-lane, one-stage return that arcs under its own row instead
+    (`_flow_back_arcs`) — already shares one lower corridor pool
     (`_flow_track_group`); `_flow_offsets` packs each pool's tracks on the
     assumption that every wire in it departs from the very same datum. A
     per-wire bound spanning only that wire's own stages would let two
@@ -1371,7 +1382,9 @@ def _flow_vertical_bases(
         low_stage, high_stage = min(src_stage, dst_stage), max(src_stage, dst_stage)
         if _flow_skip_bows(wire, slot_by_id=slot_by_id):
             skip_stages.update(range(low_stage, high_stage + 1))
-        elif wire.kind == "back" and dst_stage < src_stage - 1:
+        elif wire.kind == "back" and dst_stage < src_stage:
+            if _flow_back_arcs(wire, slot_by_id=slot_by_id):
+                continue
             back_stages.update(range(low_stage, high_stage + 1))
     # A pool with no members never reaches its bound at the call site
     # (`_flow_route` only reads it for a wire that is itself in the pool),
@@ -1704,15 +1717,14 @@ def _pill_painted_height(chrome: CardChrome) -> float:
 
 
 def _back_arc_offset(lane_gap: int) -> float:
-    """Return how far below the endpoint row an adjacent back arc's controls sit.
+    """Return how far below the deeper endpoint an adjacent back arc's apex sits.
 
-    `route_back_arc`'s apex — where its pill centers — reaches three
-    quarters of this depth, so the depth is chosen to land that apex at
-    the exact center of the row's lane gap: the arc dips as far as the
-    gap allows without its pill leaving the gap, and the pill keeps equal
-    clearance above and below.
+    `route_back_arc` anchors its pill exactly at the apex, so half the lane
+    gap lands it at the center of the row's gap: the arc dips as far as the
+    gap allows without its pill leaving the gap, with equal clearance
+    above and below.
     """
-    return lane_gap / 2 / 0.75
+    return lane_gap / 2
 
 
 def _graph_validate_lane_gap_pills(

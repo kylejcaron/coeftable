@@ -780,6 +780,52 @@ def test_adjacent_back_arcs_and_same_stage_down_pills_share_the_lane_gap_disjoin
         )
 
 
+def test_adjacent_back_arc_centers_its_pill_under_unequal_endpoint_heights():
+    """A taller source and a shorter destination share one arc apex: the
+    pill sits at the lane-gap center below the *deeper* bottom, clear of
+    both cards, and the route's measured depth is that same apex -- not a
+    single cubic's height-dependent extremum."""
+    tall = Card("Tall", content=(TextBlock("x", max_lines=6),))
+    nodes = (("short", Card("Short")), ("tall", tall), ("below", Card("Below")))
+    slots = (StageSlot("short", 0, 0), StageSlot("tall", 1, 0), StageSlot("below", 0, 1))
+    edges = (FlowEdge("tall-short", "tall", "short", "back", "amend order"),)
+    graph = EventFlow(nodes, slots, edges, dom_prefix="uneven")
+    boxes = dict(graph.measure().boxes)
+    tall_bottom = boxes["tall"][1] + boxes["tall"][3]
+    short_bottom = boxes["short"][1] + boxes["short"][3]
+    assert tall_bottom > short_bottom
+    path, (_ax, apex_y) = dict(graph._layout.wire_geometry)["tall-short"]
+    assert apex_y == tall_bottom + graph.gap / 2
+    assert max(y for _x, y in _sample_path_points(path)) == pytest.approx(apex_y)
+    pill = dict(graph._layout.flow_pills)["tall-short"]
+    for box in boxes.values():
+        assert not _rects_overlap(_painted_pill_rect(pill, graph), box)
+
+
+def test_cross_lane_adjacent_back_edge_keeps_the_sag_and_clears_sibling_cards():
+    """A one-stage return into a *different* lane would descend straight
+    through its own column's lower siblings if it arced, so it stays on the
+    pooled lower sag below both stages."""
+    nodes = (("a", Card("A")), ("b0", Card("B0")), ("b1", Card("B1")), ("b2", Card("B2")))
+    slots = (
+        StageSlot("a", 0, 2),
+        StageSlot("b0", 1, 0),
+        StageSlot("b1", 1, 1),
+        StageSlot("b2", 1, 2),
+    )
+    edges = (FlowEdge("b0-a", "b0", "a", "back", "redo"),)
+    graph = EventFlow(nodes, slots, edges, dom_prefix="crosslane")
+    boxes = dict(graph.measure().boxes)
+    path, _anchor = dict(graph._layout.wire_geometry)["b0-a"]
+    points = _sample_path_points(path)
+    assert points[0][0] == boxes["b0"][0]  # leaves the source's left edge, not its bottom
+    assert max(y for _x, y in points) > max(y + h for _x, y, _w, h in boxes.values())
+    for card_id, box in boxes.items():
+        for point in points:
+            assert not _point_inside_box(point, box), (card_id, point)
+    _assert_pill_bounds_inside(graph)
+
+
 def test_same_stage_back_wires_loop_left_and_right_without_overlapping_cards():
     nodes = (("a", Card("A")), ("b", Card("B")), ("c", Card("C")))
     slots = (StageSlot("a", 0, 0), StageSlot("b", 0, 1), StageSlot("c", 0, 2))
@@ -1369,7 +1415,7 @@ def test_pooled_back_tracks_share_one_datum_across_different_stage_subsets():
     gap here is the tightest the public API itself allows.
     """
     tall = Card(
-        "C1",
+        "B1",
         content=(
             TextBlock("one"),
             TextBlock("two"),
@@ -1378,7 +1424,7 @@ def test_pooled_back_tracks_share_one_datum_across_different_stage_subsets():
             TextBlock("five"),
         ),
     )
-    nodes = (("a", Card("A")), ("b", Card("B")), ("c", tall), ("d", Card("D")), ("e", Card("E")))
+    nodes = (("a", Card("A")), ("b", tall), ("c", Card("C")), ("d", Card("D")), ("e", Card("E")))
     slots = (
         StageSlot("a", 0, 0),
         StageSlot("b", 1, 0),
@@ -1388,11 +1434,12 @@ def test_pooled_back_tracks_share_one_datum_across_different_stage_subsets():
     )
     edges = (
         # Declared first (smaller offset): spans stages 1-3, so its own
-        # span includes the tall stage-2 card.
+        # span includes the tall stage-1 card.
         FlowEdge("d-b", "d", "b", "back", "retry"),
-        # Declared second (larger offset): spans stages 2-4 only; an
-        # adjacent-stage return would arc under its own row instead of
-        # joining this sag pool, so it must reach back two stages.
+        # Declared second (larger offset): spans stages 2-4 only, so its
+        # own span never touches the tall stage-1 card; it reaches back two
+        # stages because a same-lane one-stage return would arc under its
+        # own row instead of joining this sag pool.
         FlowEdge("e-c", "e", "c", "back", "reset"),
     )
     # A "public small gap": the narrowest stage_gap the public API itself

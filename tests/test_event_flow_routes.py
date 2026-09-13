@@ -209,23 +209,26 @@ def test_down_centers_the_control_hull_between_unequal_lane_widths():
 
 
 def test_back_arc_leaves_and_enters_bottom_edges_beside_the_gap():
-    """An adjacent-stage back edge arcs under the endpoint row: it leaves
-    ``src``'s bottom edge one ``inset`` in from its left corner, dips to
-    ``bound + offset``, and enters ``dst``'s bottom edge one ``inset`` in
-    from its right corner, with the pill anchored at the arc's apex, which
-    is the horizontal midpoint between the two anchors."""
+    """A same-lane adjacent-stage back edge arcs under the endpoint row: it
+    leaves ``src``'s bottom edge one ``inset`` in from its left corner, meets
+    the apex depth ``bound + offset`` at the horizontal midpoint with a flat
+    tangent, and rises into ``dst``'s bottom edge one ``inset`` in from its
+    right corner; the pill anchors at that apex."""
     src = (300, 20, 100, 60)
     dst = (100, 20, 100, 60)
     route = route_back_arc(src, dst, offset=24, inset=40, bound=80)
-    assert route.path == "M340,80 C340,104 160,104 160,80"
-    assert route.label_anchor == (250.0, 98.0)
-    assert route.bounds == (160.0, 80.0, 340.0, 98.0)
+    assert route.path == "M340,80 C340,104 295,104 250,104 C205,104 160,104 160,80"
+    assert route.label_anchor == (250.0, 104.0)
+    assert route.bounds == (160.0, 80.0, 340.0, 104.0)
 
 
-def test_back_arc_bound_clears_a_taller_endpoint():
+def test_back_arc_apex_and_bounds_stay_exact_for_unequal_endpoint_heights():
+    """Each half is monotone from its own bottom to the shared apex, so a
+    taller destination changes only the second half's rise, never the apex
+    the pill sits on or the route's measured depth."""
     src = (300, 20, 100, 60)
     dst = (100, 20, 100, 90)
     route = route_back_arc(src, dst, offset=24, inset=40, bound=110)
-    assert route.path == "M340,80 C340,134 160,134 160,110"
-    assert route.label_anchor == (250.0, 124.25)
-    assert route.bounds == (160.0, 80.0, 340.0, 124.25)
+    assert route.path == "M340,80 C340,134 295,134 250,134 C205,134 160,134 160,110"
+    assert route.label_anchor == (250.0, 134.0)
+    assert route.bounds == (160.0, 80.0, 340.0, 134.0)

@@ -260,28 +260,36 @@ def route_back_arc(
     inset: float,
     bound: float,
 ) -> Route:
-    """Route an adjacent-stage back edge as one arc under the endpoint row.
+    """Route a same-lane, adjacent-stage back edge as an arc under its row.
 
-    ``src`` sits exactly one stage after ``dst``, so the two cards share a
-    single physical gap; sagging below every card in both stages (as
-    `route_back_sag` must for a multi-stage return) would only fold a
-    hairpin into that gap. Instead the edge leaves ``src``'s *bottom* edge
-    ``inset`` in from its left corner, arcs down to ``bound + offset`` (the
-    caller passes the endpoint row's lower extent as ``bound``, not the
-    whole stages'), and enters ``dst``'s bottom edge ``inset`` in from its
-    right corner. Both controls sit directly under their anchors, so the
-    arc's apex — and the pill anchored there — is the horizontal midpoint,
-    inside the gap the two cards straddle. A cubic with both controls at
-    the same ``corridor`` y peaks at three quarters of that depth.
+    ``src`` sits exactly one stage after ``dst`` in the same lane, so the
+    two cards share a single physical gap; sagging below every card in
+    both stages (as `route_back_sag` must for a multi-stage return) would
+    only fold a hairpin into that gap. Instead the edge leaves ``src``'s
+    *bottom* edge ``inset`` in from its left corner, drops to the apex
+    depth ``bound + offset`` (the caller passes the endpoint row's lower
+    extent as ``bound``, not the whole stages'), runs across, and rises
+    into ``dst``'s bottom edge ``inset`` in from its right corner.
+
+    The arc is two cubics meeting at the horizontal midpoint with a shared
+    horizontal tangent. Each half's y is monotone between its own endpoint
+    bottom and the apex depth, so the apex — where the pill anchors — and
+    the route's bounds are exact for any pair of endpoint heights, not
+    only equal ones; a single cubic's true extremum would drift toward the
+    shallower card whenever the two bottoms differ.
     """
     sx = src[0] + inset
     sy = float(src[1] + src[3])
     dx = dst[0] + dst[2] - inset
     dy = float(dst[1] + dst[3])
-    corridor = bound + offset
-    path = f"M{_n(sx)},{_n(sy)} C{_n(sx)},{_n(corridor)} {_n(dx)},{_n(corridor)} {_n(dx)},{_n(dy)}"
-    apex_y = (sy + dy) / 8 + corridor * 0.75
-    return Route(path, ((sx + dx) / 2, apex_y), (min(sx, dx), min(sy, dy), max(sx, dx), apex_y))
+    apex = bound + offset
+    mx = (sx + dx) / 2
+    path = (
+        f"M{_n(sx)},{_n(sy)} "
+        f"C{_n(sx)},{_n(apex)} {_n((sx + mx) / 2)},{_n(apex)} {_n(mx)},{_n(apex)} "
+        f"C{_n((mx + dx) / 2)},{_n(apex)} {_n(dx)},{_n(apex)} {_n(dx)},{_n(dy)}"
+    )
+    return Route(path, (mx, apex), (min(sx, dx), min(sy, dy), max(sx, dx), apex))
 
 
 def route_c_loop(
