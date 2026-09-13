@@ -34,7 +34,8 @@ jobs:
           ARCHIVE="roborev_${ROBOREV_VERSION}_linux_amd64.tar.gz"
           curl -sfLO "https://github.com/roborev-dev/roborev/releases/download/v${ROBOREV_VERSION}/${ARCHIVE}"
           curl -sfLO "https://github.com/roborev-dev/roborev/releases/download/v${ROBOREV_VERSION}/SHA256SUMS"
-          grep -F "  ${ARCHIVE}" SHA256SUMS > verify.txt
+          awk -v archive="${ARCHIVE}" '$2 == archive' SHA256SUMS > verify.txt
+          test -s verify.txt
           sha256sum --check verify.txt
           mkdir -p "$HOME/.local/bin"
           tar xzf "${ARCHIVE}" -C "$HOME/.local/bin" roborev
