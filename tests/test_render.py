@@ -290,14 +290,15 @@ def test_each_public_render_starts_a_fresh_factory_resolution():
 def test_collapsible_groups_compose_with_nested_card_details():
     from coeftable.cards import Card, Diagnostics
 
-    cards = [
-        Card(str(i), content=(Diagnostics("details", (("n", i),)),))
-        for i in range(4)
-    ]
-    html = table(groups="area", collapsible_groups=True).card(
-        "Summary",
-        cards=cards,
-    ).as_raw_html()
+    cards = [Card(str(i), content=(Diagnostics("details", (("n", i),)),)) for i in range(4)]
+    html = (
+        table(groups="area", collapsible_groups=True)
+        .card(
+            "Summary",
+            cards=cards,
+        )
+        .as_raw_html()
+    )
     assert 'data-ct-group="1"' in html
     assert html.count("<details open") == 4
     assert html.count('<details style="position:relative">') == 4

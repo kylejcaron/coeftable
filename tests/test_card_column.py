@@ -6,8 +6,8 @@ from typing import Any
 import narwhals as nw
 import pandas as pd
 import polars as pl
-import pytest
 import pyarrow as pa
+import pytest
 
 from coeftable.cards import Card, TextBlock
 from coeftable.errors import ColumnNotFoundError, SpecError
@@ -247,25 +247,23 @@ _MAKERS = {"pandas": pd.DataFrame, "polars": pl.DataFrame, "pyarrow": pa.table}
 
 @pytest.mark.parametrize("backend", ["pandas", "polars", "pyarrow"])
 @pytest.mark.parametrize("mode", ["sequence", "mapping", "factory"])
-def test_public_builder_places_every_source_mode_across_backends(
-    backend: str, mode: str
-):
+def test_public_builder_places_every_source_mode_across_backends(backend: str, mode: str):
     make = _MAKERS[backend]
     frame = make({"metric": ["B", "A"], "lookup": [2.0, 1.0]})
     calls: list[Mapping[str, Any]] = []
+    base = CoefTable(frame, rows="metric", sort_rows=True)
     if mode == "sequence":
-        source: dict[str, Any] = {"cards": [_card("for-B"), _card("for-A")]}
+        table = base.card("Summary", cards=[_card("for-B"), _card("for-A")])
     elif mode == "mapping":
-        source = {"cards": {"A": _card("for-A")}, "by": "metric"}
+        table = base.card("Summary", cards={"A": _card("for-A")}, by="metric")
     else:
 
         def factory(row: Mapping[str, Any]) -> Card:
             calls.append(row)
             return _card(f"for-{row['metric']}")
 
-        source = {"factory": factory}
+        table = base.card("Summary", factory=factory)
 
-    table = CoefTable(frame, rows="metric", sort_rows=True).card("Summary", **source)
     values = _resolved_values(table)
     assert "for-A" in values[0]
     if mode == "mapping":
@@ -307,7 +305,7 @@ def test_mapping_placement_survives_groups_nesting_splits_and_missing_intersecti
             "method": ["OLS", "DiD", "OLS"],
         }
     )
-    cards = {
+    cards: dict[object, Card | None] = {
         ("Core", "Revenue", "OLS"): _card("core-revenue-ols"),
         ("Core", "Revenue", "DiD"): _card("core-revenue-did"),
         ("Ops", "Latency", "OLS"): _card("ops-latency-ols"),
@@ -330,9 +328,7 @@ def test_mapping_placement_survives_groups_nesting_splits_and_missing_intersecti
 
 
 def test_card_cells_stay_blank_on_generated_plot_footer_rows():
-    frame = pl.DataFrame(
-        {"metric": ["A"], "estimate": [1.0], "low": [0.5], "high": [1.5]}
-    )
+    frame = pl.DataFrame({"metric": ["A"], "estimate": [1.0], "low": [0.5], "high": [1.5]})
     resolved = resolve(
         CoefTable(frame, rows="metric")
         .estimate("Estimate", "estimate", ci=("low", "high"))
