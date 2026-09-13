@@ -1,0 +1,62 @@
+# roborev config for coeftable. The local daemon reads this file from the
+# default branch when it reviews pull requests, so changes bind once merged;
+# `make review PR=<n>` reads the checked-out copy instead.
+agent = "codex"
+model = "gpt-5.6-sol"
+review_reasoning = "maximum"
+review_backup_agent = "claude-code"
+review_backup_model = "claude-opus-4-8"
+review_context_count = 3
+
+review_guidelines = """
+coeftable renders publication-quality summary tables. Cells are pre-rendered
+HTML/SVG strings assembled from the caller's own dataframe and handed to
+great_tables. Frames are read via narwhals so pandas, polars, and pyarrow must
+all work — flag polars-only code paths.
+
+Docstring and comment accuracy.
+
+When a diff changes behavior, validation, or a code path, verify every
+docstring and comment describing it still matches. Flag: (a) a reference to a
+guard, validation, parameter, or code path that does not exist or is no longer
+reached; (b) a guarantee the code does not enforce; (c) text left stale after a
+rename or removal; (d) a comment whose arithmetic or direction contradicts the
+constant it explains. Do not flag prose style — only claims the current code
+contradicts. This codebase uses numpydoc Parameters/Returns blocks throughout,
+so a renamed or retyped parameter usually leaves a stale block behind.
+
+Test-assertion liveness.
+
+Flag tests whose assertions cannot fail for the behavior the test names:
+- all() / any() over a possibly-empty sequence with no length assertion
+- assertions on inputs that never reach the branch under test (wrong dtype,
+  wrong selected rung or step, in-domain data in an out-of-domain test)
+- substring or attribute checks that also hold when the behavior is inverted
+- slices or regions that exclude the attribute being asserted
+- a value computed but never compared
+A regression test must fail when the fix under test is reverted. For SVG
+emitters, asserting a tag or attribute is merely present usually does not
+distinguish correct geometry from wrong geometry — prefer assertions on
+projected coordinates.
+
+New-behavior coverage.
+
+Each new public parameter, new branch, or new cross-feature interaction needs at
+least one test that exercises it and would fail if the new code were reverted.
+Prioritize the non-default path of a new flag, and the interaction of two
+newly-combined features. Transitive coverage of a shared helper does not cover
+the call-site wiring.
+
+User-facing docs sync.
+
+When a diff changes a public API's default or signature, or removes a value
+from a Literal, check README and quickstart examples for stale references —
+especially type-invalid literals in copy-pasteable examples, and prose
+promising output the new default no longer produces."""
+
+[ci]
+review_types = ["default"]
+reasoning = "high"
+
+[kata_context]
+mode = "open"
