@@ -81,6 +81,7 @@ def test_sparkline_reference_opt_outs_render_via_public_api(kwargs):
 def test_every_public_symbol_is_exported():
     expected = {
         "CoefTable",
+        "CardColumn",
         "Estimate",
         "Forest",
         "Passthrough",
@@ -101,6 +102,17 @@ def test_every_public_symbol_is_exported():
     assert expected <= set(ct.__all__)
     for name in expected:
         assert hasattr(ct, name)
+
+
+def test_card_column_renders_through_top_level_public_api():
+    from coeftable.cards import Card
+
+    table = ct.CoefTable(pl.DataFrame({"metric": ["Revenue"]}), rows="metric").card(
+        "Summary",
+        cards=[Card("Revenue")],
+    )
+    assert isinstance(table.columns[-1], ct.CardColumn)
+    assert "Revenue" in table.as_raw_html()
 
 
 def test_deprecated_theme_imports_warn():

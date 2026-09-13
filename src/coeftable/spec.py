@@ -1609,6 +1609,40 @@ class CoefTable:
         """
         return self._add(Passthrough(label, column))
 
+    def card(
+        self,
+        label: str,
+        *,
+        cards: Sequence[Card | None] | Mapping[object, Card | None] | None = None,
+        by: str | tuple[str, ...] | None = None,
+        factory: Callable[[Mapping[str, Any]], Card | None] | None = None,
+    ) -> CoefTable:
+        """Append a column of prebuilt Cards or Cards built once from source rows.
+
+        Parameters
+        ----------
+        label
+            Column header.
+        cards
+            Either a sequence aligned to the source-frame row order, or a
+            mapping from source values to Cards. Mapping values absent from
+            the mapping render as blank cells. Each Card keeps its own theme.
+        by
+            Source column used for scalar mapping keys, or a tuple of source
+            columns used for tuple mapping keys. Valid only with mapping
+            `cards`.
+        factory
+            Callable receiving each complete source row as an immutable
+            mapping and returning a Card or `None`. Called exactly once per
+            source row during each resolution.
+
+        Returns
+        -------
+        CoefTable
+            A new table with the column appended.
+        """
+        return self._add(CardColumn(label, cards=cards, by=by, factory=factory))
+
     def sparkline(
         self,
         label: str,

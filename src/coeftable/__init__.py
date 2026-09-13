@@ -13,7 +13,7 @@ from coeftable.format import (
     Percent,
     TimeFormat,
 )
-from coeftable.spec import CoefTable, Estimate, Forest, Passthrough, Sparkline
+from coeftable.spec import CardColumn, CoefTable, Estimate, Forest, Passthrough, Sparkline
 from coeftable.theme import Theme, role_for
 
 try:
@@ -25,6 +25,7 @@ __all__ = [
     "Band",
     "CIStyle",
     "CalendarStep",
+    "CardColumn",
     "CoefTable",
     "ColumnNotFoundError",
     "Currency",

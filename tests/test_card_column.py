@@ -7,6 +7,7 @@ import narwhals as nw
 import pandas as pd
 import polars as pl
 import pytest
+import pyarrow as pa
 
 from coeftable.cards import Card, TextBlock
 from coeftable.errors import ColumnNotFoundError, SpecError
@@ -239,3 +240,106 @@ def test_cell_uses_public_card_html_and_none_is_blank():
         columns=(CardColumn("Summary", cards=[card, None]),),
     )
     assert _resolved_values(table) == [card.as_raw_html(), ""]
+
+
+_MAKERS = {"pandas": pd.DataFrame, "polars": pl.DataFrame, "pyarrow": pa.table}
+
+
+@pytest.mark.parametrize("backend", ["pandas", "polars", "pyarrow"])
+@pytest.mark.parametrize("mode", ["sequence", "mapping", "factory"])
+def test_public_builder_places_every_source_mode_across_backends(
+    backend: str, mode: str
+):
+    make = _MAKERS[backend]
+    frame = make({"metric": ["B", "A"], "lookup": [2.0, 1.0]})
+    calls: list[Mapping[str, Any]] = []
+    if mode == "sequence":
+        source: dict[str, Any] = {"cards": [_card("for-B"), _card("for-A")]}
+    elif mode == "mapping":
+        source = {"cards": {"A": _card("for-A")}, "by": "metric"}
+    else:
+
+        def factory(row: Mapping[str, Any]) -> Card:
+            calls.append(row)
+            return _card(f"for-{row['metric']}")
+
+        source = {"factory": factory}
+
+    table = CoefTable(frame, rows="metric", sort_rows=True).card("Summary", **source)
+    values = _resolved_values(table)
+    assert "for-A" in values[0]
+    if mode == "mapping":
+        assert values[1] == ""
+    else:
+        assert "for-B" in values[1]
+    if mode == "factory":
+        assert len(calls) == 2
+        assert all(set(row) == {"metric", "lookup"} for row in calls)
+
+
+@pytest.mark.parametrize("backend", ["pandas", "polars", "pyarrow"])
+def test_mapping_and_factory_nulls_are_backend_neutral(backend: str):
+    make = _MAKERS[backend]
+    frame = make({"metric": ["A", "B"], "lookup": [1.0, None]})
+    keyed = CoefTable(frame, rows="metric").card(
+        "Summary",
+        cards={None: _card("missing")},
+        by="lookup",
+    )
+    assert "missing" in _resolved_values(keyed)[1]
+
+    seen: list[object] = []
+
+    def factory(row: Mapping[str, Any]) -> None:
+        seen.append(row["lookup"])
+        return None
+
+    resolve(CoefTable(frame, rows="metric").card("Summary", factory=factory))
+    assert seen == [1.0, None]
+
+
+def test_mapping_placement_survives_groups_nesting_splits_and_missing_intersections():
+    frame = pl.DataFrame(
+        {
+            "area": ["Core", "Core", "Ops"],
+            "metric": ["Revenue", "Revenue", "Latency"],
+            "variant": ["B", "B", "C"],
+            "method": ["OLS", "DiD", "OLS"],
+        }
+    )
+    cards = {
+        ("Core", "Revenue", "OLS"): _card("core-revenue-ols"),
+        ("Core", "Revenue", "DiD"): _card("core-revenue-did"),
+        ("Ops", "Latency", "OLS"): _card("ops-latency-ols"),
+    }
+    resolved = resolve(
+        CoefTable(
+            frame,
+            rows="metric",
+            nest="variant",
+            groups="area",
+            split_columns="method",
+        ).card("Summary", cards=cards, by=("area", "metric", "method"))
+    )
+    native = nw.from_native(resolved.frame)
+    ols, did = resolved.spanners["OLS"][0], resolved.spanners["DiD"][0]
+    assert "core-revenue-ols" in native[ols].to_list()[0]
+    assert "core-revenue-did" in native[did].to_list()[0]
+    assert "ops-latency-ols" in native[ols].to_list()[1]
+    assert native[did].to_list()[1] == ""
+
+
+def test_card_cells_stay_blank_on_generated_plot_footer_rows():
+    frame = pl.DataFrame(
+        {"metric": ["A"], "estimate": [1.0], "low": [0.5], "high": [1.5]}
+    )
+    resolved = resolve(
+        CoefTable(frame, rows="metric")
+        .estimate("Estimate", "estimate", ci=("low", "high"))
+        .forest("Plot", of="Estimate")
+        .card("Summary", cards=[_card("A")])
+    )
+    values = nw.from_native(resolved.frame)["Summary"].to_list()
+    assert "A" in values[0]
+    assert values[-1] == ""
+    assert resolved.card_columns == ["Summary"]
