@@ -1,3 +1,19 @@
+<a id="v0.10.0"></a>
+# [v0.10.0](https://github.com/kylejcaron/coeftable/releases/tag/v0.10.0) - 2026-08-28
+
+<!-- Release notes generated using configuration in .github/release.yml at v0.10.0 -->
+
+## What's Changed
+### Maintenance
+* Update changelog for v0.9.0 by [@github-actions](https://github.com/github-actions)[bot] in [#52](https://github.com/kylejcaron/coeftable/pull/52)
+* Add causal and staged graph builders by [@kylejcaron](https://github.com/kylejcaron) in [#53](https://github.com/kylejcaron/coeftable/pull/53)
+
+
+**Full Changelog**: https://github.com/kylejcaron/coeftable/compare/v0.9.0...v0.10.0
+
+[Changes][v0.10.0]
+
+
 <a id="v0.9.0"></a>
 # [v0.9.0](https://github.com/kylejcaron/coeftable/releases/tag/v0.9.0) - 2026-08-28
 
@@ -201,6 +217,7 @@
 [Changes][v0.1.0]
 
 
+[v0.10.0]: https://github.com/kylejcaron/coeftable/compare/v0.9.0...v0.10.0
 [v0.9.0]: https://github.com/kylejcaron/coeftable/compare/v0.8.0...v0.9.0
 [v0.8.0]: https://github.com/kylejcaron/coeftable/compare/v0.7.0...v0.8.0
 [v0.7.0]: https://github.com/kylejcaron/coeftable/compare/v0.6.0...v0.7.0
