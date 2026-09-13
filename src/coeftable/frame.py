@@ -11,6 +11,7 @@ import narwhals as nw
 
 from coeftable.grid import AssembledRows, Grid, assemble_rows, build_grid
 from coeftable.spec import (
+    CardColumn,
     Cell,
     CoefTable,
     Column,
@@ -59,6 +60,8 @@ class Resolved:
         Output columns rendering a `Forest` bar or `Sparkline` line plot,
         so the renderer can trim their cell padding to let the SVG fill
         the row.
+    card_columns
+        Output columns containing Card HTML.
     """
 
     frame: Any
@@ -72,6 +75,7 @@ class Resolved:
     shared_axis_rows: list[int] = field(default_factory=list)
     markdown_columns: list[str] = field(default_factory=list)
     plot_columns: list[str] = field(default_factory=list)
+    card_columns: list[str] = field(default_factory=list)
 
 
 def _required_columns(table: CoefTable) -> list[str]:
@@ -185,11 +189,12 @@ def _prepare_columns(
 
 def _build_display_columns(
     table: CoefTable, grid: Grid
-) -> tuple[list[str], dict[str, str], dict[str, list[str]], list[str]]:
+) -> tuple[list[str], dict[str, str], dict[str, list[str]], list[str], list[str]]:
     display_columns: list[str] = []
     labels: dict[str, str] = {}
     spanners: dict[str, list[str]] = {}
     plot_columns: list[str] = []
+    card_columns: list[str] = []
     for split in grid.splits:
         for column in table.columns:
             name = _output_name(column, split)
@@ -199,7 +204,9 @@ def _build_display_columns(
                 spanners.setdefault(str(split), []).append(name)
             if isinstance(column, (Forest, Sparkline)):
                 plot_columns.append(name)
-    return display_columns, labels, spanners, plot_columns
+            if isinstance(column, CardColumn):
+                card_columns.append(name)
+    return display_columns, labels, spanners, plot_columns, card_columns
 
 
 def _compute_cells(
@@ -345,7 +352,9 @@ def resolve(table: CoefTable) -> Resolved:
         has_splits=table.split_columns is not None,
     )
 
-    display_columns, labels, spanners, plot_columns = _build_display_columns(table, grid)
+    display_columns, labels, spanners, plot_columns, card_columns = _build_display_columns(
+        table, grid
+    )
     cell_values = _compute_cells(table, grid, prepared, display_columns)
     column_by_label, prepared_by_label, footer_keys, shared_footer_labels = _build_footer_data(
         table, grid, prepared
@@ -377,4 +386,5 @@ def resolve(table: CoefTable) -> Resolved:
         shared_axis_rows=assembled.shared_axis_rows,
         markdown_columns=markdown,
         plot_columns=plot_columns,
+        card_columns=card_columns,
     )

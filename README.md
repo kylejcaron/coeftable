@@ -495,6 +495,50 @@ and is omitted otherwise). A standalone card collapses to
 its header; inside a `CardGrid` each card's expanded footprint stays
 reserved, so folding never reflows neighbors.
 
+### Cards in table cells
+
+Use `.card(...)` to place prebuilt `Card` objects beside ordinary estimate and
+plot columns. A mapping uses explicit source columns as its identity; missing
+keys render blank. Cards keep their own theme and native fold behavior, so
+folding a Card naturally changes its table row height.
+
+```python
+import polars as pl
+
+import coeftable as ct
+from coeftable.cards import Card, Metric
+
+results = pl.DataFrame(
+    {
+        "metric": ["Revenue", "Latency"],
+        "lift": [3.4, -1.2],
+        "low": [1.2, -4.0],
+        "high": [5.7, 1.6],
+    }
+)
+cards = {
+    "Revenue": Card(
+        "Revenue",
+        content=(Metric(3.4, ct.Percent(signed=True), ci=(1.2, 5.7), ref=0.0),),
+    ),
+    "Latency": Card(
+        "Latency",
+        content=(Metric(-1.2, ct.Percent(signed=True), ci=(-4.0, 1.6), ref=0.0),),
+    ),
+}
+summary = (
+    ct.CoefTable(results, rows="metric")
+    .estimate("Lift", "lift", ci=("low", "high"), fmt=ct.Percent(signed=True))
+    .card("Summary", cards=cards, by="metric")
+)
+summary
+```
+
+A positional sequence may be passed as `cards=[...]` when source-row order is
+the intended identity. For derived Cards, `factory=row_to_card` receives one
+immutable mapping of source-column values per row and executes once per source
+row during each table resolution. Every form accepts `None` for a blank cell.
+
 ## Metric panels
 
 `coeftable.cards` panels put named side-by-side panes in one bordered shell

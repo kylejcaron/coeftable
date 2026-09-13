@@ -6,6 +6,7 @@ import math
 import statistics
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 import narwhals as nw
@@ -17,6 +18,7 @@ from coeftable.annotations import (
     domain_values,
     prepare_annotations,
 )
+from coeftable.cards import Card
 from coeftable.collapsible import make_collapsible
 from coeftable.errors import ColumnNotFoundError, SpecError
 from coeftable.format import (
@@ -653,6 +655,125 @@ class Passthrough:
 
 
 @dataclass(frozen=True)
+class CardColumn:
+    """A table column containing prebuilt Cards or Cards built once from source rows."""
+
+    label: str
+    cards: Sequence[Card | None] | Mapping[object, Card | None] | None = None
+    by: str | tuple[str, ...] | None = None
+    factory: Callable[[Mapping[str, Any]], Card | None] | None = None
+
+    def __post_init__(self) -> None:
+        """Validate and snapshot the selected Card source."""
+        if (self.cards is None) == (self.factory is None):
+            raise SpecError("CardColumn requires exactly one of cards= or factory=")
+
+        if self.factory is not None:
+            if self.by is not None:
+                raise SpecError("CardColumn.by= is only valid with mapping cards=")
+            if not callable(self.factory):
+                raise SpecError("CardColumn.factory must be callable")
+            return
+
+        cards = self.cards
+        if isinstance(cards, Mapping):
+            if isinstance(self.by, str):
+                by = (self.by,)
+            elif isinstance(self.by, tuple):
+                by = self.by
+            else:
+                raise SpecError("CardColumn mapping input requires by=")
+            if not by or any(not isinstance(name, str) or not name for name in by):
+                raise SpecError(
+                    "CardColumn.by= must be a non-empty str or tuple of non-empty strings"
+                )
+            if len(set(by)) != len(by):
+                raise SpecError("CardColumn.by= column names must be unique")
+            snapshot = dict(cards)
+            for key, card in snapshot.items():
+                if card is not None and not isinstance(card, Card):
+                    raise SpecError(f"CardColumn.cards[{key!r}] must be a Card or None")
+            object.__setattr__(self, "cards", MappingProxyType(snapshot))
+            object.__setattr__(self, "by", by)
+            return
+
+        if self.by is not None:
+            raise SpecError("CardColumn.by= is only valid with mapping cards=")
+        if isinstance(cards, (str, bytes)) or not isinstance(cards, Sequence):
+            raise SpecError("CardColumn.cards must be a sequence or mapping")
+        snapshot = tuple(cards)
+        for index, card in enumerate(snapshot):
+            if card is not None and not isinstance(card, Card):
+                raise SpecError(f"CardColumn.cards[{index}] must be a Card or None")
+        object.__setattr__(self, "cards", snapshot)
+
+    def sources(self) -> Iterable[str]:
+        """Return explicit lookup columns used by mapping input."""
+        return self.by or ()
+
+    def prepare(self, scan: Scan) -> Prepared:
+        """Resolve the selected source into one cached Card per source row."""
+        from coeftable.series import _nan_to_none
+
+        count = len(scan.row_keys)
+        cards = self.cards
+        if isinstance(cards, tuple):
+            if len(cards) != count:
+                raise SpecError(
+                    f"CardColumn {self.label!r} expected {count} source rows, got {len(cards)}"
+                )
+            return Prepared(payload=cards)
+
+        if isinstance(cards, Mapping):
+            by = self.by
+            assert isinstance(by, tuple)  # noqa: S101 - canonicalized in __post_init__
+            columns = [_nan_to_none(scan.frame[name].to_list()) for name in by]
+            prepared: list[Card | None] = []
+            for index, values in enumerate(zip(*columns, strict=True)):
+                key: object = values[0] if len(values) == 1 else values
+                try:
+                    card = cards.get(key)
+                except TypeError as exc:
+                    raise SpecError(
+                        f"CardColumn {self.label!r} source row {index} has an unhashable "
+                        f"key for by={by!r}"
+                    ) from exc
+                if card is not None and not isinstance(card, Card):
+                    raise SpecError(f"CardColumn.cards[{key!r}] must be a Card or None")
+                prepared.append(card)
+            return Prepared(payload=tuple(prepared))
+
+        factory = self.factory
+        assert factory is not None  # noqa: S101 - exclusive source validated in __post_init__
+        source = {name: _nan_to_none(scan.frame[name].to_list()) for name in scan.frame.columns}
+        prepared = []
+        for index in range(count):
+            row = MappingProxyType({name: values[index] for name, values in source.items()})
+            try:
+                card = factory(row)
+            except Exception as exc:
+                raise SpecError(
+                    f"CardColumn {self.label!r} factory failed at source row {index}"
+                ) from exc
+            if card is not None and not isinstance(card, Card):
+                raise SpecError(
+                    f"CardColumn {self.label!r} factory returned "
+                    f"{type(card).__name__} at source row {index}; expected Card or None"
+                )
+            prepared.append(card)
+        return Prepared(payload=tuple(prepared))
+
+    def cell(self, ctx: Cell) -> str:
+        """Render one cached Card through its public HTML entry point."""
+        card: Card | None = ctx.prepared.payload[ctx.index]
+        return "" if card is None else card.as_raw_html()
+
+    def footer(self, ctx: Footer) -> str | None:
+        """Card columns have no scheduled footer rows."""
+        return None
+
+
+@dataclass(frozen=True)
 class _SparklineState:
     series: list[list[Series]]
     series_keys: list[Any]
@@ -1167,7 +1288,7 @@ class Sparkline:
         )
 
 
-type Column = Estimate | Forest | Passthrough | Sparkline
+type Column = Estimate | Forest | Passthrough | Sparkline | CardColumn
 
 
 def validate_columns(columns: tuple[Column, ...]) -> None:
@@ -1487,6 +1608,40 @@ class CoefTable:
             A new table with the column appended.
         """
         return self._add(Passthrough(label, column))
+
+    def card(
+        self,
+        label: str,
+        *,
+        cards: Sequence[Card | None] | Mapping[object, Card | None] | None = None,
+        by: str | tuple[str, ...] | None = None,
+        factory: Callable[[Mapping[str, Any]], Card | None] | None = None,
+    ) -> CoefTable:
+        """Append a column of prebuilt Cards or Cards built once from source rows.
+
+        Parameters
+        ----------
+        label
+            Column header.
+        cards
+            Either a sequence aligned to the source-frame row order, or a
+            mapping from source values to Cards. Mapping values absent from
+            the mapping render as blank cells. Each Card keeps its own theme.
+        by
+            Source column used for scalar mapping keys, or a tuple of source
+            columns used for tuple mapping keys. Valid only with mapping
+            `cards`.
+        factory
+            Callable receiving each complete source row as an immutable
+            mapping and returning a Card or `None`. Called exactly once per
+            source row during each resolution.
+
+        Returns
+        -------
+        CoefTable
+            A new table with the column appended.
+        """
+        return self._add(CardColumn(label, cards=cards, by=by, factory=factory))
 
     def sparkline(
         self,

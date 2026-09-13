@@ -195,3 +195,111 @@ def test_repr_html_applies_transform_in_make_page_shape(monkeypatch: pytest.Monk
     uid = match.group(1)
     assert f"#{uid} .ct-group-state" in html
     assert "data-ct-group" in html
+
+
+def test_card_column_gets_exact_cell_presentation_only_on_card_cells():
+    from coeftable.cards import Card
+
+    frame = pl.DataFrame(
+        {
+            "metric": ["A", "A"],
+            "method": ["OLS", "DiD"],
+            "value": [1.0, 2.0],
+            "low": [0.5, 1.5],
+            "high": [1.5, 2.5],
+        }
+    )
+    html = (
+        CoefTable(frame, rows="metric", split_columns="method")
+        .estimate("Estimate", "value", ci=("low", "high"))
+        .card("Summary", cards=[Card("OLS"), Card("DiD")])
+        .gt()
+        .as_raw_html()
+    )
+    cells = re.findall(r"<td(?P<attrs>[^>]*)>(?P<body>.*?)</td>", html, flags=re.DOTALL)
+    card_attrs = [attrs for attrs, body in cells if "<details open" in body]
+    ordinary_attrs = [attrs for attrs, body in cells if "<details open" not in body]
+    assert len(card_attrs) == 2
+    assert ordinary_attrs
+
+    def properties(attrs: str) -> dict[str, str]:
+        style = re.search(r'style="(?P<value>[^"]*)"', attrs)
+        if style is None:
+            return {}
+        return {
+            name.strip(): value.strip()
+            for declaration in style.group("value").split(";")
+            if ":" in declaration
+            for name, value in [declaration.split(":", 1)]
+        }
+
+    expected = {
+        "padding": "8px",
+        "vertical-align": "top",
+        "overflow": "visible",
+    }
+    for attrs in card_attrs:
+        actual = properties(attrs)
+        assert {name: actual.get(name) for name in expected} == expected
+    for attrs in ordinary_attrs:
+        actual = properties(attrs)
+        assert actual.get("padding") != "8px"
+        assert actual.get("vertical-align") != "top"
+        assert actual.get("overflow") != "visible"
+
+
+def test_embedded_card_preserves_its_theme_across_table_entry_points():
+    from coeftable.cards import Card, TextBlock
+    from coeftable.theme import Theme
+
+    card_theme = Theme(text="#123456", surface="#fefefe")
+    card = Card("Card-owned", content=(TextBlock("theme-marker"),), theme=card_theme)
+    embedded = table().with_theme(MONO).card("Summary", cards=[card, None, None, None])
+
+    for html in (embedded.gt().as_raw_html(), embedded.as_raw_html(), embedded._repr_html_()):
+        assert "Card-owned" in html
+        assert "#123456" in html
+        assert "<details open" in html
+
+
+def test_each_public_render_starts_a_fresh_factory_resolution():
+    from collections.abc import Mapping
+    from typing import Any
+
+    from coeftable.cards import Card
+
+    calls: list[Mapping[str, Any]] = []
+
+    def factory(row: Mapping[str, Any]) -> Card:
+        calls.append(row)
+        return Card(str(row["metric"]))
+
+    embedded = CoefTable(
+        pl.DataFrame({"metric": ["A", "B"]}),
+        rows="metric",
+    ).card("Summary", factory=factory)
+
+    embedded.gt()
+    assert len(calls) == 2
+    embedded.as_raw_html()
+    assert len(calls) == 4
+    embedded._repr_html_()
+    assert len(calls) == 6
+
+
+def test_collapsible_groups_compose_with_nested_card_details():
+    from coeftable.cards import Card, Diagnostics
+
+    cards = [Card(str(i), content=(Diagnostics("details", (("n", i),)),)) for i in range(4)]
+    html = (
+        table(groups="area", collapsible_groups=True)
+        .card(
+            "Summary",
+            cards=cards,
+        )
+        .as_raw_html()
+    )
+    assert 'data-ct-group="1"' in html
+    assert html.count("<details open") == 4
+    assert html.count('<details style="position:relative">') == 4
+    assert "CardColumn" not in html

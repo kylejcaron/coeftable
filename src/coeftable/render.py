@@ -126,6 +126,11 @@ def to_gt(table: CoefTable) -> GT:
             style=style.css("padding-top: 2px; padding-bottom: 2px;"),
             locations=loc.body(columns=resolved.plot_columns),
         )
+    if resolved.card_columns:
+        gt = gt.tab_style(
+            style=style.css("padding: 8px; vertical-align: top; overflow: visible;"),
+            locations=loc.body(columns=resolved.card_columns),
+        )
 
     side_border_style = "none" if theme.border_style == "minimal" else "solid"
     return gt.tab_options(
