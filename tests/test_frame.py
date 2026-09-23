@@ -759,3 +759,33 @@ def test_ordered_unique_dedupes_distinct_nan_objects():
     non_nans = [v for v in result if not (isinstance(v, float) and v != v)]
     assert len(nans) == 1
     assert non_nans == [1.0, 2.0]
+
+
+def test_row_and_nest_hostile_html_is_escaped_before_markdown_rendering(data):
+    payload = "seg<img src=x onerror=alert(1)>"
+    hostile = pd.DataFrame(
+        {
+            "area": ["Core", "Core"],
+            "metric": [f"m{payload}", f"m{payload}"],
+            "variant": [payload, "C"],
+            "rel": [3.4, -1.2],
+            "rel_lb": [1.2, -4.0],
+            "rel_ub": [5.7, 1.6],
+        }
+    )
+    out = resolve(base(hostile))
+    frame = nw.from_native(out.frame)
+    escaped = "&lt;img src=x onerror=alert(1)&gt;"
+    assert frame["metric"].to_list()[0] == f"<b>m{escaped}</b>"
+    assert frame["variant"].to_list()[0] == f"seg{escaped}"
+    for value in (*frame["metric"].to_list(), *frame["variant"].to_list()):
+        assert "<img" not in value
+
+
+def test_row_key_ampersand_is_escaped_exactly_once():
+    once = pd.DataFrame(
+        {"metric": ["A&B"], "variant": ["B"], "rel": [1.0], "rel_lb": [0.5], "rel_ub": [1.5]}
+    )
+    out = resolve(base(once))
+    frame = nw.from_native(out.frame)
+    assert frame["metric"].to_list() == ["<b>A&amp;B</b>"]
