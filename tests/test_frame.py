@@ -775,9 +775,9 @@ def test_row_and_nest_hostile_html_is_escaped_before_markdown_rendering(data):
     )
     out = resolve(base(hostile))
     frame = nw.from_native(out.frame)
-    escaped = "&lt;img src=x onerror=alert(1)&gt;"
-    assert frame["metric"].to_list()[0] == f"<b>m{escaped}</b>"
-    assert frame["variant"].to_list()[0] == f"seg{escaped}"
+    escaped_payload = "seg&lt;img src=x onerror=alert(1)&gt;"
+    assert frame["metric"].to_list()[0] == f"<b>m{escaped_payload}</b>"
+    assert frame["variant"].to_list()[0] == escaped_payload
     for value in (*frame["metric"].to_list(), *frame["variant"].to_list()):
         assert "<img" not in value
 

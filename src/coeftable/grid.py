@@ -7,6 +7,7 @@ kind (`Estimate`, `Forest`, `Passthrough`) it is laying out.
 
 from __future__ import annotations
 
+import html
 import math
 from collections.abc import Callable, Set
 from dataclasses import dataclass
@@ -163,6 +164,23 @@ class AssembledRows:
     cells: dict[str, list[str]]
 
 
+def _escape_label(value: Any) -> str:
+    """Entity-escape a row/nest key before it is embedded as markdown source text.
+
+    Applies even inside this module's own `<b>` wrap.
+
+    `fmt_markdown`'s HTML backend otherwise passes a raw `<tag>` straight
+    through as executable markup, and its LaTeX backend otherwise
+    silently drops it. Escaping first forces commonmark to parse the
+    text as an ordinary text node in every render context, not just
+    HTML -- fixing the LaTeX data loss as a side effect, not just the
+    HTML injection. `&`/`<`/`>`/`"`/`'` are the only characters touched,
+    so markdown syntax (`**bold**`, `_italic_`, ...) in the original
+    value still renders as markdown.
+    """
+    return html.escape(str(value), quote=True)
+
+
 def assemble_rows(
     grid: Grid,
     display_columns: list[str],
@@ -247,8 +265,8 @@ def assemble_rows(
             block_index += 1
         if block_index % 2 == 0:
             band_rows.append(len(layout_rows))
-        layout_rows.append(f"<b>{row_key}</b>" if first_of_key else "")
-        layout_nest.append("" if nest_key is None else str(nest_key))
+        layout_rows.append(f"<b>{_escape_label(row_key)}</b>" if first_of_key else "")
+        layout_nest.append("" if nest_key is None else _escape_label(nest_key))
         layout_group.append(group)
         previous_row_key_by_group[group] = row_key
 
