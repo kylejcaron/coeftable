@@ -1,3 +1,19 @@
+<a id="v0.12.1"></a>
+# [v0.12.1](https://github.com/kylejcaron/coeftable/releases/tag/v0.12.1) - 2026-09-24
+
+<!-- Release notes generated using configuration in .github/release.yml at v0.12.1 -->
+
+## What's Changed
+### Maintenance
+* Update changelog for v0.12.0 by [@github-actions](https://github.com/github-actions)[bot] in [#59](https://github.com/kylejcaron/coeftable/pull/59)
+* Escape row and nest labels before markdown rendering by [@kylejcaron](https://github.com/kylejcaron) in [#60](https://github.com/kylejcaron/coeftable/pull/60)
+
+
+**Full Changelog**: https://github.com/kylejcaron/coeftable/compare/v0.12.0...v0.12.1
+
+[Changes][v0.12.1]
+
+
 <a id="v0.12.0"></a>
 # [v0.12.0](https://github.com/kylejcaron/coeftable/releases/tag/v0.12.0) - 2026-09-13
 
@@ -250,6 +266,7 @@
 [Changes][v0.1.0]
 
 
+[v0.12.1]: https://github.com/kylejcaron/coeftable/compare/v0.12.0...v0.12.1
 [v0.12.0]: https://github.com/kylejcaron/coeftable/compare/v0.11.0...v0.12.0
 [v0.11.0]: https://github.com/kylejcaron/coeftable/compare/v0.10.0...v0.11.0
 [v0.10.0]: https://github.com/kylejcaron/coeftable/compare/v0.9.0...v0.10.0
