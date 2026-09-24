@@ -24,6 +24,16 @@ def table(**kwargs):
     )
 
 
+def table_data_with(metric: str, variant: str):
+    return pl.DataFrame(
+        {
+            **RAW,
+            "metric": [metric, "Revenue", "Latency", "Latency"],
+            "variant": [variant, "C", "B", "C"],
+        }
+    )
+
+
 def test_gt_returns_a_great_tables_object():
     assert isinstance(table().gt(), GT)
 
@@ -303,3 +313,44 @@ def test_collapsible_groups_compose_with_nested_card_details():
     assert html.count("<details open") == 4
     assert html.count('<details style="position:relative">') == 4
     assert "CardColumn" not in html
+
+
+def test_hostile_row_and_nest_labels_render_with_no_raw_tag_in_html():
+    payload = "seg<img src=x onerror=alert(1)>"
+    hostile = table_data_with(metric=f"m{payload}", variant=payload)
+    html = (
+        CoefTable(hostile, rows="metric", nest="variant")
+        .estimate("Lift %", "rel", ci=("rel_lb", "rel_ub"))
+        .gt()
+        .as_raw_html()
+    )
+    assert "<img src=x onerror=alert(1)>" not in html
+    assert "&lt;img src=x onerror=alert(1)&gt;" in html
+
+
+def test_hostile_row_and_nest_labels_render_literally_in_latex():
+    import warnings
+
+    payload = "seg<img src=x onerror=alert(1)>"
+    hostile = table_data_with(metric=f"m{payload}", variant=payload)
+    gt = (
+        CoefTable(hostile, rows="metric", nest="variant")
+        .estimate("Lift %", "rel", ci=("rel_lb", "rel_ub"))
+        .gt()
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        latex = gt.as_latex()
+    assert "img src=x onerror=alert(1)" in latex
+    assert "<img" not in latex
+
+
+def test_markdown_bold_syntax_in_a_row_label_still_bolds():
+    hostile = table_data_with(metric="**Revenue**", variant="B")
+    html = (
+        CoefTable(hostile, rows="metric", nest="variant")
+        .estimate("Lift %", "rel", ci=("rel_lb", "rel_ub"))
+        .gt()
+        .as_raw_html()
+    )
+    assert "<strong>Revenue</strong>" in html or "<b>Revenue</b>" in html
