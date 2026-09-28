@@ -1,3 +1,19 @@
+<a id="v0.13.0"></a>
+# [v0.13.0](https://github.com/kylejcaron/coeftable/releases/tag/v0.13.0) - 2026-09-28
+
+<!-- Release notes generated using configuration in .github/release.yml at v0.13.0 -->
+
+## What's Changed
+### Maintenance
+* Update changelog for v0.12.1 by [@github-actions](https://github.com/github-actions)[bot] in [#61](https://github.com/kylejcaron/coeftable/pull/61)
+* Add visible y-axes to sparkline surfaces by [@kylejcaron](https://github.com/kylejcaron) in [#62](https://github.com/kylejcaron/coeftable/pull/62)
+
+
+**Full Changelog**: https://github.com/kylejcaron/coeftable/compare/v0.12.1...v0.13.0
+
+[Changes][v0.13.0]
+
+
 <a id="v0.12.1"></a>
 # [v0.12.1](https://github.com/kylejcaron/coeftable/releases/tag/v0.12.1) - 2026-09-24
 
@@ -266,6 +282,7 @@
 [Changes][v0.1.0]
 
 
+[v0.13.0]: https://github.com/kylejcaron/coeftable/compare/v0.12.1...v0.13.0
 [v0.12.1]: https://github.com/kylejcaron/coeftable/compare/v0.12.0...v0.12.1
 [v0.12.0]: https://github.com/kylejcaron/coeftable/compare/v0.11.0...v0.12.0
 [v0.11.0]: https://github.com/kylejcaron/coeftable/compare/v0.10.0...v0.11.0
