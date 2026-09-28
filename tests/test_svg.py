@@ -1718,6 +1718,44 @@ def test_sparkline_axis_ticks_align_with_sparkline_bar_points():
     assert bar_xs[-1] in tick_xs
 
 
+def test_sparkline_axis_ticks_align_with_standalone_y_axis_sparkline():
+    x = [0.0, 1.0, 2.0]
+    y_axis_fmt = Number(decimals=0)
+    bar_svg = sparkline_bar(
+        x,
+        [0.0, 5.0, 10.0],
+        [None, None, None],
+        [None, None, None],
+        x_domain=(0.0, 2.0),
+        domain=(0.0, 10.0),
+        ref=0.0,
+        color="#000",
+        fmt=Number(decimals=1),
+        show_y_axis=True,
+        y_axis_fmt=y_axis_fmt,
+        show_endpoint=False,
+    )
+    line = re.search(r'<polyline points="([^"]+)"', bar_svg)
+    assert line
+    bar_xs = [float(pair.split(",")[0]) for pair in line.group(1).split(" ")]
+
+    axis_svg = sparkline_axis(
+        x_domain=(0.0, 2.0),
+        fmt=Number(decimals=0),
+        theme=DEFAULT,
+        show_endpoint=False,
+        y_axis_domain=(0.0, 10.0),
+        y_axis_fmt=y_axis_fmt,
+    )
+    tick_xs = [
+        float(value)
+        for value in re.findall(r'<line x1="([-\d.]+)" y1="4.00" x2="[-\d.]+" y2="7.00"', axis_svg)
+    ]
+
+    assert bar_xs[0] in tick_xs
+    assert bar_xs[-1] in tick_xs
+
+
 def test_sparkline_axis_numeric_domain_matches_forest_axis_tick_positions():
     domain = (0.0, 10.0)
     forest_svg = forest_axis(domain=domain, ref=0.0, fmt=Number(decimals=0), theme=DEFAULT)

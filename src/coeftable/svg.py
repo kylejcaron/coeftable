@@ -1446,10 +1446,10 @@ def sparkline_multi(
         this off, when traces crowd near the same value.
     endpoint_width
         Fixed pixel reserve carved out of `width` for endpoint labels,
-        independent of any label's length. `sparkline_axis` must be given
-        the same `width`, `inset`, `show_endpoint` and `endpoint_width`
-        so its ticks project over the identical inner width and land
-        under their points.
+        independent of any label's length. Give `sparkline_axis` the same
+        `width`, `inset`, `show_endpoint` and `endpoint_width`; when
+        `show_y_axis` is enabled, also give it this plot's `domain` as
+        `y_axis_domain` and the effective `y_axis_fmt`.
     show_clip_indicators
         Draw the clip-cap marks. The line/ribbon clipping and the ghost
         trace happen regardless of this flag -- turning it off only
@@ -1708,10 +1708,10 @@ def sparkline_bar(
         Draw the endpoint value label.
     endpoint_width
         Fixed pixel reserve carved out of `width` for the endpoint label,
-        independent of the formatted label's length. `sparkline_axis` must
-        be given the same `width`, `inset`, `show_endpoint` and
-        `endpoint_width` so its ticks project over the identical inner width
-        and land under their points.
+        independent of the formatted label's length. Give `sparkline_axis`
+        the same `width`, `inset`, `show_endpoint` and `endpoint_width`; when
+        `show_y_axis` is enabled, also give it this plot's `domain` as
+        `y_axis_domain` and the effective `y_axis_fmt`.
     show_clip_indicators
         Draw the clip-cap marks described above. The line/ribbon clipping
         and the ghost trace happen regardless of this flag -- turning it
@@ -1827,6 +1827,8 @@ def sparkline_axis(
     target_ticks: int = 4,
     show_endpoint: bool = True,
     endpoint_width: int = 44,
+    y_axis_domain: tuple[float, float] | None = None,
+    y_axis_fmt: Format | None = None,
     _x_gutter: float = 0.0,
     legend: Sequence[tuple[str, str]] | None = None,
 ) -> str:
@@ -1861,8 +1863,12 @@ def sparkline_axis(
         Approximate number of ticks wanted.
     show_endpoint, endpoint_width
         Must be given the same values passed to `sparkline_bar` for the same
-        rows: both carve the same fixed reserve out of `width` so ticks
-        project over the identical inner width and land under their points.
+        rows: both carve the same fixed reserve out of `width`.
+    y_axis_domain, y_axis_fmt
+        To align with a standalone `sparkline_bar` or `sparkline_multi` whose
+        y-axis is enabled, pass the plot's `domain` and effective `y_axis_fmt`.
+        The footer then reserves the same label gutter and projects its ticks
+        directly beneath the plot's points. Both values are required together.
     legend
         `(label, color)` pairs for a series-overlay column, drawn as a
         swatch+label chip row above the axis spine; `height` grows by the
@@ -1877,14 +1883,21 @@ def sparkline_axis(
         A complete ``<svg>`` element.
     """
     low, high = x_domain
+    if (y_axis_domain is None) != (y_axis_fmt is None):
+        raise SpecError("sparkline_axis y_axis_domain and y_axis_fmt must be provided together.")
+    x_gutter = (
+        _sparkline_y_axis_gutter((y_axis_domain,), y_axis_fmt)
+        if y_axis_domain is not None and y_axis_fmt is not None
+        else _x_gutter
+    )
     plot_width = width - endpoint_width if show_endpoint else width
-    project_inner = _projector(x_domain, plot_width - _x_gutter, inset)
+    project_inner = _projector(x_domain, plot_width - x_gutter, inset)
 
     def project(value: float) -> float:
-        return _x_gutter + project_inner(value)
+        return x_gutter + project_inner(value)
 
     baseline = 4.0
-    baseline_start = inset if _x_gutter == 0.0 else _x_gutter + inset
+    baseline_start = inset if x_gutter == 0.0 else x_gutter + inset
     parts = [
         f'<line x1="{baseline_start}" y1="{baseline:.2f}" '
         f'x2="{plot_width - inset}" y2="{baseline:.2f}" '
