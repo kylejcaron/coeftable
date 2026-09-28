@@ -1,11 +1,12 @@
 import re
 from datetime import UTC, datetime, timedelta
 from itertools import pairwise
-from typing import Literal
+from typing import Any, Literal
 
 import pytest
 
 from coeftable.annotations import ResolvedBand, ResolvedRule
+from coeftable.errors import SpecError
 from coeftable.format import DateAxis, Number
 from coeftable.svg import (
     _CALENDAR_TICK_FLOOR,
@@ -33,6 +34,85 @@ from coeftable.svg import (
     sparkline_multi,
 )
 from coeftable.theme import DEFAULT, Theme
+
+
+def _basic_sparkline(**kwargs: Any) -> str:
+    fmt = kwargs.pop("fmt", Number(decimals=0))
+    kwargs.setdefault("show_endpoint", False)
+    return sparkline_bar(
+        [0.0, 1.0, 2.0],
+        [0.0, 5.0, 10.0],
+        [None, None, None],
+        [None, None, None],
+        x_domain=(0.0, 2.0),
+        domain=(0.0, 10.0),
+        ref=5.0,
+        color="#1783a1",
+        fmt=fmt,
+        theme=DEFAULT,
+        **kwargs,
+    )
+
+
+def test_sparkline_y_axis_is_opt_in_and_disabled_output_is_unchanged():
+    assert _basic_sparkline() == _basic_sparkline(show_y_axis=False)
+
+
+def test_sparkline_y_axis_renders_quiet_horizontal_guides_before_reference_and_series():
+    svg = _basic_sparkline(
+        show_y_axis=True,
+        y_axis_fmt=lambda value: f"Y{value:.0f}",
+    )
+
+    labels = re.findall(r'<text[^>]*text-anchor="end">([^<]+)</text>', svg)
+    guides = re.findall(
+        r'<line x1="([0-9.]+)" y1="([0-9.]+)" x2="([0-9.]+)" '
+        r'y2="([0-9.]+)"[^>]*stroke-opacity="0.22"',
+        svg,
+    )
+    assert labels == ["Y0", "Y5", "Y10"]
+    assert guides and all(y1 == y2 for _x1, y1, _x2, y2 in guides)
+    assert svg.index('stroke-opacity="0.22"') < svg.index('stroke-dasharray="2,2"')
+    assert svg.index('stroke-dasharray="2,2"') < svg.index("<polyline")
+
+
+def test_sparkline_y_axis_formatter_is_independent_of_endpoint_formatter():
+    svg = _basic_sparkline(
+        show_endpoint=True,
+        show_y_axis=True,
+        fmt=lambda value: f"END:{value:.0f}",
+        y_axis_fmt=lambda value: f"AXIS:{value:.0f}",
+    )
+    texts = re.findall(r"<text[^>]*>([^<]+)</text>", svg)
+    assert texts[-1] == "END:10"
+    assert "AXIS:10" in texts
+
+
+def test_empty_sparkline_does_not_render_an_orphaned_y_axis():
+    svg = sparkline_bar(
+        [0.0],
+        [None],
+        [None],
+        [None],
+        x_domain=(0.0, 1.0),
+        domain=(0.0, 1.0),
+        ref=0.0,
+        color="#1783a1",
+        fmt=Number(),
+        show_y_axis=True,
+        theme=DEFAULT,
+    )
+    assert "<text" not in svg
+    assert 'stroke-opacity="0.22"' not in svg
+
+
+def test_sparkline_y_axis_rejects_labels_that_consume_the_plot_span():
+    with pytest.raises(SpecError, match="compact y_axis_fmt or increase width"):
+        _basic_sparkline(
+            width=50,
+            show_y_axis=True,
+            y_axis_fmt=lambda value: f"very-long-axis-label-{value}",
+        )
 
 
 def _rule(

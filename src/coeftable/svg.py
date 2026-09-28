@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import html
 import math
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from itertools import pairwise
 from typing import NamedTuple
 
 from coeftable.annotations import Layer, ResolvedAnnotation, ResolvedRule
+from coeftable.errors import SpecError
 from coeftable.format import _MONTH_ABBR, CalendarStep, DateAxis, Format, TimeFormat, is_missing
 from coeftable.theme import DEFAULT, Theme
 
@@ -20,6 +21,11 @@ _TICK_STEPS = (1.0, 2.0, 2.5, 5.0, 10.0)
 # SVGs render in. Approximate by design: it only needs to be good enough to
 # decide whether a label would overrun a boundary, never to lay text out.
 _CHAR_WIDTH_RATIO = 0.6
+
+_Y_AXIS_TARGET_TICKS = 3
+_Y_AXIS_FONT_SIZE = 9.0
+_Y_AXIS_LABEL_GAP = 6.0
+_Y_AXIS_GUIDE_OPACITY = 0.22
 
 
 def nice_ticks(low: float, high: float, target: int = 4) -> list[float]:
@@ -210,7 +216,7 @@ def calendar_ticks(low: float, high: float, target: int = 4) -> list[float]:
     return _rung_ticks(low, high, _select_calendar_rung(low, high, target))
 
 
-def _projector(domain: tuple[float, float], width: int, inset: int):
+def _projector(domain: tuple[float, float], width: float, inset: int):
     low, high = domain
     span = high - low
     if span <= 0:
@@ -1323,6 +1329,51 @@ class Trace(NamedTuple):
     label: str
 
 
+def _sparkline_y_ticks(domain: tuple[float, float], fmt: Format) -> tuple[list[float], list[str]]:
+    ticks = nice_ticks(*domain, target=_Y_AXIS_TARGET_TICKS)
+    labels = _dedupe_consecutive_labels([fmt(tick) for tick in ticks])
+    return ticks, labels
+
+
+def _sparkline_y_axis_gutter(domains: Iterable[tuple[float, float]], fmt: Format) -> float:
+    """Return the left reserve needed by the widest formatted y tick."""
+    widths = [
+        len(label) * _Y_AXIS_FONT_SIZE * _CHAR_WIDTH_RATIO
+        for domain in domains
+        for label in _sparkline_y_ticks(domain, fmt)[1]
+        if label
+    ]
+    return (max(widths) + _Y_AXIS_LABEL_GAP) if widths else 0.0
+
+
+def _sparkline_y_axis_fragments(
+    domain: tuple[float, float],
+    fmt: Format,
+    *,
+    gutter: float,
+    left: float,
+    right: float,
+    project_y: Callable[[float], float],
+    theme: Theme,
+) -> list[str]:
+    ticks, labels = _sparkline_y_ticks(domain, fmt)
+    label_x = gutter - _Y_AXIS_LABEL_GAP
+    parts: list[str] = []
+    for tick, label in zip(ticks, labels, strict=True):
+        y = project_y(tick)
+        parts.append(
+            f'<line x1="{left:.2f}" y1="{y:.2f}" x2="{right:.2f}" y2="{y:.2f}" '
+            f'stroke="{_attr(theme.axis)}" stroke-width="0.75" '
+            f'stroke-opacity="{_Y_AXIS_GUIDE_OPACITY}"/>'
+        )
+        if label:
+            parts.append(
+                f'<text x="{label_x:.2f}" y="{y + 3:.2f}" fill="{_attr(theme.axis)}" '
+                f'font-size="{_Y_AXIS_FONT_SIZE:g}" text-anchor="end">{_esc(label)}</text>'
+            )
+    return parts
+
+
 def sparkline_multi(
     traces: Sequence[Trace],
     *,
@@ -1331,6 +1382,9 @@ def sparkline_multi(
     ref: float | None,
     ref_color: str,
     fmt: Format,
+    show_y_axis: bool = False,
+    y_axis_fmt: Format | None = None,
+    _y_axis_gutter: float | None = None,
     width: int = 220,
     height: int = 30,
     inset: int = 3,
@@ -1404,19 +1458,6 @@ def sparkline_multi(
     str
         A complete ``<svg>`` element.
     """
-    low, high = domain
-    right_edge = width - inset
-    plot_width = width - endpoint_width if show_endpoint else width
-    project_x = _projector(x_domain, plot_width, inset)
-    project_up = _projector(domain, height, inset)
-
-    def project_y(value: float) -> float:
-        return height - project_up(value)
-
-    top_edge = project_y(high)
-    bottom_edge = project_y(low)
-    clip_id = _hard_clip_id(width, top_edge, bottom_edge)
-
     per_trace = [
         (
             trace,
@@ -1427,6 +1468,57 @@ def sparkline_multi(
     ]
     any_runs = any(band_runs or line_runs for _, band_runs, line_runs in per_trace)
 
+    effective_y_fmt = y_axis_fmt or fmt
+    y_gutter = 0.0
+    if show_y_axis and any_runs:
+        required_gutter = _sparkline_y_axis_gutter((domain,), effective_y_fmt)
+        y_gutter = required_gutter if _y_axis_gutter is None else _y_axis_gutter
+        if y_gutter < required_gutter:
+            raise SpecError(
+                "Sparkline shared y-axis gutter is narrower than its formatted labels: "
+                f"required {required_gutter:.2f}px, got {y_gutter:.2f}px."
+            )
+
+    low, high = domain
+    right_edge = width - inset
+    plot_width = width - endpoint_width if show_endpoint else width
+    horizontal_span = plot_width - y_gutter - 2 * inset
+    if horizontal_span < 1:
+        raise SpecError(
+            "Sparkline horizontal projection span must be at least 1 pixel: "
+            f"width ({width}) - endpoint_width "
+            f"({endpoint_width if show_endpoint else 0}) - y_axis_gutter "
+            f"({y_gutter:.2f}) - 2*inset ({2 * inset}) = {horizontal_span:.2f}; "
+            "use a compact y_axis_fmt or increase width."
+        )
+    inner_project_x = _projector(x_domain, plot_width - y_gutter, inset)
+
+    def project_x(value: float) -> float:
+        return y_gutter + inner_project_x(value)
+
+    project_up = _projector(domain, height, inset)
+
+    def project_y(value: float) -> float:
+        return height - project_up(value)
+
+    top_edge = project_y(high)
+    bottom_edge = project_y(low)
+    clip_id = _hard_clip_id(width, top_edge, bottom_edge)
+    left_edge = y_gutter + inset
+    plot_right = plot_width - inset
+    y_axis_parts = (
+        _sparkline_y_axis_fragments(
+            domain,
+            effective_y_fmt,
+            gutter=y_gutter,
+            left=left_edge,
+            right=plot_right,
+            project_y=project_y,
+            theme=theme,
+        )
+        if show_y_axis and any_runs
+        else []
+    )
     ghost_parts: list[str] = []
     parts: list[str] = []
     trace_spans: list[list[tuple[float, float, str]]] = [[] for _ in per_trace]
@@ -1448,8 +1540,9 @@ def sparkline_multi(
 
     if ref is not None and any_runs and low <= ref <= high:
         ref_y = project_y(ref)
+        ref_start = left_edge if y_gutter else inset
         parts.append(
-            f'<line x1="{inset}" y1="{ref_y:.2f}" x2="{right_edge}" y2="{ref_y:.2f}" '
+            f'<line x1="{ref_start}" y1="{ref_y:.2f}" x2="{right_edge}" y2="{ref_y:.2f}" '
             f'stroke="{_attr(ref_color)}" stroke-width="1" stroke-dasharray="2,2"/>'
         )
 
@@ -1490,7 +1583,7 @@ def sparkline_multi(
                         f'stroke="{_attr(trace.color)}" stroke-width="0.5" stroke-opacity="0.45"/>'
                     )
 
-    body = ghost_parts + parts + cap_parts
+    body = y_axis_parts + ghost_parts + parts + cap_parts
     if any(spans for spans in trace_spans):
         body.insert(
             0,
@@ -1503,7 +1596,7 @@ def sparkline_multi(
             y_domain=domain,
             project_x=project_x,
             project_y=project_y,
-            left=inset,
+            left=left_edge,
             right=plot_width - inset,
             top=top_edge,
             bottom=bottom_edge,
@@ -1527,6 +1620,9 @@ def sparkline_bar(
     ref: float | None,
     color: str,
     fmt: Format,
+    show_y_axis: bool = False,
+    y_axis_fmt: Format | None = None,
+    _y_axis_gutter: float | None = None,
     width: int = 220,
     height: int = 30,
     inset: int = 3,
@@ -1625,6 +1721,9 @@ def sparkline_bar(
         ref=ref,
         ref_color=color,
         fmt=fmt,
+        show_y_axis=show_y_axis,
+        y_axis_fmt=y_axis_fmt,
+        _y_axis_gutter=_y_axis_gutter,
         width=width,
         height=height,
         inset=inset,
