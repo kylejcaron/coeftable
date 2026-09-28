@@ -406,6 +406,28 @@ def test_trend_spine_alignment_endpoint_reserve_and_visibility():
             assert "<text" not in spark.svg
 
 
+def test_trend_y_axis_keeps_x_footer_aligned_with_plot():
+    spark, axis = Trend(
+        lower=LO,
+        upper=HI,
+        show_y_axis=True,
+        y_axis_fmt=lambda value: f"Y:{value:.1f}",
+        endpoint_width=60,
+        inset=5,
+        **TREND_KW,
+    ).resolve(**RESOLVE_KW)
+    plot = re.search(r'<polyline[^>]*points="([^"]+)"', spark.svg)
+    assert plot is not None
+    point_xs = [float(point.split(",", 1)[0]) for point in plot.group(1).split()]
+    tick_xs = [
+        float(value)
+        for value in re.findall(r'<line x1="([0-9.]+)" y1="[0-9.]+" x2="\1"', axis.svg)
+    ]
+    assert point_xs and tick_xs
+    assert min(tick_xs) == pytest.approx(point_xs[0])
+    assert max(tick_xs) == pytest.approx(point_xs[-1])
+
+
 def test_trend_axis_fmt_height_and_inset_are_forwarded():
     spark, axis = Trend(
         lower=LO,

@@ -530,9 +530,9 @@ class Trend(Region):
             temporal=self.temporal,
             width=width,
             height=self.axis_height,
-            inset=self.inset,
+            inset=cast(int, self.inset + y_axis_gutter),
             show_endpoint=self.show_endpoint,
-            endpoint_width=self.endpoint_width,
+            endpoint_width=cast(int, self.endpoint_width - y_axis_gutter),
         )
         axis = InlineSvg(axis_svg, width=width, height=_svg_height(axis_svg, name="Trend axis"))
         return (spark, axis)

@@ -385,6 +385,10 @@ alignment. `show_axis` and `axis_fmt` still control the shared x footer.
 `sparkline_bar`, `sparkline_multi`, and `cards.Trend` expose the same opt-in
 behavior.
 
+Empty behavior is deliberate: empty table cells remain blank with no orphan
+y-axis; standalone renderers suppress labels and guides when no trace is
+drawable; `cards.Trend` rejects empty or all-missing data.
+
 
 **Forest plots take `autoscale` too.** A single extreme interval (say a
 +3000% lift among sub-1% metrics) otherwise stretches the shared domain
