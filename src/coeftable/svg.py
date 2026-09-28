@@ -1361,7 +1361,10 @@ def _sparkline_y_axis_fragments(
     parts: list[str] = []
     for tick, label in zip(ticks, labels, strict=True):
         guide_y = project_y(tick)
-        label_y = min(guide_y, project_y(domain[0]) - 4.0)
+        label_baseline = max(
+            _Y_AXIS_FONT_SIZE,
+            min(guide_y + 3.0, project_y(domain[0]) - 1.0),
+        )
         parts.append(
             f'<line x1="{left:.2f}" y1="{guide_y:.2f}" x2="{right:.2f}" y2="{guide_y:.2f}" '
             f'stroke="{_attr(theme.axis)}" stroke-width="0.75" '
@@ -1369,7 +1372,7 @@ def _sparkline_y_axis_fragments(
         )
         if label:
             parts.append(
-                f'<text x="{label_x:.2f}" y="{label_y + 3:.2f}" fill="{_attr(theme.axis)}" '
+                f'<text x="{label_x:.2f}" y="{label_baseline:.2f}" fill="{_attr(theme.axis)}" '
                 f'font-size="{_Y_AXIS_FONT_SIZE:g}" text-anchor="end">{_esc(label)}</text>'
             )
     return parts
@@ -1891,6 +1894,15 @@ def sparkline_axis(
         else _x_gutter
     )
     plot_width = width - endpoint_width if show_endpoint else width
+    horizontal_span = plot_width - x_gutter - 2 * inset
+    if x_gutter > 0.0 and horizontal_span < 1:
+        raise SpecError(
+            "Sparkline horizontal projection span must be at least 1 pixel: "
+            f"width ({width}) - endpoint_width "
+            f"({endpoint_width if show_endpoint else 0}) - y_axis_gutter "
+            f"({x_gutter:.2f}) - 2*inset ({2 * inset}) = {horizontal_span:.2f}; "
+            "use a compact y_axis_fmt or increase width."
+        )
     project_inner = _projector(x_domain, plot_width - x_gutter, inset)
 
     def project(value: float) -> float:

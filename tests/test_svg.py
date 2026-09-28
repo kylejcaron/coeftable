@@ -116,6 +116,19 @@ def test_sparkline_y_axis_rejects_labels_that_consume_the_plot_span():
         )
 
 
+def test_sparkline_axis_rejects_y_axis_gutter_that_consumes_plot_span():
+    with pytest.raises(SpecError, match="compact y_axis_fmt or increase width"):
+        sparkline_axis(
+            x_domain=(0.0, 2.0),
+            fmt=Number(decimals=0),
+            theme=DEFAULT,
+            width=50,
+            show_endpoint=False,
+            y_axis_domain=(0.0, 10.0),
+            y_axis_fmt=lambda value: f"very-long-axis-label-{value}",
+        )
+
+
 def test_sparkline_y_axis_disabled_keeps_narrow_width_compatible():
     svg = _basic_sparkline(width=50, show_endpoint=True, show_y_axis=False)
     assert svg.startswith('<svg width="50" height="30"')
@@ -149,6 +162,26 @@ def test_sparkline_y_axis_labels_fit_inside_viewport_at_bottom_tick():
     labels = re.findall(r'<text[^>]*y="([0-9.]+)"[^>]*>([^<]+)</text>', svg)
     assert labels
     assert all(float(y) <= 26.0 for y, _label in labels)
+
+
+def test_sparkline_y_axis_labels_fit_inside_viewport_at_top_tick():
+    svg = _basic_sparkline(
+        show_y_axis=True,
+        show_endpoint=False,
+        y_axis_fmt=lambda value: f"{value:g} kg",
+    )
+    labels = {
+        label: float(y)
+        for y, label in re.findall(r'<text[^>]*y="([0-9.]+)"[^>]*>([^<]+)</text>', svg)
+    }
+    guide = re.search(
+        r'<line x1="[^"]+" y1="([0-9.]+)" x2="[^"]+" y2="\1"[^>]*stroke-opacity="0.22"'
+        r"/><text[^>]*>10 kg</text>",
+        svg,
+    )
+    assert guide
+    assert float(guide.group(1)) == 3.0
+    assert labels["10 kg"] >= 9.0
 
 
 def _rule(
