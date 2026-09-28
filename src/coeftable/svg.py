@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import html
 import math
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from itertools import pairwise
 from typing import NamedTuple
 
 from coeftable.annotations import Layer, ResolvedAnnotation, ResolvedRule
+from coeftable.errors import SpecError
 from coeftable.format import _MONTH_ABBR, CalendarStep, DateAxis, Format, TimeFormat, is_missing
 from coeftable.theme import DEFAULT, Theme
 
@@ -20,6 +21,11 @@ _TICK_STEPS = (1.0, 2.0, 2.5, 5.0, 10.0)
 # SVGs render in. Approximate by design: it only needs to be good enough to
 # decide whether a label would overrun a boundary, never to lay text out.
 _CHAR_WIDTH_RATIO = 0.6
+
+_Y_AXIS_TARGET_TICKS = 3
+_Y_AXIS_FONT_SIZE = 9.0
+_Y_AXIS_LABEL_GAP = 6.0
+_Y_AXIS_GUIDE_OPACITY = 0.22
 
 
 def nice_ticks(low: float, high: float, target: int = 4) -> list[float]:
@@ -210,7 +216,7 @@ def calendar_ticks(low: float, high: float, target: int = 4) -> list[float]:
     return _rung_ticks(low, high, _select_calendar_rung(low, high, target))
 
 
-def _projector(domain: tuple[float, float], width: int, inset: int):
+def _projector(domain: tuple[float, float], width: float, inset: int):
     low, high = domain
     span = high - low
     if span <= 0:
@@ -1323,6 +1329,55 @@ class Trace(NamedTuple):
     label: str
 
 
+def _sparkline_y_ticks(domain: tuple[float, float], fmt: Format) -> tuple[list[float], list[str]]:
+    ticks = nice_ticks(*domain, target=_Y_AXIS_TARGET_TICKS)
+    labels = _dedupe_consecutive_labels([fmt(tick) for tick in ticks])
+    return ticks, labels
+
+
+def _sparkline_y_axis_gutter(domains: Iterable[tuple[float, float]], fmt: Format) -> float:
+    """Return the left reserve needed by the widest formatted y tick."""
+    widths = [
+        len(label) * _Y_AXIS_FONT_SIZE * _CHAR_WIDTH_RATIO
+        for domain in domains
+        for label in _sparkline_y_ticks(domain, fmt)[1]
+        if label
+    ]
+    return (max(widths) + _Y_AXIS_LABEL_GAP) if widths else 0.0
+
+
+def _sparkline_y_axis_fragments(
+    domain: tuple[float, float],
+    fmt: Format,
+    *,
+    gutter: float,
+    left: float,
+    right: float,
+    project_y: Callable[[float], float],
+    theme: Theme,
+) -> list[str]:
+    ticks, labels = _sparkline_y_ticks(domain, fmt)
+    label_x = gutter - _Y_AXIS_LABEL_GAP
+    parts: list[str] = []
+    for tick, label in zip(ticks, labels, strict=True):
+        guide_y = project_y(tick)
+        label_baseline = max(
+            _Y_AXIS_FONT_SIZE,
+            min(guide_y + 3.0, project_y(domain[0]) - 1.0),
+        )
+        parts.append(
+            f'<line x1="{left:.2f}" y1="{guide_y:.2f}" x2="{right:.2f}" y2="{guide_y:.2f}" '
+            f'stroke="{_attr(theme.axis)}" stroke-width="0.75" '
+            f'stroke-opacity="{_Y_AXIS_GUIDE_OPACITY}"/>'
+        )
+        if label:
+            parts.append(
+                f'<text x="{label_x:.2f}" y="{label_baseline:.2f}" fill="{_attr(theme.axis)}" '
+                f'font-size="{_Y_AXIS_FONT_SIZE:g}" text-anchor="end">{_esc(label)}</text>'
+            )
+    return parts
+
+
 def sparkline_multi(
     traces: Sequence[Trace],
     *,
@@ -1331,6 +1386,9 @@ def sparkline_multi(
     ref: float | None,
     ref_color: str,
     fmt: Format,
+    show_y_axis: bool = False,
+    y_axis_fmt: Format | None = None,
+    _y_axis_gutter: float | None = None,
     width: int = 220,
     height: int = 30,
     inset: int = 3,
@@ -1373,6 +1431,12 @@ def sparkline_multi(
         Colour of the single shared reference line.
     fmt
         Formats each trace's endpoint value label.
+    show_y_axis
+        Enable the quiet in-cell value scale.
+    y_axis_fmt
+        Formats y-axis tick labels independently; defaults to `fmt`.
+    _y_axis_gutter
+        Private reserve override for aligned composite callers.
     width, height, inset
         Geometry in pixels.
     show_endpoint
@@ -1385,10 +1449,10 @@ def sparkline_multi(
         this off, when traces crowd near the same value.
     endpoint_width
         Fixed pixel reserve carved out of `width` for endpoint labels,
-        independent of any label's length. `sparkline_axis` must be given
-        the same `width`, `inset`, `show_endpoint` and `endpoint_width`
-        so its ticks project over the identical inner width and land
-        under their points.
+        independent of any label's length. Give `sparkline_axis` the same
+        `width`, `inset`, `show_endpoint` and `endpoint_width`; when
+        `show_y_axis` is enabled, also give it this plot's `domain` as
+        `y_axis_domain` and the effective `y_axis_fmt`.
     show_clip_indicators
         Draw the clip-cap marks. The line/ribbon clipping and the ghost
         trace happen regardless of this flag -- turning it off only
@@ -1404,19 +1468,6 @@ def sparkline_multi(
     str
         A complete ``<svg>`` element.
     """
-    low, high = domain
-    right_edge = width - inset
-    plot_width = width - endpoint_width if show_endpoint else width
-    project_x = _projector(x_domain, plot_width, inset)
-    project_up = _projector(domain, height, inset)
-
-    def project_y(value: float) -> float:
-        return height - project_up(value)
-
-    top_edge = project_y(high)
-    bottom_edge = project_y(low)
-    clip_id = _hard_clip_id(width, top_edge, bottom_edge)
-
     per_trace = [
         (
             trace,
@@ -1427,6 +1478,57 @@ def sparkline_multi(
     ]
     any_runs = any(band_runs or line_runs for _, band_runs, line_runs in per_trace)
 
+    effective_y_fmt = y_axis_fmt or fmt
+    y_gutter = 0.0
+    if show_y_axis and any_runs:
+        required_gutter = _sparkline_y_axis_gutter((domain,), effective_y_fmt)
+        y_gutter = required_gutter if _y_axis_gutter is None else _y_axis_gutter
+        if y_gutter < required_gutter:
+            raise SpecError(
+                "Sparkline shared y-axis gutter is narrower than its formatted labels: "
+                f"required {required_gutter:.2f}px, got {y_gutter:.2f}px."
+            )
+
+    low, high = domain
+    right_edge = width - inset
+    plot_width = width - endpoint_width if show_endpoint else width
+    horizontal_span = plot_width - y_gutter - 2 * inset
+    if show_y_axis and any_runs and horizontal_span < 1:
+        raise SpecError(
+            "Sparkline horizontal projection span must be at least 1 pixel: "
+            f"width ({width}) - endpoint_width "
+            f"({endpoint_width if show_endpoint else 0}) - y_axis_gutter "
+            f"({y_gutter:.2f}) - 2*inset ({2 * inset}) = {horizontal_span:.2f}; "
+            "use a compact y_axis_fmt or increase width."
+        )
+    inner_project_x = _projector(x_domain, plot_width - y_gutter, inset)
+
+    def project_x(value: float) -> float:
+        return y_gutter + inner_project_x(value)
+
+    project_up = _projector(domain, height, inset)
+
+    def project_y(value: float) -> float:
+        return height - project_up(value)
+
+    top_edge = project_y(high)
+    bottom_edge = project_y(low)
+    clip_id = _hard_clip_id(width, top_edge, bottom_edge)
+    left_edge = y_gutter + inset
+    plot_right = plot_width - inset
+    y_axis_parts = (
+        _sparkline_y_axis_fragments(
+            domain,
+            effective_y_fmt,
+            gutter=y_gutter,
+            left=left_edge,
+            right=plot_right,
+            project_y=project_y,
+            theme=theme,
+        )
+        if show_y_axis and any_runs
+        else []
+    )
     ghost_parts: list[str] = []
     parts: list[str] = []
     trace_spans: list[list[tuple[float, float, str]]] = [[] for _ in per_trace]
@@ -1448,8 +1550,9 @@ def sparkline_multi(
 
     if ref is not None and any_runs and low <= ref <= high:
         ref_y = project_y(ref)
+        ref_start = left_edge if y_gutter else inset
         parts.append(
-            f'<line x1="{inset}" y1="{ref_y:.2f}" x2="{right_edge}" y2="{ref_y:.2f}" '
+            f'<line x1="{ref_start}" y1="{ref_y:.2f}" x2="{right_edge}" y2="{ref_y:.2f}" '
             f'stroke="{_attr(ref_color)}" stroke-width="1" stroke-dasharray="2,2"/>'
         )
 
@@ -1490,7 +1593,7 @@ def sparkline_multi(
                         f'stroke="{_attr(trace.color)}" stroke-width="0.5" stroke-opacity="0.45"/>'
                     )
 
-    body = ghost_parts + parts + cap_parts
+    body = y_axis_parts + ghost_parts + parts + cap_parts
     if any(spans for spans in trace_spans):
         body.insert(
             0,
@@ -1503,7 +1606,7 @@ def sparkline_multi(
             y_domain=domain,
             project_x=project_x,
             project_y=project_y,
-            left=inset,
+            left=left_edge,
             right=plot_width - inset,
             top=top_edge,
             bottom=bottom_edge,
@@ -1527,6 +1630,9 @@ def sparkline_bar(
     ref: float | None,
     color: str,
     fmt: Format,
+    show_y_axis: bool = False,
+    y_axis_fmt: Format | None = None,
+    _y_axis_gutter: float | None = None,
     width: int = 220,
     height: int = 30,
     inset: int = 3,
@@ -1593,16 +1699,22 @@ def sparkline_bar(
         colour, resolved from the last point's interval by the caller.
     fmt
         Formats the endpoint value label.
+    show_y_axis
+        Enable the quiet in-cell value scale.
+    y_axis_fmt
+        Formats y-axis tick labels independently; defaults to `fmt`.
+    _y_axis_gutter
+        Private reserve override for aligned composite callers.
     width, height, inset
         Geometry in pixels.
     show_endpoint
         Draw the endpoint value label.
     endpoint_width
         Fixed pixel reserve carved out of `width` for the endpoint label,
-        independent of the formatted label's length. `sparkline_axis` must
-        be given the same `width`, `inset`, `show_endpoint` and
-        `endpoint_width` so its ticks project over the identical inner width
-        and land under their points.
+        independent of the formatted label's length. Give `sparkline_axis`
+        the same `width`, `inset`, `show_endpoint` and `endpoint_width`; when
+        `show_y_axis` is enabled, also give it this plot's `domain` as
+        `y_axis_domain` and the effective `y_axis_fmt`.
     show_clip_indicators
         Draw the clip-cap marks described above. The line/ribbon clipping
         and the ghost trace happen regardless of this flag -- turning it
@@ -1625,6 +1737,9 @@ def sparkline_bar(
         ref=ref,
         ref_color=color,
         fmt=fmt,
+        show_y_axis=show_y_axis,
+        y_axis_fmt=y_axis_fmt,
+        _y_axis_gutter=_y_axis_gutter,
         width=width,
         height=height,
         inset=inset,
@@ -1715,6 +1830,9 @@ def sparkline_axis(
     target_ticks: int = 4,
     show_endpoint: bool = True,
     endpoint_width: int = 44,
+    y_axis_domain: tuple[float, float] | None = None,
+    y_axis_fmt: Format | None = None,
+    _x_gutter: float = 0.0,
     legend: Sequence[tuple[str, str]] | None = None,
 ) -> str:
     """Render the shared x-axis footer for a column of sparkline rows.
@@ -1748,8 +1866,12 @@ def sparkline_axis(
         Approximate number of ticks wanted.
     show_endpoint, endpoint_width
         Must be given the same values passed to `sparkline_bar` for the same
-        rows: both carve the same fixed reserve out of `width` so ticks
-        project over the identical inner width and land under their points.
+        rows: both carve the same fixed reserve out of `width`.
+    y_axis_domain, y_axis_fmt
+        To align with a standalone `sparkline_bar` or `sparkline_multi` whose
+        y-axis is enabled, pass the plot's `domain` and effective `y_axis_fmt`.
+        The footer then reserves the same label gutter and projects its ticks
+        directly beneath the plot's points. Both values are required together.
     legend
         `(label, color)` pairs for a series-overlay column, drawn as a
         swatch+label chip row above the axis spine; `height` grows by the
@@ -1764,11 +1886,33 @@ def sparkline_axis(
         A complete ``<svg>`` element.
     """
     low, high = x_domain
+    if (y_axis_domain is None) != (y_axis_fmt is None):
+        raise SpecError("sparkline_axis y_axis_domain and y_axis_fmt must be provided together.")
+    x_gutter = (
+        _sparkline_y_axis_gutter((y_axis_domain,), y_axis_fmt)
+        if y_axis_domain is not None and y_axis_fmt is not None
+        else _x_gutter
+    )
     plot_width = width - endpoint_width if show_endpoint else width
-    project = _projector(x_domain, plot_width, inset)
+    horizontal_span = plot_width - x_gutter - 2 * inset
+    if x_gutter > 0.0 and horizontal_span < 1:
+        raise SpecError(
+            "Sparkline horizontal projection span must be at least 1 pixel: "
+            f"width ({width}) - endpoint_width "
+            f"({endpoint_width if show_endpoint else 0}) - y_axis_gutter "
+            f"({x_gutter:.2f}) - 2*inset ({2 * inset}) = {horizontal_span:.2f}; "
+            "use a compact y_axis_fmt or increase width."
+        )
+    project_inner = _projector(x_domain, plot_width - x_gutter, inset)
+
+    def project(value: float) -> float:
+        return x_gutter + project_inner(value)
+
     baseline = 4.0
+    baseline_start = inset if x_gutter == 0.0 else x_gutter + inset
     parts = [
-        f'<line x1="{inset}" y1="{baseline:.2f}" x2="{plot_width - inset}" y2="{baseline:.2f}" '
+        f'<line x1="{baseline_start}" y1="{baseline:.2f}" '
+        f'x2="{plot_width - inset}" y2="{baseline:.2f}" '
         f'stroke="{_attr(theme.axis)}" stroke-width="0.75"/>'
     ]
     if temporal and isinstance(fmt, DateAxis):

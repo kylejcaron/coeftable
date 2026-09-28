@@ -1,66 +1,34 @@
-# Task 2 — Panel composition layer report
+# Task 2 Report: Table sparkline y-axis integration
 
-## Delivered
+## Implementation summary
+- Added `Sparkline.show_y_axis` (default `False`) and `Sparkline.y_axis_fmt` (default `None`), plus `_SparklineState.y_axis_gutter`.
+- Imported and reused Task 1's `_sparkline_y_axis_gutter` measurement helper.
+- Computed one gutter from all resolved column domains when the in-cell y-axis is enabled, preserving shared x alignment across rows.
+- Forwarded `show_y_axis`, `y_axis_fmt`, and the shared private gutter through the single-trace, explicit one-trace multi, and overlaid-series multi renderer paths.
+- Added matching `CoefTable.sparkline` builder keywords and documented that `show_axis` controls the shared x footer while `show_y_axis` controls the in-cell value scale.
+- Added table behavior tests for opt-in compatibility, shared gutter alignment, formatter independence, and overlaid rendering.
 
-- Added `coeftable.cards.panel` with frozen, slotted `Row`, `Pane`, `Panel`, and
-  `MeasuredPanel` dataclasses.
-- `Row` snapshots sequence inputs, validates exact `(item, width)` tuple cells,
-  rejects nested rows and non-positive/bool widths or gaps, and caches composed
-  per-cell render rows, declared row width, and max cell height during Panel
-  construction.
-- `Pane` and `Panel` snapshot public sequences and validate titles, widths,
-  duplicate pane names, content types, shell gap, chrome, and theme at
-  construction.
-- `Panel.__post_init__` performs a deterministic one-shot traversal in
-  header → pane heading/content/cells → footer order. Regions resolve only at
-  their actual full-inner, pane, or cell width. The cached layout is consumed
-  by both `measure()` and HTML rendering; `with_theme()` reconstructs and
-  re-resolves the panel.
-- Implemented the specified derived shell width and conditional header/footer
-  dividers/spacing box model. HTML is deterministic, inline-style-only,
-  overflow-visible at the shell, and uses fixed-width, top-aligned row cells.
-- Moved the card render-row wrapper into `cards.fragments._wrap`; CardTemplate
-  and Panel share it, preserving popover overflow and SVG line-height behavior.
-- Re-exported the four panel names from `coeftable.cards` (30 exports).
-- Added `tests/test_panel.py` covering construction validation, tuple
-  canonicalization, frozen/slots contracts, width/height derivation, row fit
-  in pane/header/footer, multi-row cell stacking, traversal ordering and
-  `with_theme`, raw adornments, wrapper behavior, determinism, and layering.
+## Changed files
+- `src/coeftable/spec.py`
+- `tests/test_sparkline.py`
+- `.superpowers/sdd/task-2-report.md`
 
-## TDD evidence
+## TDD RED/GREEN evidence
+- RED command: `uv run pytest tests/test_sparkline.py -q -k "table_y_axis or overlaid_table_sparkline_renders_one_y_axis"`
+- RED result: 4 failed, 137 deselected. Failures were the expected `TypeError: CoefTable.sparkline() got an unexpected keyword argument 'show_y_axis'`.
+- GREEN command: same focused command after implementation.
+- GREEN result: 4 passed, 137 deselected.
 
-1. Wrote the new panel contract tests before production implementation.
-2. Ran `uv run pytest tests/test_panel.py -q`; the expected RED failure was the
-   missing public `Pane` export.
-3. Implemented the panel layer and wrapper extraction.
-4. GREEN: `uv run pytest tests/test_panel.py tests/test_card_entry.py -q` →
-   49 passed.
+## Regression and final tests
+- `uv run pytest tests/test_sparkline.py tests/test_frame.py tests/test_collapsible.py -q` — 231 passed.
+- `uv run pytest -q` — 1633 passed.
 
-## Adaptations
+## Self-review
+- Confirmed disabled y-axis output remains byte-identical through the new opt-in test.
+- Confirmed the widest formatted label produces one column-wide gutter and equal first/last polyline x coordinates across rows.
+- Confirmed y-axis formatting is independent from endpoint and x-axis formatters.
+- Confirmed all three table cell rendering paths receive the shared gutter and y-axis settings.
+- Confirmed existing annotation-domain and overlay tests remain green after restoring their original forwarding paths.
 
-- The shipped `fragments.py` serializer is the existing cards-internal home for
-  the extracted wrapper, so `_wrap` was placed there rather than introducing a
-  new internal module. This keeps the dependency graph acyclic and preserves
-  the exact Card wrapper markup.
-- The internal cache uses `_ResolvedContent`, `_ResolvedEntry`,
-  `_ResolvedPane`, and `_PanelLayout` frozen/slotted records to keep plain
-  render rows and composed-row cell tuples together without recomputing
-  geometry in either public output path.
-- Pane headings are represented by generated `TextBlock` declarations, while
-  user declarations remain canonical fields; this provides the specified
-  title/subtitle heading stack without adding a redundant `Panel.title`.
-
-## Self-review and verification
-
-- `uv run ruff check src/coeftable/cards/panel.py src/coeftable/cards/fragments.py
-  src/coeftable/cards/template.py src/coeftable/cards/__init__.py
-  tests/test_panel.py` → all checks passed.
-- `uv run ty check src/coeftable/cards/panel.py src/coeftable/cards/fragments.py
-  src/coeftable/cards/template.py src/coeftable/cards/__init__.py` → all checks
-  passed.
-- `uv run pytest tests/test_panel.py tests/test_card_entry.py -q` → 49 passed.
-- Verified the default 430/442 pane width law manually: measured width is 942.
-- No `coeftable.plots` import exists in `panel.py`; no top-level package or
-  changelog files were modified.
-- Full-suite validation and branch-level review remain the controller's final
-  integration step because other Task 2/3 workers are changing the same branch.
+## Concerns
+- None identified. The required `roborev` workflow is controller-owned and was not run per assignment instructions.

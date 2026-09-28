@@ -1,11 +1,12 @@
 import re
 from datetime import UTC, datetime, timedelta
 from itertools import pairwise
-from typing import Literal
+from typing import Any, Literal
 
 import pytest
 
 from coeftable.annotations import ResolvedBand, ResolvedRule
+from coeftable.errors import SpecError
 from coeftable.format import DateAxis, Number
 from coeftable.svg import (
     _CALENDAR_TICK_FLOOR,
@@ -33,6 +34,154 @@ from coeftable.svg import (
     sparkline_multi,
 )
 from coeftable.theme import DEFAULT, Theme
+
+
+def _basic_sparkline(**kwargs: Any) -> str:
+    fmt = kwargs.pop("fmt", Number(decimals=0))
+    kwargs.setdefault("show_endpoint", False)
+    ref = kwargs.pop("ref", 5.0)
+    return sparkline_bar(
+        [0.0, 1.0, 2.0],
+        [0.0, 5.0, 10.0],
+        [None, None, None],
+        [None, None, None],
+        x_domain=(0.0, 2.0),
+        domain=(0.0, 10.0),
+        ref=ref,
+        color="#1783a1",
+        fmt=fmt,
+        theme=DEFAULT,
+        **kwargs,
+    )
+
+
+def test_sparkline_y_axis_is_opt_in_and_disabled_output_is_unchanged():
+    assert _basic_sparkline() == _basic_sparkline(show_y_axis=False)
+
+
+def test_sparkline_y_axis_renders_quiet_horizontal_guides_before_reference_and_series():
+    svg = _basic_sparkline(
+        show_y_axis=True,
+        y_axis_fmt=lambda value: f"Y{value:.0f}",
+    )
+
+    labels = re.findall(r'<text[^>]*text-anchor="end">([^<]+)</text>', svg)
+    guides = re.findall(
+        r'<line x1="([0-9.]+)" y1="([0-9.]+)" x2="([0-9.]+)" '
+        r'y2="([0-9.]+)"[^>]*stroke-opacity="0.22"',
+        svg,
+    )
+    assert labels == ["Y0", "Y5", "Y10"]
+    assert guides and all(y1 == y2 for _x1, y1, _x2, y2 in guides)
+    assert svg.index('stroke-opacity="0.22"') < svg.index('stroke-dasharray="2,2"')
+    assert svg.index('stroke-dasharray="2,2"') < svg.index("<polyline")
+
+
+def test_sparkline_y_axis_formatter_is_independent_of_endpoint_formatter():
+    svg = _basic_sparkline(
+        show_endpoint=True,
+        show_y_axis=True,
+        fmt=lambda value: f"END:{value:.0f}",
+        y_axis_fmt=lambda value: f"AXIS:{value:.0f}",
+    )
+    texts = re.findall(r"<text[^>]*>([^<]+)</text>", svg)
+    assert texts[-1] == "END:10"
+    assert "AXIS:10" in texts
+
+
+def test_empty_sparkline_does_not_render_an_orphaned_y_axis():
+    svg = sparkline_bar(
+        [0.0],
+        [None],
+        [None],
+        [None],
+        x_domain=(0.0, 1.0),
+        domain=(0.0, 1.0),
+        ref=0.0,
+        color="#1783a1",
+        fmt=Number(),
+        show_y_axis=True,
+        theme=DEFAULT,
+    )
+    assert "<text" not in svg
+    assert 'stroke-opacity="0.22"' not in svg
+
+
+def test_sparkline_y_axis_rejects_labels_that_consume_the_plot_span():
+    with pytest.raises(SpecError, match="compact y_axis_fmt or increase width"):
+        _basic_sparkline(
+            width=50,
+            show_y_axis=True,
+            y_axis_fmt=lambda value: f"very-long-axis-label-{value}",
+        )
+
+
+def test_sparkline_axis_rejects_y_axis_gutter_that_consumes_plot_span():
+    with pytest.raises(SpecError, match="compact y_axis_fmt or increase width"):
+        sparkline_axis(
+            x_domain=(0.0, 2.0),
+            fmt=Number(decimals=0),
+            theme=DEFAULT,
+            width=50,
+            show_endpoint=False,
+            y_axis_domain=(0.0, 10.0),
+            y_axis_fmt=lambda value: f"very-long-axis-label-{value}",
+        )
+
+
+def test_sparkline_y_axis_disabled_keeps_narrow_width_compatible():
+    svg = _basic_sparkline(width=50, show_endpoint=True, show_y_axis=False)
+    assert svg.startswith('<svg width="50" height="30"')
+    assert re.search(r'<polyline points="[^"]+"', svg)
+
+
+def test_sparkline_y_axis_boundary_guide_matches_reference_coordinate():
+    svg = _basic_sparkline(
+        show_y_axis=True,
+        show_endpoint=False,
+        ref=0.0,
+        y_axis_fmt=lambda value: f"{value:g}",
+    )
+    guide = re.search(
+        r'<line x1="[^"]+" y1="([0-9.]+)" x2="[^"]+" y2="\1"[^>]*stroke-opacity="0.22"',
+        svg,
+    )
+    reference = re.search(
+        r'<line x1="[^"]+" y1="([0-9.]+)" x2="[^"]+" y2="\1"[^>]*stroke-dasharray="2,2"', svg
+    )
+    assert guide and reference
+    assert guide.group(1) == reference.group(1)
+
+
+def test_sparkline_y_axis_labels_fit_inside_viewport_at_bottom_tick():
+    svg = _basic_sparkline(
+        show_y_axis=True,
+        show_endpoint=False,
+        y_axis_fmt=lambda value: f"{value:g} kg",
+    )
+    labels = re.findall(r'<text[^>]*y="([0-9.]+)"[^>]*>([^<]+)</text>', svg)
+    assert labels
+    assert all(float(y) <= 26.0 for y, _label in labels)
+
+
+def test_sparkline_y_axis_labels_fit_inside_viewport_at_top_tick():
+    svg = _basic_sparkline(
+        show_y_axis=True,
+        show_endpoint=False,
+        y_axis_fmt=lambda value: f"{value:g} kg",
+    )
+    labels = {
+        label: float(y)
+        for y, label in re.findall(r'<text[^>]*y="([0-9.]+)"[^>]*>([^<]+)</text>', svg)
+    }
+    guide = re.search(
+        r'<line x1="[^"]+" y1="([0-9.]+)" x2="[^"]+" y2="\1"[^>]*stroke-opacity="0.22"'
+        r"/><text[^>]*>10 kg</text>",
+        svg,
+    )
+    assert guide
+    assert float(guide.group(1)) == 3.0
+    assert labels["10 kg"] >= 9.0
 
 
 def _rule(
@@ -185,6 +334,32 @@ def test_sparkline_axis_escapes_color_in_legend_entries():
     )
     assert "&quot;" in svg
     assert '" onclick="' not in svg
+
+
+def test_sparkline_axis_zero_gutter_preserves_disabled_footer_bytes():
+    expected = (
+        '<svg width="220" height="22" viewBox="0 0 220 22" '
+        'xmlns="http://www.w3.org/2000/svg" style="display:block;margin:0 auto">'
+        '<line x1="3" y1="4.00" x2="217" y2="4.00" stroke="#616161" stroke-width="0.75"/>'
+        '<line x1="3.00" y1="4.00" x2="3.00" y2="7.00" stroke="#616161" stroke-width="0.75"/>'
+        '<text x="3.00" y="20.00" fill="#616161" font-size="9" text-anchor="middle">0</text>'
+        '<line x1="56.50" y1="4.00" x2="56.50" y2="7.00" stroke="#616161" stroke-width="0.75"/>'
+        '<line x1="110.00" y1="4.00" x2="110.00" y2="7.00" stroke="#616161" stroke-width="0.75"/>'
+        '<text x="110.00" y="20.00" fill="#616161" font-size="9" text-anchor="middle">1</text>'
+        '<line x1="163.50" y1="4.00" x2="163.50" y2="7.00" stroke="#616161" stroke-width="0.75"/>'
+        '<text x="163.50" y="20.00" fill="#616161" font-size="9" text-anchor="middle">2</text>'
+        '<line x1="217.00" y1="4.00" x2="217.00" y2="7.00" stroke="#616161" '
+        'stroke-width="0.75"/></svg>'
+    )
+    assert (
+        sparkline_axis(
+            x_domain=(0.0, 2.0),
+            fmt=Number(decimals=0),
+            theme=DEFAULT,
+            show_endpoint=False,
+        )
+        == expected
+    )
 
 
 def test_sparkline_axis_escapes_hostile_theme_axis_and_text_colors():
@@ -1572,6 +1747,44 @@ def test_sparkline_axis_ticks_align_with_sparkline_bar_points():
 
     # nice_ticks(0.0, 2.0) includes both domain endpoints, which are also
     # sparkline_bar's first and last data x-values here.
+    assert bar_xs[0] in tick_xs
+    assert bar_xs[-1] in tick_xs
+
+
+def test_sparkline_axis_ticks_align_with_standalone_y_axis_sparkline():
+    x = [0.0, 1.0, 2.0]
+    y_axis_fmt = Number(decimals=0)
+    bar_svg = sparkline_bar(
+        x,
+        [0.0, 5.0, 10.0],
+        [None, None, None],
+        [None, None, None],
+        x_domain=(0.0, 2.0),
+        domain=(0.0, 10.0),
+        ref=0.0,
+        color="#000",
+        fmt=Number(decimals=1),
+        show_y_axis=True,
+        y_axis_fmt=y_axis_fmt,
+        show_endpoint=False,
+    )
+    line = re.search(r'<polyline points="([^"]+)"', bar_svg)
+    assert line
+    bar_xs = [float(pair.split(",")[0]) for pair in line.group(1).split(" ")]
+
+    axis_svg = sparkline_axis(
+        x_domain=(0.0, 2.0),
+        fmt=Number(decimals=0),
+        theme=DEFAULT,
+        show_endpoint=False,
+        y_axis_domain=(0.0, 10.0),
+        y_axis_fmt=y_axis_fmt,
+    )
+    tick_xs = [
+        float(value)
+        for value in re.findall(r'<line x1="([-\d.]+)" y1="4.00" x2="[-\d.]+" y2="7.00"', axis_svg)
+    ]
+
     assert bar_xs[0] in tick_xs
     assert bar_xs[-1] in tick_xs
 

@@ -34,6 +34,7 @@ from coeftable.format import (
 from coeftable.svg import (
     CLIP_MARGIN,
     Trace,
+    _sparkline_y_axis_gutter,
     forest_axis,
     forest_bar,
     sparkline_axis,
@@ -782,6 +783,7 @@ class _SparklineState:
     x_domain: tuple[float, float]
     x_temporal: bool
     height: int
+    y_axis_gutter: float
     annotations: PreparedAnnotations
 
 
@@ -890,20 +892,20 @@ class Sparkline:
     show_axis
         Emit a footer axis row for the column. x is always shared
         table-wide, so at most one axis row is ever emitted for the whole
-        column, regardless of `scale`.
+        column, regardless of `scale`. Controls the shared x footer.
+    show_y_axis
+        Emit the in-cell value scale. Unlike `show_axis`, this does not
+        schedule a footer row.
     show_ref
         Whether `ref` drives the rendered plot, not just colour. Three
         resulting states: `ref=0.0` (default) draws the dashed line and
         forces the domain to contain it; `ref=0.0, show_ref=False` draws
-        no line and frees the domain, while colour still resolves
-        against `0.0`; `ref=None` has no reference at all, so colour is
+        no line and frees the domain, while colour still resolves against
+        `0.0`; `ref=None` has no reference at all, so colour is
         always neutral. `show_ref=False` is a deliberate trade: a mark
-        can claim "entirely above the reference" while the reference
-        sits off-canvas, so the reader cannot verify the claim from the
-        plot alone -- opt in only when that's acceptable. No-op when
-        `ref is None`, since there is nothing to show either way.
-        Raises `SpecError` together with `max_ylim`, for the same reason
-        `ref=None` does: no anchored domain to clamp around.
+        can claim "entirely above the reference" while the reference sits
+        off-canvas, so colour still resolves against `0.0`. No-op when
+        `ref is None`.
     show_endpoint
         Draw the last point's value as a text label.
     endpoint_width
@@ -913,6 +915,8 @@ class Sparkline:
     axis_fmt
         Callable labelling axis ticks; defaults to `fmt`, or `DateAxis()` when
         `x` is temporal.
+    y_axis_fmt
+        Callable formatting in-cell y-axis ticks; defaults to `fmt`.
     show_clip_indicators
         Draw a thin double-line cap at each domain edge a contiguous
         stretch of the series clips against, spanning that stretch's true
@@ -973,6 +977,8 @@ class Sparkline:
     series_colors: Mapping[Any, str] | None = None
     show_ribbon: bool | None = None
     annotations: tuple[Annotation, ...] = ()
+    show_y_axis: bool = False
+    y_axis_fmt: Format | None = None
 
     def sources(self) -> Iterable[str]:
         """Frame columns this plot reads, including main-frame annotation fields."""
@@ -1115,7 +1121,6 @@ class Sparkline:
                 x_values.extend(_finite(series.x))
             x_values.extend(domain_values(annotations.by_row[i], axis="x"))
             required.setdefault(key, []).extend(domain_values(annotations.by_row[i], axis="y"))
-
         plot_ref = self.ref if self.show_ref else None
         domains = {
             key: _bucket_domain(
@@ -1129,6 +1134,11 @@ class Sparkline:
             for key, vals in buckets.items()
         }
         x_domain = (min(x_values), max(x_values)) if x_values else (0.0, 1.0)
+        y_axis_gutter = (
+            _sparkline_y_axis_gutter(domains.values(), self.y_axis_fmt or self.fmt)
+            if self.show_y_axis
+            else 0.0
+        )
 
         def footer_key(row_key: Any, group: Any, split: Any) -> Any:
             return ("x",)
@@ -1142,6 +1152,7 @@ class Sparkline:
                 x_domain=x_domain,
                 x_temporal=x_temporal,
                 height=_plot_height(scan.columns, self.height),
+                y_axis_gutter=y_axis_gutter,
                 annotations=annotations,
             ),
             footer_key=footer_key if self.show_axis else None,
@@ -1183,6 +1194,9 @@ class Sparkline:
                     fmt=self.fmt,
                     width=self.width,
                     height=state.height,
+                    show_y_axis=self.show_y_axis,
+                    y_axis_fmt=self.y_axis_fmt,
+                    _y_axis_gutter=state.y_axis_gutter,
                     show_endpoint=self.show_endpoint,
                     endpoint_width=self.endpoint_width,
                     show_clip_indicators=self.show_clip_indicators,
@@ -1207,6 +1221,9 @@ class Sparkline:
                 fmt=self.fmt,
                 width=self.width,
                 height=state.height,
+                show_y_axis=self.show_y_axis,
+                y_axis_fmt=self.y_axis_fmt,
+                _y_axis_gutter=state.y_axis_gutter,
                 show_endpoint=self.show_endpoint,
                 endpoint_width=self.endpoint_width,
                 show_clip_indicators=self.show_clip_indicators,
@@ -1246,6 +1263,9 @@ class Sparkline:
             height=state.height,
             show_endpoint=self.show_endpoint,
             endpoint_width=self.endpoint_width,
+            show_y_axis=self.show_y_axis,
+            y_axis_fmt=self.y_axis_fmt,
+            _y_axis_gutter=state.y_axis_gutter,
             show_clip_indicators=self.show_clip_indicators,
             annotations=annotations,
             theme=ctx.theme,
@@ -1284,6 +1304,7 @@ class Sparkline:
             width=self.width,
             show_endpoint=self.show_endpoint,
             endpoint_width=self.endpoint_width,
+            _x_gutter=state.y_axis_gutter,
             legend=legend,
         )
 
@@ -1625,25 +1646,17 @@ class CoefTable:
             Column header.
         cards
             Either a sequence aligned to the source-frame row order, or a
-            mapping from source values to Cards. Mapping values absent from
-            the mapping render as blank cells. Each Card keeps its own theme.
+            mapping from source values to Cards. A `None` value renders a
+            blank cell; a mapping key absent from `cards` does the same.
         by
-            Source column used for scalar mapping keys, or a tuple of source
-            columns used for tuple mapping keys. Valid only with mapping
-            `cards`.
+            Source column used for scalar mapping keys, or tuple mapping keys.
         factory
-            Callable receiving each complete source row as an immutable
-            mapping and returning a Card or `None`. Called exactly once per
-            source row during each resolution.
-
-        Returns
-        -------
-        CoefTable
-            A new table with the column appended.
+            Callable receiving each complete source row and returning a Card
+            or `None` to render a blank cell.
         """
         return self._add(CardColumn(label, cards=cards, by=by, factory=factory))
 
-    def sparkline(
+    def sparkline(  # noqa: PLR0913
         self,
         label: str,
         *,
@@ -1660,10 +1673,12 @@ class CoefTable:
         width: int = 220,
         height: int | None = None,
         show_axis: bool = True,
+        show_y_axis: bool = False,
         show_endpoint: bool = False,
         endpoint_width: int = 44,
         fmt: Format = _DEFAULT_FMT,
         axis_fmt: Format | TimeFormat | None = None,
+        y_axis_fmt: Format | None = None,
         show_clip_indicators: bool = True,
         series: str | None = None,
         series_colors: Mapping[Any, str] | None = None,
@@ -1736,7 +1751,9 @@ class CoefTable:
         height
             Plot row height in pixels. `None` fills the row automatically.
         show_axis
-            Emit a footer axis row for the column.
+            Emit the shared x-axis footer row for the column.
+        show_y_axis
+            Emit the in-cell value scale; this is independent of `show_axis`.
         show_endpoint
             Draw the last point's value as a text label.
         endpoint_width
@@ -1746,6 +1763,8 @@ class CoefTable:
         axis_fmt
             Callable labelling axis ticks; defaults to `fmt`, or `DateAxis()`
             when `x` is temporal.
+        y_axis_fmt
+            Callable formatting in-cell y-axis ticks; defaults to `fmt`.
         show_clip_indicators
             Draw a thin double-line cap at each domain edge a contiguous
             stretch of the series clips against, spanning that stretch's
@@ -1796,10 +1815,12 @@ class CoefTable:
                 width=width,
                 height=height,
                 show_axis=show_axis,
+                show_y_axis=show_y_axis,
                 show_endpoint=show_endpoint,
                 endpoint_width=endpoint_width,
                 fmt=fmt,
                 axis_fmt=axis_fmt,
+                y_axis_fmt=y_axis_fmt,
                 show_clip_indicators=show_clip_indicators,
                 series=series,
                 series_colors=series_colors,

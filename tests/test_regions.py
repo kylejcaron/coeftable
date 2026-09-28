@@ -406,6 +406,59 @@ def test_trend_spine_alignment_endpoint_reserve_and_visibility():
             assert "<text" not in spark.svg
 
 
+@pytest.mark.parametrize("show_endpoint", [True, False])
+def test_trend_y_axis_keeps_x_footer_aligned_with_plot(show_endpoint):
+    spark, axis = Trend(
+        lower=LO,
+        upper=HI,
+        show_y_axis=True,
+        y_axis_fmt=lambda value: f"Y:{value:.1f}",
+        endpoint_width=60,
+        show_endpoint=show_endpoint,
+        inset=5,
+        **TREND_KW,
+    ).resolve(**RESOLVE_KW)
+    plot = re.search(r'<polyline[^>]*points="([^"]+)"', spark.svg)
+    assert plot is not None
+    point_xs = [float(point.split(",", 1)[0]) for point in plot.group(1).split()]
+    tick_xs = [
+        float(value)
+        for value in re.findall(r'<line x1="([0-9.]+)" y1="[0-9.]+" x2="\1"', axis.svg)
+    ]
+    assert "scale(" not in axis.svg
+    assert point_xs and tick_xs
+    assert min(tick_xs) == pytest.approx(point_xs[0])
+    assert max(tick_xs) == pytest.approx(point_xs[-1])
+
+
+def test_trend_positional_legacy_fields_still_render():
+    trend = Trend(
+        X,
+        Y,
+        (0.0, 3.0),
+        (-0.5, 2.5),
+        LO,
+        HI,
+        0.0,
+        ct.Number(),
+        None,
+        False,
+        "higher_is_better",
+        None,
+        30,
+        True,
+        22,
+        True,
+        60,
+        5,
+        (),
+    )
+    assert trend.show_endpoint is True
+    assert trend.endpoint_width == 60
+    spark, axis = trend.resolve(**RESOLVE_KW)
+    assert spark.width == axis.width == 220
+
+
 def test_trend_axis_fmt_height_and_inset_are_forwarded():
     spark, axis = Trend(
         lower=LO,
@@ -435,6 +488,44 @@ def test_trend_axis_fmt_is_independent_of_endpoint_fmt():
     assert "%" in spark.svg
     assert "$" in axis.svg
     assert "$" not in spark.svg
+
+
+def test_trend_y_axis_is_independent_of_x_axis_footer():
+    (spark,) = Trend(
+        lower=LO,
+        upper=HI,
+        show_axis=False,
+        show_y_axis=True,
+        y_axis_fmt=lambda value: f"Y:{value:.1f}",
+        **TREND_KW,
+    ).resolve(**RESOLVE_KW)
+    assert "Y:" in spark.svg
+    assert 'stroke-opacity="0.22"' in spark.svg
+
+
+def test_trend_y_axis_formatter_is_independent_of_endpoint_and_x_axis_formatters():
+    spark, axis = Trend(
+        lower=LO,
+        upper=HI,
+        fmt=lambda value: f"END:{value:.1f}",
+        axis_fmt=lambda value: f"X:{value:.1f}",
+        y_axis_fmt=lambda value: f"Y:{value:.1f}",
+        show_y_axis=True,
+        **TREND_KW,
+    ).resolve(**RESOLVE_KW)
+    assert "END:1.5" in spark.svg
+    assert "Y:" in spark.svg
+    assert "X:" not in spark.svg
+    assert "X:" in axis.svg
+
+
+def test_trend_y_axis_geometry_error_names_remedies():
+    with pytest.raises(SpecError, match="compact y_axis_fmt or increase width"):
+        Trend(
+            show_y_axis=True,
+            y_axis_fmt=lambda value: f"very-long-axis-label-{value}",
+            **TREND_KW,
+        ).resolve(width=50, theme=DEFAULT, chrome=DEFAULT_CHROME)
 
 
 def test_trend_temporal_axis_defaults_to_dateaxis_and_taller_root():
@@ -591,6 +682,8 @@ def test_trend_canonicalization_snapshots_caller_lists():
         dict(x=(0.0, True, 2.0, 3.0), y=Y, x_domain=(0, 3), domain=(0, 1)),
         dict(x=X, y=Y, x_domain=(0, 3), domain=(0, 1), fmt=_unchecked("fmt")),
         dict(x=X, y=Y, x_domain=(0, 3), domain=(0, 1), axis_fmt=_unchecked("fmt")),
+        dict(x=X, y=Y, x_domain=(0, 3), domain=(0, 1), show_y_axis=_unchecked(1)),
+        dict(x=X, y=Y, x_domain=(0, 3), domain=(0, 1), y_axis_fmt=_unchecked("fmt")),
         dict(x=X, y=Y, x_domain=(0, 3), domain=(0, 1), ref=float("nan")),
         dict(x=X, y=Y, x_domain=(0, 3), domain=(0, 1), direction=_unchecked("sideways")),
         dict(x=X, y=Y, x_domain=(0, 3), domain=(0, 1), role=_unchecked("loud")),
@@ -622,6 +715,8 @@ def test_trend_canonicalization_snapshots_caller_lists():
         "bool-x",
         "fmt-not-callable",
         "axis-fmt-not-callable",
+        "non-bool-show-y-axis",
+        "y-axis-fmt-not-callable",
         "nan-ref",
         "bad-direction",
         "bad-role",
