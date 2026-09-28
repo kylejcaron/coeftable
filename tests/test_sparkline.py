@@ -101,6 +101,84 @@ def _polyline_ys(svg: str) -> list[float]:
     return [float(pair.split(",")[1]) for pair in match.group(1).split(" ")]
 
 
+def _polyline_xs(svg: str) -> list[float]:
+    """Extract the polyline's x-pixels, in point order, from a rendered SVG."""
+    match = re.search(r'<polyline points="([^"]+)"', svg)
+    assert match is not None, f"no polyline in {svg!r}"
+    return [float(pair.split(",")[0]) for pair in match.group(1).split(" ")]
+
+
+def test_table_y_axis_is_opt_in_and_disabled_output_is_unchanged():
+    raw = {"metric": ["A"], "lift": [[0.0, 1.0, 2.0]]}
+    implicit = CoefTable(pl.DataFrame(raw), rows="metric").sparkline("Trend", value="lift")
+    explicit = CoefTable(pl.DataFrame(raw), rows="metric").sparkline(
+        "Trend", value="lift", show_y_axis=False
+    )
+    implicit_svg = nw.from_native(resolve(implicit).frame)["Trend"].to_list()[0]
+    explicit_svg = nw.from_native(resolve(explicit).frame)["Trend"].to_list()[0]
+    assert implicit_svg == explicit_svg
+
+
+def test_table_y_axis_uses_one_gutter_and_preserves_shared_x_alignment():
+    raw = {
+        "metric": ["Small", "Large"],
+        "lift": [[0.0, 1.0, 2.0], [0.0, 10_000.0, 20_000.0]],
+    }
+    table = CoefTable(pl.DataFrame(raw), rows="metric").sparkline(
+        "Trend",
+        value="lift",
+        ref=None,
+        show_axis=False,
+        show_y_axis=True,
+        y_axis_fmt=lambda value: f"{value:,.0f}",
+    )
+    out = resolve(table)
+    cells = nw.from_native(out.frame)["Trend"].to_list()
+    assert out.axis_rows == []
+    assert "20,000" in cells[1]
+    first_xs = [_polyline_xs(cell)[0] for cell in cells]
+    last_xs = [_polyline_xs(cell)[-1] for cell in cells]
+    assert first_xs[0] == pytest.approx(first_xs[1])
+    assert last_xs[0] == pytest.approx(last_xs[1])
+    assert first_xs[0] > 3.0
+
+
+def test_table_y_axis_formatter_is_independent_of_endpoint_and_x_axis_formatters():
+    raw = {"metric": ["A"], "lift": [[0.0, 1.0, 2.0]], "day": [[0.0, 1.0, 2.0]]}
+    table = CoefTable(pl.DataFrame(raw), rows="metric").sparkline(
+        "Trend",
+        value="lift",
+        x="day",
+        show_endpoint=True,
+        show_y_axis=True,
+        fmt=lambda value: f"END:{value:.0f}",
+        axis_fmt=lambda value: f"X:{value:.0f}",
+        y_axis_fmt=lambda value: f"Y:{value:.0f}",
+    )
+    out = resolve(table)
+    values = nw.from_native(out.frame)["Trend"].to_list()
+    assert "END:2" in values[0]
+    assert "Y:" in values[0]
+    assert "X:" not in values[0]
+    assert "X:" in values[out.axis_rows[0]]
+
+
+def test_overlaid_table_sparkline_renders_one_y_axis_per_cell():
+    table = CoefTable(pl.DataFrame({"metric": ["Revenue"]}), rows="metric").sparkline(
+        "Trend",
+        value="lift",
+        x="day",
+        data=_series_companion(),
+        series="arm",
+        show_axis=False,
+        show_y_axis=True,
+        y_axis_fmt=lambda value: f"Y:{value:.0f}",
+    )
+    cell = nw.from_native(resolve(table).frame)["Trend"].to_list()[0]
+    assert cell.count('text-anchor="end">Y:') >= 1
+    assert cell.count('stroke-opacity="0.22"') >= 1
+
+
 def _cap_edges(svg: str) -> int:
     """Count distinct clip-cap brackets (each is a 0.45-opacity double line) in a rendered SVG."""
     return svg.count('stroke-opacity="0.45"') // 2
