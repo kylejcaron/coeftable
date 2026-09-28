@@ -437,6 +437,44 @@ def test_trend_axis_fmt_is_independent_of_endpoint_fmt():
     assert "$" not in spark.svg
 
 
+def test_trend_y_axis_is_independent_of_x_axis_footer():
+    (spark,) = Trend(
+        lower=LO,
+        upper=HI,
+        show_axis=False,
+        show_y_axis=True,
+        y_axis_fmt=lambda value: f"Y:{value:.1f}",
+        **TREND_KW,
+    ).resolve(**RESOLVE_KW)
+    assert "Y:" in spark.svg
+    assert 'stroke-opacity="0.22"' in spark.svg
+
+
+def test_trend_y_axis_formatter_is_independent_of_endpoint_and_x_axis_formatters():
+    spark, axis = Trend(
+        lower=LO,
+        upper=HI,
+        fmt=lambda value: f"END:{value:.1f}",
+        axis_fmt=lambda value: f"X:{value:.1f}",
+        y_axis_fmt=lambda value: f"Y:{value:.1f}",
+        show_y_axis=True,
+        **TREND_KW,
+    ).resolve(**RESOLVE_KW)
+    assert "END:1.5" in spark.svg
+    assert "Y:" in spark.svg
+    assert "X:" not in spark.svg
+    assert "X:" in axis.svg
+
+
+def test_trend_y_axis_geometry_error_names_remedies():
+    with pytest.raises(SpecError, match="compact y_axis_fmt or increase width"):
+        Trend(
+            show_y_axis=True,
+            y_axis_fmt=lambda value: f"very-long-axis-label-{value}",
+            **TREND_KW,
+        ).resolve(width=50, theme=DEFAULT, chrome=DEFAULT_CHROME)
+
+
 def test_trend_temporal_axis_defaults_to_dateaxis_and_taller_root():
     import datetime as dt
 
@@ -591,6 +629,8 @@ def test_trend_canonicalization_snapshots_caller_lists():
         dict(x=(0.0, True, 2.0, 3.0), y=Y, x_domain=(0, 3), domain=(0, 1)),
         dict(x=X, y=Y, x_domain=(0, 3), domain=(0, 1), fmt=_unchecked("fmt")),
         dict(x=X, y=Y, x_domain=(0, 3), domain=(0, 1), axis_fmt=_unchecked("fmt")),
+        dict(x=X, y=Y, x_domain=(0, 3), domain=(0, 1), show_y_axis=_unchecked(1)),
+        dict(x=X, y=Y, x_domain=(0, 3), domain=(0, 1), y_axis_fmt=_unchecked("fmt")),
         dict(x=X, y=Y, x_domain=(0, 3), domain=(0, 1), ref=float("nan")),
         dict(x=X, y=Y, x_domain=(0, 3), domain=(0, 1), direction=_unchecked("sideways")),
         dict(x=X, y=Y, x_domain=(0, 3), domain=(0, 1), role=_unchecked("loud")),
@@ -622,6 +662,8 @@ def test_trend_canonicalization_snapshots_caller_lists():
         "bool-x",
         "fmt-not-callable",
         "axis-fmt-not-callable",
+        "non-bool-show-y-axis",
+        "y-axis-fmt-not-callable",
         "nan-ref",
         "bad-direction",
         "bad-role",

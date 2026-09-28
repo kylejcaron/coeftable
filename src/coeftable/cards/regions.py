@@ -36,7 +36,13 @@ from coeftable.cards.adornments import (
 from coeftable.cards.chrome import CardChrome
 from coeftable.errors import SpecError
 from coeftable.format import DateAxis, Format, Number, TimeFormat, is_missing
-from coeftable.svg import forest_axis, forest_bar, sparkline_axis, sparkline_bar
+from coeftable.svg import (
+    _sparkline_y_axis_gutter,
+    forest_axis,
+    forest_bar,
+    sparkline_axis,
+    sparkline_bar,
+)
 from coeftable.theme import Direction, Role, Theme, role_for
 
 _DEFAULT_FORMAT = Number()
@@ -339,7 +345,7 @@ def _svg_height(svg: str, *, name: str) -> int:
 
 @dataclass(frozen=True, slots=True)
 class Trend(Region):
-    """A line plot with an optional uncertainty ribbon and shared x-axis."""
+    """A line plot with optional in-cell y-axis, uncertainty ribbon, and shared x-axis."""
 
     x: Sequence[float]
     y: Sequence[float | None]
@@ -350,11 +356,13 @@ class Trend(Region):
     ref: float | None = None
     fmt: Format = _DEFAULT_FORMAT
     axis_fmt: Format | TimeFormat | None = None
+    y_axis_fmt: Format | None = None
     temporal: bool = False
     direction: Direction = "higher_is_better"
     role: Role | None = None
     height: int = 30
     show_axis: bool = True
+    show_y_axis: bool = False
     axis_height: int = 22
     show_endpoint: bool = True
     endpoint_width: int = 44
@@ -405,14 +413,16 @@ class Trend(Region):
         _require_finite_number(self.ref, name="Trend.ref", optional=True)
         _require_callable(self.fmt, name="Trend.fmt")
         _require_callable(self.axis_fmt, name="Trend.axis_fmt", optional=True)
+        _require_callable(self.y_axis_fmt, name="Trend.y_axis_fmt", optional=True)
         _require_bool(self.temporal, name="Trend.temporal")
         _require_member(self.direction, _DIRECTIONS, name="Trend.direction")
         if self.role is not None:
             _require_member(self.role, _ROLES, name="Trend.role")
         _require_positive_int(self.height, name="Trend.height")
         _require_bool(self.show_axis, name="Trend.show_axis")
-        _require_positive_int(self.axis_height, name="Trend.axis_height")
+        _require_bool(self.show_y_axis, name="Trend.show_y_axis")
         _require_bool(self.show_endpoint, name="Trend.show_endpoint")
+        _require_positive_int(self.axis_height, name="Trend.axis_height")
         _require_positive_int(self.endpoint_width, name="Trend.endpoint_width")
         _require_positive_int(self.inset, name="Trend.inset")
         for index, annotation in enumerate(annotations):
@@ -422,16 +432,24 @@ class Trend(Region):
     def resolve(self, *, width: int, theme: Theme, chrome: CardChrome) -> tuple[InlineSvg, ...]:
         """Render the sparkline and, when requested, its shared x-axis."""
         del chrome
+        y_axis_gutter = (
+            _sparkline_y_axis_gutter((self.domain,), self.y_axis_fmt or self.fmt)
+            if self.show_y_axis
+            else 0.0
+        )
         horizontal_span = (
-            width - (self.endpoint_width if self.show_endpoint else 0) - 2 * self.inset
+            width
+            - (self.endpoint_width if self.show_endpoint else 0)
+            - y_axis_gutter
+            - 2 * self.inset
         )
         if horizontal_span < 1:
             raise SpecError(
                 "Trend horizontal projection span must be at least 1 pixel: "
                 f"width ({width}) - endpoint_width "
                 f"({self.endpoint_width if self.show_endpoint else 0}) - "
-                f"2*inset ({2 * self.inset}) "
-                f"= {horizontal_span}"
+                f"y_axis_gutter ({y_axis_gutter:.2f}) - 2*inset ({2 * self.inset}) "
+                f"= {horizontal_span:.2f}; use a compact y_axis_fmt or increase width."
             )
         vertical_span = self.height - 2 * self.inset
         if vertical_span < 1:
@@ -487,6 +505,9 @@ class Trend(Region):
             ref=self.ref,
             color=theme.color(role),
             fmt=self.fmt,
+            show_y_axis=self.show_y_axis,
+            y_axis_fmt=self.y_axis_fmt,
+            _y_axis_gutter=y_axis_gutter,
             width=width,
             height=self.height,
             inset=self.inset,

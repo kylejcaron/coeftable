@@ -360,6 +360,32 @@ trend = pl.DataFrame(
 )
 ```
 
+**Displaying the y-axis.** Opt in to quiet in-cell y-axis labels and horizontal
+guides when the sparkline needs a visible scale:
+
+```python
+(
+    ct.CoefTable(trend, rows="metric")
+    .sparkline(
+        "Trend",
+        value="lift",
+        ref=0.0,
+        show_y_axis=True,
+        y_axis_fmt=ct.Percent(decimals=1, signed=True),
+    )
+)
+```
+
+`show_y_axis=False` is the compatibility-preserving default. The selected
+treatment is formatted labels plus faint horizontal guides, without a vertical
+spine. With `y_axis_fmt=None`, labels use the sparkline's `fmt`. The gutter is
+inside `width`, so increase `width` or use a compact formatter for long labels.
+Per-row domains remain per-row, but one column-wide gutter preserves shared x
+alignment. `show_axis` and `axis_fmt` still control the shared x footer.
+`sparkline_bar`, `sparkline_multi`, and `cards.Trend` expose the same opt-in
+behavior.
+
+
 **Forest plots take `autoscale` too.** A single extreme interval (say a
 +3000% lift among sub-1% metrics) otherwise stretches the shared domain
 and flattens every other bar:
