@@ -39,6 +39,7 @@ from coeftable.theme import DEFAULT, Theme
 def _basic_sparkline(**kwargs: Any) -> str:
     fmt = kwargs.pop("fmt", Number(decimals=0))
     kwargs.setdefault("show_endpoint", False)
+    ref = kwargs.pop("ref", 5.0)
     return sparkline_bar(
         [0.0, 1.0, 2.0],
         [0.0, 5.0, 10.0],
@@ -46,7 +47,7 @@ def _basic_sparkline(**kwargs: Any) -> str:
         [None, None, None],
         x_domain=(0.0, 2.0),
         domain=(0.0, 10.0),
-        ref=5.0,
+        ref=ref,
         color="#1783a1",
         fmt=fmt,
         theme=DEFAULT,
@@ -116,8 +117,27 @@ def test_sparkline_y_axis_rejects_labels_that_consume_the_plot_span():
 
 
 def test_sparkline_y_axis_disabled_keeps_narrow_width_compatible():
-    svg = _basic_sparkline(width=50, show_y_axis=False)
+    svg = _basic_sparkline(width=50, show_endpoint=True, show_y_axis=False)
     assert svg.startswith('<svg width="50" height="30"')
+    assert re.search(r'<polyline points="[^"]+"', svg)
+
+
+def test_sparkline_y_axis_boundary_guide_matches_reference_coordinate():
+    svg = _basic_sparkline(
+        show_y_axis=True,
+        show_endpoint=False,
+        ref=0.0,
+        y_axis_fmt=lambda value: f"{value:g}",
+    )
+    guide = re.search(
+        r'<line x1="[^"]+" y1="([0-9.]+)" x2="[^"]+" y2="\1"[^>]*stroke-opacity="0.22"',
+        svg,
+    )
+    reference = re.search(
+        r'<line x1="[^"]+" y1="([0-9.]+)" x2="[^"]+" y2="\1"[^>]*stroke-dasharray="2,2"', svg
+    )
+    assert guide and reference
+    assert guide.group(1) == reference.group(1)
 
 
 def test_sparkline_y_axis_labels_fit_inside_viewport_at_bottom_tick():

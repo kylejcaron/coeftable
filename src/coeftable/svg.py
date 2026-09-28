@@ -1360,15 +1360,16 @@ def _sparkline_y_axis_fragments(
     label_x = gutter - _Y_AXIS_LABEL_GAP
     parts: list[str] = []
     for tick, label in zip(ticks, labels, strict=True):
-        y = min(project_y(tick), project_y(domain[0]) - 4.0)
+        guide_y = project_y(tick)
+        label_y = min(guide_y, project_y(domain[0]) - 4.0)
         parts.append(
-            f'<line x1="{left:.2f}" y1="{y:.2f}" x2="{right:.2f}" y2="{y:.2f}" '
+            f'<line x1="{left:.2f}" y1="{guide_y:.2f}" x2="{right:.2f}" y2="{guide_y:.2f}" '
             f'stroke="{_attr(theme.axis)}" stroke-width="0.75" '
             f'stroke-opacity="{_Y_AXIS_GUIDE_OPACITY}"/>'
         )
         if label:
             parts.append(
-                f'<text x="{label_x:.2f}" y="{y + 3:.2f}" fill="{_attr(theme.axis)}" '
+                f'<text x="{label_x:.2f}" y="{label_y + 3:.2f}" fill="{_attr(theme.axis)}" '
                 f'font-size="{_Y_AXIS_FONT_SIZE:g}" text-anchor="end">{_esc(label)}</text>'
             )
     return parts
