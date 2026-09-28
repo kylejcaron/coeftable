@@ -530,25 +530,11 @@ class Trend(Region):
             temporal=self.temporal,
             width=width,
             height=self.axis_height,
-            inset=(
-                cast(int, self.inset + y_axis_gutter)
-                if self.show_y_axis and self.show_endpoint
-                else self.inset
-            ),
+            inset=self.inset,
             show_endpoint=self.show_endpoint,
-            endpoint_width=(
-                cast(int, self.endpoint_width - y_axis_gutter)
-                if self.show_y_axis and self.show_endpoint
-                else self.endpoint_width
-            ),
+            endpoint_width=self.endpoint_width,
+            _x_gutter=y_axis_gutter,
         )
-        if self.show_y_axis and not self.show_endpoint:
-            plot_span = width - 2 * self.inset
-            scale = (plot_span - y_axis_gutter) / plot_span
-            shift = y_axis_gutter + (1 - scale) * self.inset
-            transform = f"translate({shift:.6f} 0) scale({scale:.8f} 1)"
-            axis_svg = axis_svg.replace(">", f'><g transform="{transform}">', 1)
-            axis_svg = axis_svg[:-6] + "</g></svg>"
         axis = InlineSvg(axis_svg, width=width, height=_svg_height(axis_svg, name="Trend axis"))
         return (spark, axis)
 

@@ -425,11 +425,7 @@ def test_trend_y_axis_keeps_x_footer_aligned_with_plot(show_endpoint):
         float(value)
         for value in re.findall(r'<line x1="([0-9.]+)" y1="[0-9.]+" x2="\1"', axis.svg)
     ]
-    if not show_endpoint:
-        transform = re.search(r"translate\(([0-9.]+) 0\) scale\(([0-9.]+) 1\)", axis.svg)
-        assert transform is not None
-        shift, scale = (float(value) for value in transform.groups())
-        tick_xs = [shift + scale * value for value in tick_xs]
+    assert "scale(" not in axis.svg
     assert point_xs and tick_xs
     assert min(tick_xs) == pytest.approx(point_xs[0])
     assert max(tick_xs) == pytest.approx(point_xs[-1])

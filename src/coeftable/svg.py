@@ -1827,6 +1827,7 @@ def sparkline_axis(
     target_ticks: int = 4,
     show_endpoint: bool = True,
     endpoint_width: int = 44,
+    _x_gutter: float = 0.0,
     legend: Sequence[tuple[str, str]] | None = None,
 ) -> str:
     """Render the shared x-axis footer for a column of sparkline rows.
@@ -1877,10 +1878,15 @@ def sparkline_axis(
     """
     low, high = x_domain
     plot_width = width - endpoint_width if show_endpoint else width
-    project = _projector(x_domain, plot_width, inset)
+    project_inner = _projector(x_domain, plot_width - _x_gutter, inset)
+
+    def project(value: float) -> float:
+        return _x_gutter + project_inner(value)
+
     baseline = 4.0
     parts = [
-        f'<line x1="{inset}" y1="{baseline:.2f}" x2="{plot_width - inset}" y2="{baseline:.2f}" '
+        f'<line x1="{_x_gutter + inset}" y1="{baseline:.2f}" '
+        f'x2="{plot_width - inset}" y2="{baseline:.2f}" '
         f'stroke="{_attr(theme.axis)}" stroke-width="0.75"/>'
     ]
     if temporal and isinstance(fmt, DateAxis):
