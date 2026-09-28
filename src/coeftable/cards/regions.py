@@ -356,18 +356,18 @@ class Trend(Region):
     ref: float | None = None
     fmt: Format = _DEFAULT_FORMAT
     axis_fmt: Format | TimeFormat | None = None
-    y_axis_fmt: Format | None = None
     temporal: bool = False
     direction: Direction = "higher_is_better"
     role: Role | None = None
     height: int = 30
     show_axis: bool = True
-    show_y_axis: bool = False
     axis_height: int = 22
     show_endpoint: bool = True
     endpoint_width: int = 44
     inset: int = 3
     annotations: Sequence[ResolvedAnnotation] = ()
+    show_y_axis: bool = False
+    y_axis_fmt: Format | None = None
 
     def __post_init__(self) -> None:
         """Canonicalize and validate all intrinsic region inputs."""

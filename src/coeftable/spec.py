@@ -968,17 +968,17 @@ class Sparkline:
     width: int = 220
     height: int | None = None
     show_axis: bool = True
-    show_y_axis: bool = False
     show_endpoint: bool = False
     endpoint_width: int = 44
     fmt: Format = _DEFAULT_FMT
     axis_fmt: Format | TimeFormat | None = None
-    y_axis_fmt: Format | None = None
     show_clip_indicators: bool = True
     series: str | None = None
     series_colors: Mapping[Any, str] | None = None
     show_ribbon: bool | None = None
     annotations: tuple[Annotation, ...] = ()
+    show_y_axis: bool = False
+    y_axis_fmt: Format | None = None
 
     def sources(self) -> Iterable[str]:
         """Frame columns this plot reads, including main-frame annotation fields."""
@@ -1304,6 +1304,7 @@ class Sparkline:
             width=self.width,
             show_endpoint=self.show_endpoint,
             endpoint_width=self.endpoint_width,
+            _x_gutter=state.y_axis_gutter,
             legend=legend,
         )
 

@@ -1884,8 +1884,9 @@ def sparkline_axis(
         return _x_gutter + project_inner(value)
 
     baseline = 4.0
+    baseline_start = inset if _x_gutter == 0.0 else _x_gutter + inset
     parts = [
-        f'<line x1="{_x_gutter + inset}" y1="{baseline:.2f}" '
+        f'<line x1="{baseline_start}" y1="{baseline:.2f}" '
         f'x2="{plot_width - inset}" y2="{baseline:.2f}" '
         f'stroke="{_attr(theme.axis)}" stroke-width="0.75"/>'
     ]

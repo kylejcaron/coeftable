@@ -431,6 +431,34 @@ def test_trend_y_axis_keeps_x_footer_aligned_with_plot(show_endpoint):
     assert max(tick_xs) == pytest.approx(point_xs[-1])
 
 
+def test_trend_positional_legacy_fields_still_render():
+    trend = Trend(
+        X,
+        Y,
+        (0.0, 3.0),
+        (-0.5, 2.5),
+        LO,
+        HI,
+        0.0,
+        ct.Number(),
+        None,
+        False,
+        "higher_is_better",
+        None,
+        30,
+        True,
+        22,
+        True,
+        60,
+        5,
+        (),
+    )
+    assert trend.show_endpoint is True
+    assert trend.endpoint_width == 60
+    spark, axis = trend.resolve(**RESOLVE_KW)
+    assert spark.width == axis.width == 220
+
+
 def test_trend_axis_fmt_height_and_inset_are_forwarded():
     spark, axis = Trend(
         lower=LO,

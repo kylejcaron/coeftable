@@ -143,6 +143,61 @@ def test_table_y_axis_uses_one_gutter_and_preserves_shared_x_alignment():
     assert first_xs[0] > 3.0
 
 
+@pytest.mark.parametrize("show_endpoint", [True, False])
+def test_table_sparkline_footer_shares_y_axis_gutter(show_endpoint):
+    raw = {"metric": ["A"], "lift": [[0.0, 1.0, 2.0]], "day": [[0.0, 1.0, 2.0]]}
+    table = CoefTable(pl.DataFrame(raw), rows="metric").sparkline(
+        "Trend",
+        value="lift",
+        x="day",
+        show_endpoint=show_endpoint,
+        show_y_axis=True,
+        y_axis_fmt=lambda value: f"Y:{value:,.0f}",
+    )
+    out = resolve(table)
+    cell = nw.from_native(out.frame)["Trend"].to_list()[0]
+    footer = nw.from_native(out.frame)["Trend"].to_list()[out.axis_rows[0]]
+    plot_xs = _polyline_xs(cell)
+    tick_xs = [
+        float(value) for value in re.findall(r'<line x1="([0-9.]+)" y1="[0-9.]+" x2="\1"', footer)
+    ]
+    assert min(tick_xs) == pytest.approx(plot_xs[0])
+    assert max(tick_xs) == pytest.approx(plot_xs[-1])
+
+
+def test_table_sparkline_positional_legacy_fields_still_render():
+    column = Sparkline(
+        "Trend",
+        "lift",
+        None,
+        None,
+        None,
+        0.0,
+        True,
+        "row",
+        None,
+        None,
+        "tight",
+        220,
+        None,
+        True,
+        True,
+        55,
+    )
+    assert column.show_endpoint is True
+    assert column.endpoint_width == 55
+    validate_columns((column,))
+    out = resolve(
+        CoefTable(pl.DataFrame({"metric": ["A"], "lift": [[0.0, 1.0]]}), rows="metric").sparkline(
+            column.label,
+            value=column.value,
+            show_endpoint=column.show_endpoint,
+            endpoint_width=column.endpoint_width,
+        )
+    )
+    assert "<text" in nw.from_native(out.frame)["Trend"].to_list()[0]
+
+
 def test_table_y_axis_formatter_is_independent_of_endpoint_and_x_axis_formatters():
     raw = {"metric": ["A"], "lift": [[0.0, 1.0, 2.0]], "day": [[0.0, 1.0, 2.0]]}
     table = CoefTable(pl.DataFrame(raw), rows="metric").sparkline(
@@ -177,6 +232,32 @@ def test_overlaid_table_sparkline_renders_one_y_axis_per_cell():
     cell = nw.from_native(resolve(table).frame)["Trend"].to_list()[0]
     assert cell.count('text-anchor="end">Y:') >= 1
     assert cell.count('stroke-opacity="0.22"') >= 1
+
+
+def test_overlaid_table_sparkline_footer_shares_y_axis_gutter():
+    table = CoefTable(pl.DataFrame({"metric": ["Revenue"]}), rows="metric").sparkline(
+        "Trend",
+        value="lift",
+        x="day",
+        data=_series_companion(),
+        series="arm",
+        show_y_axis=True,
+        y_axis_fmt=lambda value: f"Y:{value:.0f}",
+    )
+    out = resolve(table)
+    values = nw.from_native(out.frame)["Trend"].to_list()
+    cell = values[0]
+    footer = values[out.axis_rows[0]]
+    plot_xs = [
+        float(pair.split(",", 1)[0])
+        for match in re.finditer(r'<polyline points="([^"]+)"', cell)
+        for pair in match.group(1).split()
+    ]
+    tick_xs = [
+        float(value) for value in re.findall(r'<line x1="([0-9.]+)" y1="[0-9.]+" x2="\1"', footer)
+    ]
+    assert min(tick_xs) == pytest.approx(min(plot_xs))
+    assert max(tick_xs) == pytest.approx(max(plot_xs))
 
 
 def _cap_edges(svg: str) -> int:

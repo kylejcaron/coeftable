@@ -303,6 +303,32 @@ def test_sparkline_axis_escapes_color_in_legend_entries():
     assert '" onclick="' not in svg
 
 
+def test_sparkline_axis_zero_gutter_preserves_disabled_footer_bytes():
+    expected = (
+        '<svg width="220" height="22" viewBox="0 0 220 22" '
+        'xmlns="http://www.w3.org/2000/svg" style="display:block;margin:0 auto">'
+        '<line x1="3" y1="4.00" x2="217" y2="4.00" stroke="#616161" stroke-width="0.75"/>'
+        '<line x1="3.00" y1="4.00" x2="3.00" y2="7.00" stroke="#616161" stroke-width="0.75"/>'
+        '<text x="3.00" y="20.00" fill="#616161" font-size="9" text-anchor="middle">0</text>'
+        '<line x1="56.50" y1="4.00" x2="56.50" y2="7.00" stroke="#616161" stroke-width="0.75"/>'
+        '<line x1="110.00" y1="4.00" x2="110.00" y2="7.00" stroke="#616161" stroke-width="0.75"/>'
+        '<text x="110.00" y="20.00" fill="#616161" font-size="9" text-anchor="middle">1</text>'
+        '<line x1="163.50" y1="4.00" x2="163.50" y2="7.00" stroke="#616161" stroke-width="0.75"/>'
+        '<text x="163.50" y="20.00" fill="#616161" font-size="9" text-anchor="middle">2</text>'
+        '<line x1="217.00" y1="4.00" x2="217.00" y2="7.00" stroke="#616161" '
+        'stroke-width="0.75"/></svg>'
+    )
+    assert (
+        sparkline_axis(
+            x_domain=(0.0, 2.0),
+            fmt=Number(decimals=0),
+            theme=DEFAULT,
+            show_endpoint=False,
+        )
+        == expected
+    )
+
+
 def test_sparkline_axis_escapes_hostile_theme_axis_and_text_colors():
     hostile = 'red" onclick="alert(1)'
     svg = sparkline_axis(
