@@ -1646,11 +1646,13 @@ class CoefTable:
             Column header.
         cards
             Either a sequence aligned to the source-frame row order, or a
-            mapping from source values to Cards.
+            mapping from source values to Cards. A `None` value renders a
+            blank cell; a mapping key absent from `cards` does the same.
         by
             Source column used for scalar mapping keys, or tuple mapping keys.
         factory
-            Callable receiving each complete source row and returning a Card.
+            Callable receiving each complete source row and returning a Card
+            or `None` to render a blank cell.
         """
         return self._add(CardColumn(label, cards=cards, by=by, factory=factory))
 
