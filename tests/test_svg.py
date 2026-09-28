@@ -115,6 +115,22 @@ def test_sparkline_y_axis_rejects_labels_that_consume_the_plot_span():
         )
 
 
+def test_sparkline_y_axis_disabled_keeps_narrow_width_compatible():
+    svg = _basic_sparkline(width=50, show_y_axis=False)
+    assert svg.startswith('<svg width="50" height="30"')
+
+
+def test_sparkline_y_axis_labels_fit_inside_viewport_at_bottom_tick():
+    svg = _basic_sparkline(
+        show_y_axis=True,
+        show_endpoint=False,
+        y_axis_fmt=lambda value: f"{value:g} kg",
+    )
+    labels = re.findall(r'<text[^>]*y="([0-9.]+)"[^>]*>([^<]+)</text>', svg)
+    assert labels
+    assert all(float(y) <= 26.0 for y, _label in labels)
+
+
 def _rule(
     *,
     at: float,

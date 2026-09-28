@@ -1360,7 +1360,7 @@ def _sparkline_y_axis_fragments(
     label_x = gutter - _Y_AXIS_LABEL_GAP
     parts: list[str] = []
     for tick, label in zip(ticks, labels, strict=True):
-        y = project_y(tick)
+        y = min(project_y(tick), project_y(domain[0]) - 4.0)
         parts.append(
             f'<line x1="{left:.2f}" y1="{y:.2f}" x2="{right:.2f}" y2="{y:.2f}" '
             f'stroke="{_attr(theme.axis)}" stroke-width="0.75" '
@@ -1427,6 +1427,12 @@ def sparkline_multi(
         Colour of the single shared reference line.
     fmt
         Formats each trace's endpoint value label.
+    show_y_axis
+        Enable the quiet in-cell value scale.
+    y_axis_fmt
+        Formats y-axis tick labels independently; defaults to `fmt`.
+    _y_axis_gutter
+        Private reserve override for aligned composite callers.
     width, height, inset
         Geometry in pixels.
     show_endpoint
@@ -1483,7 +1489,7 @@ def sparkline_multi(
     right_edge = width - inset
     plot_width = width - endpoint_width if show_endpoint else width
     horizontal_span = plot_width - y_gutter - 2 * inset
-    if horizontal_span < 1:
+    if show_y_axis and any_runs and horizontal_span < 1:
         raise SpecError(
             "Sparkline horizontal projection span must be at least 1 pixel: "
             f"width ({width}) - endpoint_width "
@@ -1689,6 +1695,12 @@ def sparkline_bar(
         colour, resolved from the last point's interval by the caller.
     fmt
         Formats the endpoint value label.
+    show_y_axis
+        Enable the quiet in-cell value scale.
+    y_axis_fmt
+        Formats y-axis tick labels independently; defaults to `fmt`.
+    _y_axis_gutter
+        Private reserve override for aligned composite callers.
     width, height, inset
         Geometry in pixels.
     show_endpoint
