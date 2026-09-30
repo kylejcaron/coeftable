@@ -2,11 +2,50 @@
 
 from __future__ import annotations
 
+import html
+from importlib.metadata import version
+
 from great_tables import GT, loc, style
+from great_tables._gt_data import FormatFns
+from great_tables._text import Text, _latex_escape
 
 from coeftable.collapsible import SHARED_AXIS_ROW_MARK
 from coeftable.frame import resolve
+from coeftable.labels import NEST_LABEL, ROW_LABEL
 from coeftable.spec import CoefTable
+
+# Great Tables 1.0 inserts formatted LaTeX headings verbatim; 0.x escapes them.
+_GROUP_LATEX_PREFORMATTED = version("great-tables").split(".", 1)[0] != "0"
+
+
+def _group_to_latex(text: object) -> str:
+    literal = str(text)
+    return _latex_escape(literal) if _GROUP_LATEX_PREFORMATTED else literal
+
+
+_GROUP_HEADING = FormatFns(
+    html=lambda text: html.escape(str(text), quote=True),
+    latex=_group_to_latex,
+    default=lambda text: text,
+)
+
+
+class _LiteralSpanner(Text):
+    """Literal text that bypasses Great Tables' units preprocessing."""
+
+    def __eq__(self, other: object) -> bool:
+        """Match legacy spanner selectors against their string IDs."""
+        if isinstance(other, str):
+            return self.text == other
+        return super().__eq__(other)
+
+    def to_html(self) -> str:
+        """Escape the label for HTML."""
+        return html.escape(self.text, quote=True)
+
+    def to_latex(self) -> str:
+        """Escape the label for LaTeX."""
+        return _latex_escape(self.text)
 
 
 def to_gt(table: CoefTable) -> GT:
@@ -58,12 +97,19 @@ def to_gt(table: CoefTable) -> GT:
     )
 
     for split_value, columns in resolved.spanners.items():
-        gt = gt.tab_spanner(label=split_value, columns=columns)
+        gt = gt.tab_spanner(label=_LiteralSpanner(split_value), columns=columns)
 
     if resolved.labels:
         gt = gt.cols_label(cases=dict(resolved.labels))
 
-    gt = gt.fmt_markdown(columns=resolved.markdown_columns).cols_align(align="center")
+    gt = gt.fmt_markdown(columns=resolved.markdown_columns)
+    if table.rows:
+        gt = gt.fmt(ROW_LABEL, columns=table.rows)
+    if table.nest:
+        gt = gt.fmt(NEST_LABEL, columns=table.nest)
+    if resolved.group_column:
+        gt = gt.fmt(_GROUP_HEADING, columns=resolved.group_column)
+    gt = gt.cols_align(align="center")
 
     if resolved.band_rows:
         gt = gt.tab_style(

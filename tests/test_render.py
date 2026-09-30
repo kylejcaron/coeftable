@@ -1,9 +1,11 @@
 import random
 import re
+from datetime import date
+from html.parser import HTMLParser
 
 import polars as pl
 import pytest
-from great_tables import GT
+from great_tables import GT, loc, style
 
 from coeftable.spec import CoefTable
 from coeftable.theme import MONO, TEXTUAL
@@ -106,6 +108,61 @@ def test_split_columns_emit_spanner_labels():
     )
     assert "OLS" in html
     assert "DiD" in html
+
+
+@pytest.mark.parametrize("label", ["OLS", "Density {{m s^-1}}", "R&D <alpha>"])
+@pytest.mark.parametrize("customization", ["style", "footnote"])
+def test_split_heading_customization_targets_the_original_string_id(label, customization):
+    class Cells(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.cells = []
+            self.text = None
+            self.styles = ""
+
+        def handle_starttag(self, tag, attrs):
+            if tag == "th":
+                self.text = ""
+                self.styles = ""
+            if self.text is not None:
+                self.styles += dict(attrs).get("style", "") or ""
+
+        def handle_data(self, data):
+            if self.text is not None:
+                self.text += data
+
+        def handle_endtag(self, tag):
+            if tag == "th" and self.text is not None:
+                self.cells.append((self.text.strip(), self.styles))
+                self.text = None
+
+    data = pl.DataFrame(
+        {"metric": ["Revenue", "Revenue"], "method": [label, "DiD"], "value": [1.0, 2.0]}
+    )
+    gt = CoefTable(data, rows="metric", split_columns="method").estimate("Value", "value").gt()
+    location = loc.spanner_labels(ids=[label])
+    if customization == "style":
+        gt = gt.tab_style(style.fill(color="#123abc"), locations=location)
+    else:
+        gt = gt.tab_footnote("Targeted heading note", locations=location)
+    markup = gt.as_raw_html()
+    cells = Cells()
+    cells.feed(markup)
+    targeted = next(cell for cell in cells.cells if cell[0].startswith(label))
+    untargeted = next(cell for cell in cells.cells if cell[0] == "DiD")
+    if customization == "style":
+        declarations = dict(
+            declaration.split(":", 1)
+            for declaration in targeted[1].split(";")
+            if ":" in declaration
+        )
+        assert {name.strip(): value.strip().lower() for name, value in declarations.items()}[
+            "background-color"
+        ] == "#123abc"
+        assert "#123abc" not in untargeted[1]
+    else:
+        assert targeted[0] != label
+        assert "Targeted heading note" in markup
 
 
 def test_groups_emit_section_headers():
@@ -354,3 +411,456 @@ def test_markdown_bold_syntax_in_a_row_label_still_bolds():
         .as_raw_html()
     )
     assert "<strong>Revenue</strong>" in html or "<b>Revenue</b>" in html
+
+
+class _Tags(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.starts: list[tuple[str, dict[str, str | None]]] = []
+
+    def handle_starttag(self, tag, attrs):
+        self.starts.append((tag, dict(attrs)))
+
+
+def _tags(markup: str) -> list[tuple[str, dict[str, str | None]]]:
+    parser = _Tags()
+    parser.feed(markup)
+    return parser.starts
+
+
+def _executable_urls(markup: str) -> list[str]:
+    # What a browser would navigate to: entity-decoded by the parser, then
+    # scheme-normalised by stripping ASCII whitespace/control characters.
+    urls = []
+    for _tag, attrs in _tags(markup):
+        for name in ("href", "src", "xlink:href", "action", "formaction"):
+            value = attrs.get(name)
+            if value:
+                normalised = "".join(ch for ch in value if ch > " ").lower()
+                if normalised.startswith(("javascript:", "vbscript:", "data:")):
+                    urls.append(value)
+    return urls
+
+
+DANGEROUS_LINKS = [
+    "[x](javascript:alert(1))",
+    "[x](JaVaScRiPt:alert(1))",
+    "[x](&#106;avascript:alert(1))",
+    "[x](&#x6A;avascript:alert(1))",
+    "[x]( javascript:alert(1))",
+    "[x](vbscript:msgbox(1))",
+    "[x](data:text/html;base64,PHNjcmlwdD4=)",
+    "![x](javascript:alert(1))",
+    "<javascript:alert(1)>",
+    "[x][r]\n\n[r]: javascript:alert(1)",
+    "**[x](javascript:alert(1))**",
+    "_[**x**](javascript:alert(1))_",
+]
+
+
+@pytest.mark.parametrize("label", DANGEROUS_LINKS)
+def test_row_and_nest_labels_never_render_executable_link_targets(label):
+    hostile = table_data_with(metric=label, variant=label)
+    html = (
+        CoefTable(hostile, rows="metric", nest="variant")
+        .estimate("Lift %", "rel", ci=("rel_lb", "rel_ub"))
+        .as_raw_html()
+    )
+    assert _executable_urls(html) == []
+
+
+@pytest.mark.parametrize("label", DANGEROUS_LINKS)
+def test_dangerous_links_in_labels_stay_inert_with_collapsible_groups(label):
+    hostile = pl.DataFrame({**RAW, "metric": [label, label, "Latency", "Latency"]})
+    html = (
+        CoefTable(hostile, rows="metric", nest="variant", groups="area", collapsible_groups=True)
+        .estimate("Lift %", "rel", ci=("rel_lb", "rel_ub"))
+        .as_raw_html()
+    )
+    assert _executable_urls(html) == []
+
+
+def _group_split_table(label: str) -> CoefTable:
+    data = pl.DataFrame(
+        {
+            "area": [label, label],
+            "metric": ["Revenue", "Revenue"],
+            "arm": [label, "ok"],
+            "rel": [1.0, 2.0],
+            "rel_lb": [0.5, 1.0],
+            "rel_ub": [1.5, 3.0],
+        }
+    )
+    return CoefTable(data, rows="metric", groups="area", split_columns="arm").estimate(
+        "Lift %", "rel", ci=("rel_lb", "rel_ub")
+    )
+
+
+@pytest.mark.parametrize("label", DANGEROUS_LINKS)
+def test_group_and_split_labels_never_render_executable_link_targets(label):
+    assert _executable_urls(_group_split_table(label).as_raw_html()) == []
+
+
+@pytest.mark.parametrize(
+    "label",
+    ["{{[x](javascript:alert(1))}}", "{{m^[x](javascript:alert(1))}}"],
+)
+def test_units_wrapped_split_labels_never_render_executable_links(label):
+    assert _executable_urls(_group_split_table(label).as_raw_html()) == []
+
+
+def test_split_labels_preserve_literal_units_notation_in_html_and_latex():
+    import warnings
+
+    label = "Density {{m s^-1}}"
+    data = pl.DataFrame({"metric": ["A"], "arm": [label], "value": [1.0]})
+    gt = CoefTable(data, rows="metric", split_columns="arm").estimate("Value", "value").gt()
+    html = gt.as_raw_html()
+    assert label in html
+    assert "sup" not in {tag for tag, _ in _tags(html)}
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        latex = gt.as_latex()
+    assert (
+        r"Density \{\{m s\textasciicircum{}-1\}\}" in latex or r"Density \{\{m s\^-1\}\}" in latex
+    )
+
+
+def test_group_and_split_labels_render_raw_tags_as_text():
+    payload = "<img src=x onerror=alert(1)>"
+    html = _group_split_table(payload).as_raw_html()
+    assert "img" not in {tag for tag, _ in _tags(html)}
+    assert html.count("&lt;img src=x onerror=alert(1)&gt;") >= 2
+
+
+def test_group_labels_escape_entities_once():
+    data = pl.DataFrame(
+        {
+            "area": ["R&D", "R&D", "Ops"],
+            "metric": ["A", "B", "A"],
+            "rel": [1.0, 2.0, 3.0],
+            "rel_lb": [0.5, 1.0, 2.0],
+            "rel_ub": [1.5, 3.0, 4.0],
+        }
+    )
+    html = (
+        CoefTable(data, rows="metric", groups="area")
+        .estimate("Lift %", "rel", ci=("rel_lb", "rel_ub"))
+        .as_raw_html()
+    )
+    assert "R&amp;D" in html
+    assert "R&amp;amp;D" not in html
+
+
+def test_group_labels_render_original_text_in_latex_and_escaped_in_html():
+    import warnings
+
+    label = "R&D <alpha>"
+    data = pl.DataFrame(
+        {
+            "area": [label, label],
+            "metric": ["A", "B"],
+            "rel": [1.0, 2.0],
+            "rel_lb": [0.5, 1.0],
+            "rel_ub": [1.5, 3.0],
+        }
+    )
+    gt = (
+        CoefTable(data, rows="metric", groups="area")
+        .estimate("Lift %", "rel", ci=("rel_lb", "rel_ub"))
+        .gt()
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        latex = gt.as_latex()
+    assert "R\\&D <alpha>" in latex
+    assert "&amp;" not in latex
+    assert "R&amp;D &lt;alpha&gt;" in gt.as_raw_html()
+    assert "<alpha>" not in gt.as_raw_html()
+
+
+def test_group_labels_remain_literal_latex_with_special_characters():
+    import warnings
+
+    label = "50% budget_$#{}"
+    data = pl.DataFrame({"group": [label], "metric": ["A"], "value": [1.0]})
+    gt = CoefTable(data, rows="metric", groups="group").estimate("Value", "value").gt()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        latex = gt.as_latex()
+    assert r"50\% budget\_\$\#\{\}" in latex
+    assert label in gt.as_raw_html()
+
+
+@pytest.mark.parametrize("group", [7, date(2026, 1, 2)])
+def test_non_string_groups_render_as_labels_in_html_and_latex(group):
+    import warnings
+
+    data = pl.DataFrame({"group": [group], "metric": ["A"], "value": [1.0]})
+    gt = CoefTable(data, rows="metric", groups="group").estimate("Value", "value").gt()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        latex = gt.as_latex()
+    assert rf"\multicolumn{{2}}{{l}}{{{group}}}" in latex
+    assert str(group) in gt.as_raw_html()
+
+
+def test_plain_row_labels_are_bold_and_repeated_keys_stay_blank():
+    html = table().as_raw_html()
+    assert html.count("<b>Revenue</b>") == 1
+    assert html.count("<b>Latency</b>") == 1
+
+
+def test_ampersand_in_row_and_nest_labels_is_escaped_exactly_once():
+    html = (
+        CoefTable(table_data_with("A&B", "C&D"), rows="metric", nest="variant")
+        .estimate("Lift %", "rel", ci=("rel_lb", "rel_ub"))
+        .as_raw_html()
+    )
+    assert "<b>A&amp;B</b>" in html
+    assert "C&amp;D" in html
+    assert "&amp;amp;" not in html
+
+
+def test_user_supplied_bold_tags_in_labels_do_not_become_markup():
+    html = (
+        CoefTable(table_data_with("<b>x</b>", "<b>y</b>"), rows="metric", nest="variant")
+        .estimate("Lift %", "rel", ci=("rel_lb", "rel_ub"))
+        .as_raw_html()
+    )
+    assert "&lt;b&gt;x&lt;/b&gt;" in html
+    assert "&lt;b&gt;y&lt;/b&gt;" in html
+
+
+def test_units_notation_in_row_and_nest_labels_still_formats():
+    html = (
+        CoefTable(
+            table_data_with("Speed {{m s^-1}}", "{{m^2}} area"), rows="metric", nest="variant"
+        )
+        .estimate("Lift %", "rel", ci=("rel_lb", "rel_ub"))
+        .as_raw_html()
+    )
+    assert "{{" not in html
+    assert html.count("<sup") >= 2
+
+
+@pytest.mark.parametrize(
+    "label",
+    [
+        "[x](javascript:alert({{m}}))",
+        '[x](https://e.com/{{m s^-1}}"onmouseover="alert(1))',
+        "{{<img src=x onerror=alert(1)>}}",
+        '{{"><script>alert(1)</script>}}',
+        "<b>{{m}}</b>",
+        "`{{[x](javascript:alert(1))}}`",
+        "{{[x](javascript:alert(1))}}",
+        "{{m^[x](javascript:alert(1))}}",
+        "{{m_[x](javascript:alert(1))}}",
+        "{{m_[_[x](javascript:alert(1))^[y](javascript:alert(2))]}}",
+        "{{[x](JaVaScRiPt:alert(1)) [y](vbscript:x)}}",
+        "`{{m}}` **{{[x](javascript:alert(1))}}**",
+    ],
+)
+def test_units_notation_cannot_reopen_links_or_raw_html(label):
+    html = (
+        CoefTable(table_data_with(label, label), rows="metric", nest="variant")
+        .estimate("Lift %", "rel", ci=("rel_lb", "rel_ub"))
+        .as_raw_html()
+    )
+    starts = _tags(html)
+    assert _executable_urls(html) == []
+    assert not {tag for tag, _ in starts} & {"script", "img"}
+    assert not {name for _, attrs in starts for name in attrs if name.startswith("on")}
+
+
+@pytest.mark.parametrize(
+    "notation",
+    [
+        "m s^-1",
+        "m^2",
+        "m_2",
+        "m_2^3",
+        "m_[0^3]",
+        "%C6H12O6%",
+        "J/mol",
+        "/s",
+        "kg m^-2",
+        "x10^6",
+        "um",
+        "ohm",
+        "degC",
+        ":pm:5",
+        "mol_solvent^-1",
+        "m_[abc^def]",
+        "(m s^-1)",
+        "W m^-2 K^-1",
+    ],
+)
+def test_ordinary_units_notation_matches_great_tables_rendering(notation):
+    from great_tables._helpers import define_units
+
+    html = (
+        CoefTable(table_data_with(f"A {{{{{notation}}}}} B", "B"), rows="metric", nest="variant")
+        .estimate("Lift %", "rel", ci=("rel_lb", "rel_ub"))
+        .as_raw_html()
+    )
+    assert f"A {define_units(notation).to_html()} B" in html
+
+
+def test_safe_markdown_inside_unit_leaves_is_kept_and_dangerous_links_dropped():
+    label = "{{**kg** [docs](https://example.com) [x](javascript:alert(1)) s^-1}}"
+    html = (
+        CoefTable(table_data_with(label, "B"), rows="metric", nest="variant")
+        .estimate("Lift %", "rel", ci=("rel_lb", "rel_ub"))
+        .as_raw_html()
+    )
+    tags = {tag for tag, _ in _tags(html)}
+    assert {"strong", "sup"} <= tags
+    assert [a["href"] for t, a in _tags(html) if t == "a"].count("https://example.com") == 1
+    assert _executable_urls(html) == []
+
+
+def test_percent_and_entity_encoded_token_lookalikes_in_urls_stay_literal():
+    label = "[a](https://e.com/%71%710z) [b](https://e.com/&#113;&#113;0z) {{m}} qq0z"
+    html = (
+        CoefTable(table_data_with(label, "B"), rows="metric", nest="variant")
+        .estimate("Lift %", "rel", ci=("rel_lb", "rel_ub"))
+        .as_raw_html()
+    )
+    hrefs = [a["href"] for t, a in _tags(html) if t == "a"]
+    assert hrefs == ["https://e.com/%71%710z", "https://e.com/&#113;&#113;0z"]
+    assert "qq0z" in html
+
+
+def test_overlapping_marker_lookalikes_in_text_remain_literal():
+    literal = "q0q0z q1q0z q0q1q1z Q2Q0z"
+    html = (
+        CoefTable(table_data_with(literal + " {{m}}", "B"), rows="metric", nest="variant")
+        .estimate("Lift %", "rel", ci=("rel_lb", "rel_ub"))
+        .as_raw_html()
+    )
+    assert literal in html
+
+
+def test_units_parking_has_bounded_expansion_for_long_literal_runs():
+    from coeftable.labels import _park_units
+
+    label = "q" * 2000 + " {{m}}" * 2000
+    parked, _, _ = _park_units(label)
+    assert len(parked) <= 4 * len(label)
+
+
+def test_units_inside_inline_code_stay_literal_text():
+    html = (
+        CoefTable(table_data_with("`{{m s^-1}}`", "B"), rows="metric", nest="variant")
+        .estimate("Lift %", "rel", ci=("rel_lb", "rel_ub"))
+        .as_raw_html()
+    )
+    assert "<code>{{m s^-1}}</code>" in html
+
+
+@pytest.mark.parametrize("suffix", ["", " {{m}}", " `{{m s^-1}}` {{m^2}}"])
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://example.com/%EE%80%800%EE%80%81",
+        "https://example.com/%ee%80%800%ee%80%81",
+        "https://example.com/qqq0z",
+        "https://example.com/Q0zq1z",
+        "https://example.com/q0q0z",
+        "https://example.com/q0q1q0z",
+        "https://example.com/Q0Q0z",
+        "https://example.com/%710%710z",
+        "https://example.com/&#113;0q0z",
+    ],
+)
+def test_label_text_resembling_internal_tokens_is_left_alone(url, suffix):
+    label = f"[literal]({url}){suffix}"
+    html = (
+        CoefTable(table_data_with(label, "B"), rows="metric", nest="variant")
+        .estimate("Lift %", "rel", ci=("rel_lb", "rel_ub"))
+        .as_raw_html()
+    )
+    hrefs = [attrs["href"] for tag, attrs in _tags(html) if tag == "a"]
+    assert hrefs == [url]
+    assert (">literal</a>" in html) is True
+
+
+def test_units_inside_a_link_target_do_not_alter_the_link_or_break_the_attribute():
+    label = '[l](https://e.com/{{m s^-1}}"x) {{m}}'
+    html = (
+        CoefTable(table_data_with(label, "B"), rows="metric", nest="variant")
+        .estimate("Lift %", "rel", ci=("rel_lb", "rel_ub"))
+        .as_raw_html()
+    )
+    assert not {name for tag, attrs in _tags(html) if tag == "a" for name in attrs} - {"href"}
+
+
+def test_safe_links_and_markdown_in_labels_still_render():
+    label = (
+        "**Rev** _up_ `x` [docs](https://example.com/a?b=1&c=2) [rel](/path) [m](mailto:a@b.co)"
+    )
+    hostile = table_data_with(metric=label, variant=label)
+    html = (
+        CoefTable(hostile, rows="metric", nest="variant")
+        .estimate("Lift %", "rel", ci=("rel_lb", "rel_ub"))
+        .as_raw_html()
+    )
+    hrefs = [attrs["href"] for tag, attrs in _tags(html) if tag == "a"]
+    assert "https://example.com/a?b=1&c=2" in hrefs
+    assert "/path" in hrefs
+    assert "mailto:a@b.co" in hrefs
+    tags = {tag for tag, _ in _tags(html)}
+    assert {"strong", "em", "code"} <= tags
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "<script>alert(1)</script>",
+        "<img src=x onerror=alert(1)>",
+        "<a href=javascript:alert(1)>x</a>",
+        "<svg onload=alert(1)>",
+    ],
+)
+def test_raw_html_in_labels_is_shown_as_text_not_markup(raw):
+    hostile = table_data_with(metric=raw, variant=raw)
+    html = (
+        CoefTable(hostile, rows="metric", nest="variant")
+        .estimate("Lift %", "rel", ci=("rel_lb", "rel_ub"))
+        .as_raw_html()
+    )
+    starts = _tags(html)
+    assert not {tag for tag, _ in starts} & {"script", "img", "a"}
+    assert not {name for _, attrs in starts for name in attrs} & {"onerror", "onload"}
+    assert html.count(raw.replace("<", "&lt;").replace(">", "&gt;")) >= 2
+
+
+def test_label_rendering_leaves_generated_svg_fragments_intact():
+    hostile = table_data_with(metric="[x](javascript:alert(1))", variant="B")
+    html = (
+        CoefTable(hostile, rows="metric", nest="variant")
+        .estimate("Lift %", "rel", ci=("rel_lb", "rel_ub"))
+        .forest("Plot", of="Lift %")
+        .as_raw_html()
+    )
+    tags = {tag for tag, _ in _tags(html)}
+    assert {"svg", "rect"} <= tags
+    assert _executable_urls(html) == []
+
+
+def test_label_markup_roundtrips_as_text_in_latex():
+    import warnings
+
+    hostile = table_data_with(metric="**Rev**<b>x</b>", variant="A&B")
+    gt = (
+        CoefTable(hostile, rows="metric", nest="variant")
+        .estimate("Lift %", "rel", ci=("rel_lb", "rel_ub"))
+        .gt()
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        latex = gt.as_latex()
+    assert "Rev" in latex
+    assert "<b>" not in latex
+    assert "A\\&B" in latex

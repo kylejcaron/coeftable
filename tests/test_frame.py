@@ -69,7 +69,7 @@ def test_resolves_for_every_backend(data):
 def test_repeated_row_keys_are_blanked(data):
     out = resolve(base(data))
     frame = nw.from_native(out.frame)
-    assert frame["metric"].to_list() == ["<b>Revenue</b>", "", "<b>Latency</b>", ""]
+    assert frame["metric"].to_list() == ["Revenue", "", "Latency", ""]
 
 
 def test_row_order_follows_first_appearance(data):
@@ -81,7 +81,7 @@ def test_row_order_follows_first_appearance(data):
 def test_sort_rows_orders_lexically(data):
     out = resolve(base(data, sort_rows=True))
     frame = nw.from_native(out.frame)
-    assert frame["metric"].to_list()[0] == "<b>Latency</b>"
+    assert frame["metric"].to_list()[0] == "Latency"
 
 
 def test_banding_alternates_by_row_key(data):
@@ -171,10 +171,10 @@ def test_row_label_survives_groupname_col_reordering_a_row_keys_nest_values():
     # same-group repeat and still blanks; the EU occurrence starts a NEW group
     # block and must show its label again.
     assert frame["metric"].to_list() == [
-        "<b>Revenue</b>",
+        "Revenue",
         "",
-        "<b>Latency</b>",
-        "<b>Revenue</b>",
+        "Latency",
+        "Revenue",
     ]
 
 
@@ -208,10 +208,10 @@ def test_row_label_may_appear_under_more_than_one_group():
     assert frame["region"].to_list() == ["US", "US", "EU", "EU"]
     # Each group block re-shows the label rather than blanking the repeat.
     assert frame["metric"].to_list() == [
-        "<b>Revenue</b>",
-        "<b>Signups</b>",
-        "<b>Revenue</b>",
-        "<b>Signups</b>",
+        "Revenue",
+        "Signups",
+        "Revenue",
+        "Signups",
     ]
     # Every cell resolves against its own (label, group) row: a stale identity
     # lookup would blank or cross-wire one group. US(1.0, 3.0), EU(2.0, 4.0).
@@ -759,33 +759,3 @@ def test_ordered_unique_dedupes_distinct_nan_objects():
     non_nans = [v for v in result if not (isinstance(v, float) and v != v)]
     assert len(nans) == 1
     assert non_nans == [1.0, 2.0]
-
-
-def test_row_and_nest_hostile_html_is_escaped_before_markdown_rendering(data):
-    payload = "seg<img src=x onerror=alert(1)>"
-    hostile = pd.DataFrame(
-        {
-            "area": ["Core", "Core"],
-            "metric": [f"m{payload}", f"m{payload}"],
-            "variant": [payload, "C"],
-            "rel": [3.4, -1.2],
-            "rel_lb": [1.2, -4.0],
-            "rel_ub": [5.7, 1.6],
-        }
-    )
-    out = resolve(base(hostile))
-    frame = nw.from_native(out.frame)
-    escaped_payload = "seg&lt;img src=x onerror=alert(1)&gt;"
-    assert frame["metric"].to_list()[0] == f"<b>m{escaped_payload}</b>"
-    assert frame["variant"].to_list()[0] == escaped_payload
-    for value in (*frame["metric"].to_list(), *frame["variant"].to_list()):
-        assert "<img" not in value
-
-
-def test_row_key_ampersand_is_escaped_exactly_once():
-    once = pd.DataFrame(
-        {"metric": ["A&B"], "variant": ["B"], "rel": [1.0], "rel_lb": [0.5], "rel_ub": [1.5]}
-    )
-    out = resolve(base(once))
-    frame = nw.from_native(out.frame)
-    assert frame["metric"].to_list() == ["<b>A&amp;B</b>"]

@@ -55,7 +55,7 @@ class Resolved:
         `collapsible.py` to leave untagged; the rest stay tied to
         whichever group they belong to.
     markdown_columns
-        Output columns whose contents are HTML.
+        Output columns whose contents are generated HTML fragments (trusted).
     plot_columns
         Output columns rendering a `Forest` bar or `Sparkline` line plot,
         so the renderer can trim their cell padding to let the SVG fill
@@ -303,13 +303,9 @@ def _build_output_frame(
     return nw.from_dict(data, backend=nw.get_native_namespace(frame)).to_native()
 
 
-def _build_display_and_markdown_columns(
-    table: CoefTable, display_columns: list[str]
-) -> tuple[list[str], list[str]]:
+def _build_visible_columns(table: CoefTable, display_columns: list[str]) -> list[str]:
     leading = [c for c in (table.groups, table.rows, table.nest) if c]
-    markdown = [c for c in (table.rows, table.nest) if c] + display_columns
-    display = [*(leading[1:] if table.groups else leading), *display_columns]
-    return display, markdown
+    return [*(leading[1:] if table.groups else leading), *display_columns]
 
 
 def resolve(table: CoefTable) -> Resolved:
@@ -372,7 +368,7 @@ def resolve(table: CoefTable) -> Resolved:
     )
 
     native_frame = _build_output_frame(table, frame, assembled, display_columns)
-    display, markdown = _build_display_and_markdown_columns(table, display_columns)
+    display = _build_visible_columns(table, display_columns)
 
     return Resolved(
         frame=native_frame,
@@ -384,7 +380,7 @@ def resolve(table: CoefTable) -> Resolved:
         divider_rows=assembled.divider_rows,
         axis_rows=assembled.axis_rows,
         shared_axis_rows=assembled.shared_axis_rows,
-        markdown_columns=markdown,
+        markdown_columns=display_columns,
         plot_columns=plot_columns,
         card_columns=card_columns,
     )
