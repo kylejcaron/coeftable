@@ -1,3 +1,19 @@
+<a id="v0.13.1"></a>
+# [v0.13.1](https://github.com/kylejcaron/coeftable/releases/tag/v0.13.1) - 2026-09-30
+
+<!-- Release notes generated using configuration in .github/release.yml at v0.13.1 -->
+
+## What's Changed
+### Maintenance
+* Update changelog for v0.13.0 by [@github-actions](https://github.com/github-actions)[bot] in [#63](https://github.com/kylejcaron/coeftable/pull/63)
+* Neutralize unsafe Markdown targets in table labels by [@kylejcaron](https://github.com/kylejcaron) in [#64](https://github.com/kylejcaron/coeftable/pull/64)
+
+
+**Full Changelog**: https://github.com/kylejcaron/coeftable/compare/v0.13.0...v0.13.1
+
+[Changes][v0.13.1]
+
+
 <a id="v0.13.0"></a>
 # [v0.13.0](https://github.com/kylejcaron/coeftable/releases/tag/v0.13.0) - 2026-09-28
 
@@ -282,6 +298,7 @@
 [Changes][v0.1.0]
 
 
+[v0.13.1]: https://github.com/kylejcaron/coeftable/compare/v0.13.0...v0.13.1
 [v0.13.0]: https://github.com/kylejcaron/coeftable/compare/v0.12.1...v0.13.0
 [v0.12.1]: https://github.com/kylejcaron/coeftable/compare/v0.12.0...v0.12.1
 [v0.12.0]: https://github.com/kylejcaron/coeftable/compare/v0.11.0...v0.12.0
