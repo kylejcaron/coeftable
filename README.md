@@ -69,6 +69,8 @@ to standalone `as_raw_html()` and the table's initial `.gt()` HTML rendering;
 subsequent formatting added through `.gt()` follows Great Tables' own rules.
 LaTeX export also escapes group and split-column labels, including numeric and
 date-valued groups.
+Native `.gt()` spanner styles and footnotes select split headings using their
+original string IDs.
 
 **Series columns bend this rule.** A point estimate is one number (plus
 bounds), so a triple of scalar columns holds it. A `.sparkline(...)` series

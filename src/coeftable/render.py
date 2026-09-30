@@ -33,6 +33,12 @@ _GROUP_HEADING = FormatFns(
 class _LiteralSpanner(Text):
     """Literal text that bypasses Great Tables' units preprocessing."""
 
+    def __eq__(self, other: object) -> bool:
+        """Match legacy spanner selectors against their string IDs."""
+        if isinstance(other, str):
+            return self.text == other
+        return super().__eq__(other)
+
     def to_html(self) -> str:
         """Escape the label for HTML."""
         return html.escape(self.text, quote=True)

@@ -5,7 +5,7 @@ from html.parser import HTMLParser
 
 import polars as pl
 import pytest
-from great_tables import GT
+from great_tables import GT, loc, style
 
 from coeftable.spec import CoefTable
 from coeftable.theme import MONO, TEXTUAL
@@ -108,6 +108,61 @@ def test_split_columns_emit_spanner_labels():
     )
     assert "OLS" in html
     assert "DiD" in html
+
+
+@pytest.mark.parametrize("label", ["OLS", "Density {{m s^-1}}", "R&D <alpha>"])
+@pytest.mark.parametrize("customization", ["style", "footnote"])
+def test_split_heading_customization_targets_the_original_string_id(label, customization):
+    class Cells(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.cells = []
+            self.text = None
+            self.styles = ""
+
+        def handle_starttag(self, tag, attrs):
+            if tag == "th":
+                self.text = ""
+                self.styles = ""
+            if self.text is not None:
+                self.styles += dict(attrs).get("style", "") or ""
+
+        def handle_data(self, data):
+            if self.text is not None:
+                self.text += data
+
+        def handle_endtag(self, tag):
+            if tag == "th" and self.text is not None:
+                self.cells.append((self.text.strip(), self.styles))
+                self.text = None
+
+    data = pl.DataFrame(
+        {"metric": ["Revenue", "Revenue"], "method": [label, "DiD"], "value": [1.0, 2.0]}
+    )
+    gt = CoefTable(data, rows="metric", split_columns="method").estimate("Value", "value").gt()
+    location = loc.spanner_labels(ids=[label])
+    if customization == "style":
+        gt = gt.tab_style(style.fill(color="#123abc"), locations=location)
+    else:
+        gt = gt.tab_footnote("Targeted heading note", locations=location)
+    markup = gt.as_raw_html()
+    cells = Cells()
+    cells.feed(markup)
+    targeted = next(cell for cell in cells.cells if cell[0].startswith(label))
+    untargeted = next(cell for cell in cells.cells if cell[0] == "DiD")
+    if customization == "style":
+        declarations = dict(
+            declaration.split(":", 1)
+            for declaration in targeted[1].split(";")
+            if ":" in declaration
+        )
+        assert {name.strip(): value.strip().lower() for name, value in declarations.items()}[
+            "background-color"
+        ] == "#123abc"
+        assert "#123abc" not in untargeted[1]
+    else:
+        assert targeted[0] != label
+        assert "Targeted heading note" in markup
 
 
 def test_groups_emit_section_headers():
