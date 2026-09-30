@@ -3,20 +3,28 @@
 from __future__ import annotations
 
 import html
+from importlib.metadata import version
 
 from great_tables import GT, loc, style
 from great_tables._gt_data import FormatFns
+from great_tables._text import _latex_escape
 
 from coeftable.collapsible import SHARED_AXIS_ROW_MARK
 from coeftable.frame import resolve
 from coeftable.labels import NEST_LABEL, ROW_LABEL
 from coeftable.spec import CoefTable
 
-# great_tables inserts a formatted group heading into HTML verbatim but
-# escapes it itself for LaTeX, so escape only the HTML context.
+# Great Tables 1.0 inserts formatted LaTeX headings verbatim; 0.x escapes them.
+_GROUP_LATEX_PREFORMATTED = version("great-tables").split(".", 1)[0] != "0"
+
+
+def _group_to_latex(text: str) -> str:
+    return _latex_escape(text) if _GROUP_LATEX_PREFORMATTED else text
+
+
 _GROUP_HEADING = FormatFns(
     html=lambda text: html.escape(str(text), quote=True),
-    latex=lambda text: text,
+    latex=_group_to_latex,
     default=lambda text: text,
 )
 

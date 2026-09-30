@@ -498,6 +498,19 @@ def test_group_labels_render_original_text_in_latex_and_escaped_in_html():
     assert "<alpha>" not in gt.as_raw_html()
 
 
+def test_group_labels_remain_literal_latex_with_special_characters():
+    import warnings
+
+    label = "50% budget_$#{}"
+    data = pl.DataFrame({"group": [label], "metric": ["A"], "value": [1.0]})
+    gt = CoefTable(data, rows="metric", groups="group").estimate("Value", "value").gt()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        latex = gt.as_latex()
+    assert r"50\% budget\_\$\#\{\}" in latex
+    assert label in gt.as_raw_html()
+
+
 def test_plain_row_labels_are_bold_and_repeated_keys_stay_blank():
     html = table().as_raw_html()
     assert html.count("<b>Revenue</b>") == 1
@@ -625,6 +638,24 @@ def test_percent_and_entity_encoded_token_lookalikes_in_urls_stay_literal():
     assert "qq0z" in html
 
 
+def test_overlapping_marker_lookalikes_in_text_remain_literal():
+    literal = "q0q0z q1q0z q0q1q1z Q2Q0z"
+    html = (
+        CoefTable(table_data_with(literal + " {{m}}", "B"), rows="metric", nest="variant")
+        .estimate("Lift %", "rel", ci=("rel_lb", "rel_ub"))
+        .as_raw_html()
+    )
+    assert literal in html
+
+
+def test_units_parking_has_bounded_expansion_for_long_literal_runs():
+    from coeftable.labels import _park_units
+
+    label = "q" * 2000 + " {{m}}" * 2000
+    parked, _, _ = _park_units(label)
+    assert len(parked) <= 4 * len(label)
+
+
 def test_units_inside_inline_code_stay_literal_text():
     html = (
         CoefTable(table_data_with("`{{m s^-1}}`", "B"), rows="metric", nest="variant")
@@ -642,6 +673,11 @@ def test_units_inside_inline_code_stay_literal_text():
         "https://example.com/%ee%80%800%ee%80%81",
         "https://example.com/qqq0z",
         "https://example.com/Q0zq1z",
+        "https://example.com/q0q0z",
+        "https://example.com/q0q1q0z",
+        "https://example.com/Q0Q0z",
+        "https://example.com/%710%710z",
+        "https://example.com/&#113;0q0z",
     ],
 )
 def test_label_text_resembling_internal_tokens_is_left_alone(url, suffix):

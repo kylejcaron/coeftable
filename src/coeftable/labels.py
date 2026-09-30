@@ -154,13 +154,13 @@ def _units_to_html(notation: str) -> str:
 
 
 def _park_units(text: str) -> tuple[str, re.Pattern[str], list[tuple[str, str]]]:
-    # Generated units markup would be dropped by safe-mode parsing, so park it
-    # behind ASCII tokens and restore it after parsing. The token prefix is
-    # longer than any run of its letter in `text`, so the label cannot contain
-    # or forge one, and ASCII letters/digits survive URL processing. Each
-    # entry is (generated html, literal source).
-    longest = max((len(run) for run in re.findall(r"q+", text, flags=re.IGNORECASE)), default=0)
-    prefix = "q" * (longest + 1)
+    # Reserve a short ASCII prefix absent from the label, including overlapping
+    # lookalikes. Never repeat an attacker-sized literal run in every marker.
+    reserved = {match[1] for match in re.finditer(r"(?=q([0-9]+)q)", text, re.IGNORECASE)}
+    salt = 0
+    while str(salt) in reserved:
+        salt += 1
+    prefix = f"q{salt}q"
     units: list[tuple[str, str]] = []
 
     def park(match: re.Match[str]) -> str:
