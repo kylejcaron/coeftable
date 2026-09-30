@@ -23,6 +23,7 @@ classifiers = [
 ]
 dependencies = [
     "great-tables>=0.22",
+    "multimark>=0.1.3",
     "narwhals>=2.24",
 ]
 

@@ -2,11 +2,23 @@
 
 from __future__ import annotations
 
+import html
+
 from great_tables import GT, loc, style
+from great_tables._gt_data import FormatFns
 
 from coeftable.collapsible import SHARED_AXIS_ROW_MARK
 from coeftable.frame import resolve
+from coeftable.labels import NEST_LABEL, ROW_LABEL
 from coeftable.spec import CoefTable
+
+# great_tables inserts a formatted group heading into HTML verbatim but
+# escapes it itself for LaTeX, so escape only the HTML context.
+_GROUP_HEADING = FormatFns(
+    html=lambda text: html.escape(str(text), quote=True),
+    latex=lambda text: text,
+    default=lambda text: text,
+)
 
 
 def to_gt(table: CoefTable) -> GT:
@@ -63,7 +75,14 @@ def to_gt(table: CoefTable) -> GT:
     if resolved.labels:
         gt = gt.cols_label(cases=dict(resolved.labels))
 
-    gt = gt.fmt_markdown(columns=resolved.markdown_columns).cols_align(align="center")
+    gt = gt.fmt_markdown(columns=resolved.markdown_columns)
+    if table.rows:
+        gt = gt.fmt(ROW_LABEL, columns=table.rows)
+    if table.nest:
+        gt = gt.fmt(NEST_LABEL, columns=table.nest)
+    if resolved.group_column:
+        gt = gt.fmt(_GROUP_HEADING, columns=resolved.group_column)
+    gt = gt.cols_align(align="center")
 
     if resolved.band_rows:
         gt = gt.tab_style(

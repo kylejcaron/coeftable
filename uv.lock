@@ -139,6 +139,7 @@ name = "coeftable"
 source = { editable = "." }
 dependencies = [
     { name = "great-tables" },
+    { name = "multimark" },
     { name = "narwhals" },
 ]
 
@@ -158,6 +159,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "great-tables", specifier = ">=0.22" },
+    { name = "multimark", specifier = ">=0.1.3" },
     { name = "narwhals", specifier = ">=2.24" },
     { name = "nox", marker = "extra == 'dev'", specifier = ">=2025.5" },
     { name = "pandas", marker = "extra == 'dev'", specifier = ">=2.2" },

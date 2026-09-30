@@ -62,6 +62,12 @@ a `parameter` column.
 - `split_columns` — an optional column whose values produce repeated column
   groups side by side, useful for comparing methods.
 
+Row and nested labels support safe Markdown, including `{{m s^-1}}` units
+notation. Raw HTML in labels is displayed as text; dangerous link targets are
+neutralized. Group and split-column labels are literal text. These rules apply
+to standalone `as_raw_html()` and the table's initial `.gt()` HTML rendering;
+subsequent formatting added through `.gt()` follows Great Tables' own rules.
+
 **Series columns bend this rule.** A point estimate is one number (plus
 bounds), so a triple of scalar columns holds it. A `.sparkline(...)` series
 is N points, not one -- most naturally via the companion-frame door, a
