@@ -1,5 +1,6 @@
 import random
 import re
+from datetime import date
 from html.parser import HTMLParser
 
 import polars as pl
@@ -534,6 +535,19 @@ def test_group_labels_remain_literal_latex_with_special_characters():
         latex = gt.as_latex()
     assert r"50\% budget\_\$\#\{\}" in latex
     assert label in gt.as_raw_html()
+
+
+@pytest.mark.parametrize("group", [7, date(2026, 1, 2)])
+def test_non_string_groups_render_as_labels_in_html_and_latex(group):
+    import warnings
+
+    data = pl.DataFrame({"group": [group], "metric": ["A"], "value": [1.0]})
+    gt = CoefTable(data, rows="metric", groups="group").estimate("Value", "value").gt()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        latex = gt.as_latex()
+    assert rf"\multicolumn{{2}}{{l}}{{{group}}}" in latex
+    assert str(group) in gt.as_raw_html()
 
 
 def test_plain_row_labels_are_bold_and_repeated_keys_stay_blank():

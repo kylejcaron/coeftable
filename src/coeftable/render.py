@@ -18,8 +18,9 @@ from coeftable.spec import CoefTable
 _GROUP_LATEX_PREFORMATTED = version("great-tables").split(".", 1)[0] != "0"
 
 
-def _group_to_latex(text: str) -> str:
-    return _latex_escape(text) if _GROUP_LATEX_PREFORMATTED else text
+def _group_to_latex(text: object) -> str:
+    literal = str(text)
+    return _latex_escape(literal) if _GROUP_LATEX_PREFORMATTED else literal
 
 
 _GROUP_HEADING = FormatFns(
