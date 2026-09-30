@@ -7,7 +7,7 @@ from importlib.metadata import version
 
 from great_tables import GT, loc, style
 from great_tables._gt_data import FormatFns
-from great_tables._text import _latex_escape
+from great_tables._text import Text, _latex_escape
 
 from coeftable.collapsible import SHARED_AXIS_ROW_MARK
 from coeftable.frame import resolve
@@ -27,6 +27,18 @@ _GROUP_HEADING = FormatFns(
     latex=_group_to_latex,
     default=lambda text: text,
 )
+
+
+class _LiteralSpanner(Text):
+    """Literal text that bypasses Great Tables' units preprocessing."""
+
+    def to_html(self) -> str:
+        """Escape the label for HTML."""
+        return html.escape(self.text, quote=True)
+
+    def to_latex(self) -> str:
+        """Escape the label for LaTeX."""
+        return _latex_escape(self.text)
 
 
 def to_gt(table: CoefTable) -> GT:
@@ -78,7 +90,7 @@ def to_gt(table: CoefTable) -> GT:
     )
 
     for split_value, columns in resolved.spanners.items():
-        gt = gt.tab_spanner(label=split_value, columns=columns)
+        gt = gt.tab_spanner(label=_LiteralSpanner(split_value), columns=columns)
 
     if resolved.labels:
         gt = gt.cols_label(cases=dict(resolved.labels))

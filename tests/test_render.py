@@ -445,6 +445,31 @@ def test_group_and_split_labels_never_render_executable_link_targets(label):
     assert _executable_urls(_group_split_table(label).as_raw_html()) == []
 
 
+@pytest.mark.parametrize(
+    "label",
+    ["{{[x](javascript:alert(1))}}", "{{m^[x](javascript:alert(1))}}"],
+)
+def test_units_wrapped_split_labels_never_render_executable_links(label):
+    assert _executable_urls(_group_split_table(label).as_raw_html()) == []
+
+
+def test_split_labels_preserve_literal_units_notation_in_html_and_latex():
+    import warnings
+
+    label = "Density {{m s^-1}}"
+    data = pl.DataFrame({"metric": ["A"], "arm": [label], "value": [1.0]})
+    gt = CoefTable(data, rows="metric", split_columns="arm").estimate("Value", "value").gt()
+    html = gt.as_raw_html()
+    assert label in html
+    assert "sup" not in {tag for tag, _ in _tags(html)}
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        latex = gt.as_latex()
+    assert (
+        r"Density \{\{m s\textasciicircum{}-1\}\}" in latex or r"Density \{\{m s\^-1\}\}" in latex
+    )
+
+
 def test_group_and_split_labels_render_raw_tags_as_text():
     payload = "<img src=x onerror=alert(1)>"
     html = _group_split_table(payload).as_raw_html()
