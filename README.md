@@ -520,7 +520,10 @@ history = pl.DataFrame({
 })
 table = ct.CoefTable(pl.DataFrame({"metric": ["Revenue"]}), rows="metric").sparkline(
     "Trend", value="estimate", x="day", data=history, ylim=(0, 3),
-    tooltip=ct.Tooltip(fields=[ct.TooltipField("n", label="Sample size")]),
+    tooltip=ct.Tooltip(
+        fields=[ct.TooltipField("n", label="Sample size")],
+        value_label="Revenue", x_label="Day",
+    ),
 )
 
 # Direct plots and card regions receive aligned arrays, not dataframe fields.
@@ -528,18 +531,22 @@ extras = [ct.TooltipValues("Sample size", [10, 20, 30])]
 line = sparkline_bar(
     [0, 2, 4], [1, None, 5], [None] * 3, [None] * 3,
     x_domain=(0, 4), domain=(0, 3), ref=None, color="#4C72B0", fmt=ct.Number(),
-    tooltip=ct.Tooltip(), tooltip_values=extras,
+    tooltip=ct.Tooltip(value_label="Revenue", x_label="Day"), tooltip_values=extras,
 )
 card = Card("Revenue", content=[
     Trend(
         x=[0, 2, 4], y=[1, None, 5], x_domain=(0, 4), domain=(0, 3),
-        tooltip=ct.Tooltip(), tooltip_values=extras,
+        tooltip=ct.Tooltip(value_label="Revenue", x_label="Day"), tooltip_values=extras,
     ),
 ])
 fragment = table.as_raw_html() + line + card.as_raw_html()
 document = ct.interactive_html(fragment, full_document=True)
 Path("inspection.html").write_text(document, encoding="utf-8")
 ```
+
+Primary values are bold; the x coordinate is context, not the headline.
+`Tooltip(value_label="Sales", x_label="Date")` names both values explicitly.
+Labels default to `Value` and `x`; forest inspection uses only `value_label`.
 
 `TooltipField` binds **main-frame scalar columns for forest plots**, main-frame
 list columns for list-mode sparklines, and **companion-frame scalar columns**

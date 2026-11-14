@@ -781,11 +781,18 @@ def test_forest_inspection_uses_row_fields_primary_format_and_preserves_blank_ce
     table = (
         CoefTable(raw, rows="metric")
         .estimate("Value", "y", ci=("lo", "hi"), fmt=lambda value: f"v={value:g}")
-        .forest("Plot", of="Value", ylim=(-2, 2), tooltip=Tooltip(fields=[TooltipField("n")]))
+        .forest(
+            "Plot",
+            of="Value",
+            ylim=(-2, 2),
+            tooltip=Tooltip(fields=[TooltipField("n")], value_label="Effect"),
+        )
     )
     payloads = re.findall(r'data-ct-tooltip="([^"]+)"', table.as_raw_html())
     assert len(payloads) == 1
-    point = json.loads(html.unescape(payloads[0]))["traces"][0]["points"][0]
+    payload = json.loads(html.unescape(payloads[0]))
+    assert payload["labels"]["value"] == "Effect"
+    point = payload["traces"][0]["points"][0]
     assert point["value_text"] == "v=5"
     assert point["lower_text"] == "v=4"
     assert point["upper_text"] == "v=6"

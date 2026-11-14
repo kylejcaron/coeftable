@@ -53,15 +53,19 @@ class Tooltip:
     """Enable observation inspection with optional fields and value/x formatters.
 
     Fields bind dataframe columns; direct plots instead accept TooltipValues.
+    ``value_label`` names the emphasized primary value; ``x_label`` names the
+    sparkline observation coordinate. Labels default to ``Value`` and ``x``.
     Configured values are disclosed to the browser, including off-scale samples.
     """
 
     fields: Sequence[TooltipField] = ()
     fmt: Format | None = None
     x_fmt: Format | None = None
+    value_label: str = "Value"
+    x_label: str = "x"
 
     def __post_init__(self) -> None:
-        """Snapshot fields and validate optional formatters."""
+        """Snapshot fields and validate formatters and labels."""
         try:
             fields = tuple(self.fields)
         except TypeError as error:
@@ -70,6 +74,8 @@ class Tooltip:
             raise SpecError("Tooltip fields must contain TooltipField declarations.")
         if any(fmt is not None and not callable(fmt) for fmt in (self.fmt, self.x_fmt)):
             raise SpecError("Tooltip formatters must be callable.")
+        if not isinstance(self.value_label, str) or not isinstance(self.x_label, str):
+            raise SpecError("Tooltip value and x labels must be strings.")
         object.__setattr__(self, "fields", fields)
 
 
@@ -129,4 +135,9 @@ def _resolved_tooltip(
         def x_fmt(value: float) -> str:
             return datetime.fromtimestamp(value, tz=UTC).strftime("%Y-%m-%d %H:%M:%S")
 
-    return Tooltip(fmt=fmt if tooltip.fmt is None else tooltip.fmt, x_fmt=x_fmt)
+    return Tooltip(
+        fmt=fmt if tooltip.fmt is None else tooltip.fmt,
+        x_fmt=x_fmt,
+        value_label=tooltip.value_label,
+        x_label=tooltip.x_label,
+    )

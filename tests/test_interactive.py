@@ -119,13 +119,17 @@ def test_union_selection_ties_gaps_duplicates_and_keyboard(page):
     target = page.locator(".ct-tooltip-target")
     target.focus()
     page.keyboard.press("Home")
-    assert page.locator(".ct-tooltip-x").inner_text() == "0"
+    assert page.locator(".ct-tooltip-x").inner_text() == "x: 0"
+    assert page.locator(".ct-tooltip-value").first.inner_text() == "Value: 1"
+    assert int(
+        page.locator(".ct-tooltip-value").first.evaluate("el => getComputedStyle(el).fontWeight")
+    ) > int(page.locator(".ct-tooltip-x").evaluate("el => getComputedStyle(el).fontWeight"))
     page.keyboard.press("ArrowRight")
-    assert page.locator(".ct-tooltip-x").inner_text() == "2"
+    assert page.locator(".ct-tooltip-x").inner_text() == "x: 2"
     page.keyboard.press("End")
-    assert page.locator(".ct-tooltip-x").inner_text() == "4"
+    assert page.locator(".ct-tooltip-x").inner_text() == "x: 4"
     page.keyboard.press("ArrowLeft")
-    assert page.locator(".ct-tooltip-x").inner_text() == "2"
+    assert page.locator(".ct-tooltip-x").inner_text() == "x: 2"
     accessibility = page.context.new_cdp_session(page)
     document = accessibility.send("DOM.getDocument")
     node_id = accessibility.send(
@@ -236,7 +240,7 @@ def test_scaled_plot_portal_escapes_clipping_drag_cancel_and_touch_release(page)
     assert box["y"] + box["height"] > 190
     page.mouse.down()
     page.mouse.move(620, 130)
-    assert page.locator(".ct-tooltip-x").inner_text() == "4"
+    assert page.locator(".ct-tooltip-x").inner_text() == "x: 4"
     page.mouse.up()
     target = page.locator(".ct-tooltip-target")
     target.dispatch_event("pointercancel", {"pointerId": 1})
@@ -301,7 +305,7 @@ def test_overlapping_mounts_dynamic_plots_removal_and_literal_content(page):
         ref=None,
         color="#123456",
         fmt=str,
-        tooltip=Tooltip(x_fmt=str),
+        tooltip=Tooltip(x_fmt=str, value_label=f"Sales {hostile}", x_label="Date"),
         tooltip_values=[TooltipValues("Note", [hostile] * 3)],
     )
     page.set_content(
@@ -318,11 +322,12 @@ def test_overlapping_mounts_dynamic_plots_removal_and_literal_content(page):
     page.locator("#one .ct-tooltip-target").focus()
     page.keyboard.press("Home")
     page.keyboard.press("ArrowRight")
-    assert page.locator(".ct-tooltip-x").inner_text() == "1"
+    assert page.locator(".ct-tooltip-x").inner_text() == "Date: 1"
+    assert page.locator(".ct-tooltip-value").inner_text() == f"Sales {hostile}: 2"
     assert hostile in _text(page)
     assert page.evaluate("window.tooltipAttack") is None
     page.locator("#two .ct-tooltip-target").focus()
-    assert page.locator(".ct-tooltip-x").inner_text() == "0"
+    assert page.locator(".ct-tooltip-x").inner_text() == "Date: 0"
     page.evaluate("document.querySelector('#two').remove()")
     page.locator(".ct-tooltip-panel").wait_for(state="hidden")
     page.evaluate(

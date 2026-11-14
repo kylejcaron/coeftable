@@ -1,7 +1,7 @@
 """Explicit browser activation for trusted coeftable HTML fragments.
 
 SVG payload v1 contains version, kind, rect (left/right/top/bottom), theme
-colors (surface/text/axis) and ordered traces (label/color/points). Points
+colors (surface/text/axis), labels (value/x) and ordered traces (label/color/points). Points
 carry original index, x, projected px/py, x/value/lower/upper display text,
 status and ordered extras. Forest points have null x/px/py plus unbounded
 endpoint flags; they bypass sparkline nearest-observation selection.

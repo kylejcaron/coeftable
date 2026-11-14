@@ -15,7 +15,8 @@
  white-space:normal;box-shadow:0 3px 16px #0003;pointer-events:none}
 .ct-tooltip-panel[hidden]{display:none}
 .ct-tooltip-panel:focus-visible,.ct-tooltip-target:focus-visible{outline:2px solid currentColor;outline-offset:2px}
-.ct-tooltip-x{font-weight:650;margin-bottom:5px}
+.ct-tooltip-x{margin-bottom:5px}
+.ct-tooltip-value{font-weight:650}
 .ct-tooltip-trace+.ct-tooltip-trace{margin-top:7px}
 .ct-tooltip-sample+.ct-tooltip-sample{margin-top:5px}
 .ct-tooltip-target{touch-action:pan-y}
@@ -157,7 +158,9 @@
     panel.style.backgroundColor = data.colors.surface;
     panel.style.color = data.colors.text;
     panel.style.borderColor = data.colors.axis;
-    if (data.kind === "sparkline") panel.append(node("div", "ct-tooltip-x", selected[0].x_text));
+    if (data.kind === "sparkline") {
+      panel.append(node("div", "ct-tooltip-x", `${data.labels.x}: ${selected[0].x_text}`));
+    }
     clearGuide(svg);
     if (data.kind === "sparkline") {
       svgMark(svg, "line", {x1:xs[index][1], x2:xs[index][1], y1:r.top, y2:r.bottom,
@@ -175,7 +178,7 @@
       for (const point of points) {
         const sample = node("div", "ct-tooltip-sample");
         const status = ["value", "missing"].includes(point.status) ? "" : ` (${point.status} scale)`;
-        sample.append(node("div", "ct-tooltip-value", point.value_text + status));
+        sample.append(node("div", "ct-tooltip-value", `${data.labels.value}: ${point.value_text}${status}`));
         if (point.lower_text !== "Missing" || point.upper_text !== "Missing") {
           sample.append(node("div", "ct-tooltip-interval", `Interval: ${point.lower_text} … ${point.upper_text}`));
         }

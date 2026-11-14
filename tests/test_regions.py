@@ -981,7 +981,12 @@ def test_region_inspection_matches_direct_primitives_without_changing_dimensions
         def __call__(self, value):
             return f"observed:{value:g}"
 
-    tooltip = Tooltip(fmt=ObservationFormat(), x_fmt=ObservationFormat())
+    tooltip = Tooltip(
+        fmt=ObservationFormat(),
+        x_fmt=ObservationFormat(),
+        value_label="Sales",
+        x_label="Date",
+    )
     extras = [TooltipValues("n", [10, 20])]
     trend = Trend(
         x=[0, 2],
@@ -1014,6 +1019,10 @@ def test_region_inspection_matches_direct_primitives_without_changing_dimensions
     assert json.loads(region_root.attrib["data-ct-tooltip"]) == json.loads(
         direct_root.attrib["data-ct-tooltip"]
     )
+    assert json.loads(region_root.attrib["data-ct-tooltip"])["labels"] == {
+        "value": "Sales",
+        "x": "Date",
+    }
     point = json.loads(region_root.attrib["data-ct-tooltip"])["traces"][0]["points"][0]
     assert point["value_text"] == "observed:1"
     assert point["x_text"] == "observed:0"

@@ -364,6 +364,7 @@ def _inspection_svg(
     rect: dict[str, float],
     traces: list[dict[str, Any]],
     theme: Theme,
+    tooltip: Tooltip,
 ) -> str:
     """Attach escaped payload v1 without altering existing drawing geometry."""
     if rect["right"] <= rect["left"] or rect["bottom"] <= rect["top"]:
@@ -373,6 +374,7 @@ def _inspection_svg(
         "kind": kind,
         "rect": rect,
         "colors": {"surface": theme.surface, "text": theme.text, "axis": theme.axis},
+        "labels": {"value": tooltip.value_label, "x": tooltip.x_label},
         "traces": traces,
     }
     attribute = html.escape(
@@ -1188,6 +1190,7 @@ def forest_bar(
             rect={"left": area.left, "right": area.right, "top": 0, "bottom": height},
             traces=[{"label": "", "color": color, "points": [point]}],
             theme=theme,
+            tooltip=tooltip,
         )
     return _svg(width, height, "".join(body))
 
@@ -1821,6 +1824,7 @@ def sparkline_multi(
                 },
                 traces=payload_traces,
                 theme=theme,
+                tooltip=tooltip,
             )
     return _svg(width, height, "".join(body))
 
