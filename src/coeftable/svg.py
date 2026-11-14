@@ -1473,7 +1473,8 @@ class Trace(NamedTuple):
         Draw this trace's uncertainty ribbon. `False` still draws the
         line; it only withholds the ribbon polygon.
     label
-        Series identity, for the caller's legend. Unused by rendering.
+        Series identity for the caller's legend and the inspection heading
+        when tooltips are enabled. Static drawing does not display it.
     """
 
     x: Sequence[float | None]

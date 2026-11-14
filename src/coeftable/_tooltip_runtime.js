@@ -30,6 +30,8 @@
 
   function visible(svg) {
     if (!svg.isConnected || !svg.getClientRects().length) return false;
+    // Closed details content can retain layout boxes despite not being rendered.
+    if (svg.checkVisibility?.() === false) return false;
     const computed = getComputedStyle(svg);
     return computed.display !== "none" && computed.visibility !== "hidden" &&
       svg.getBoundingClientRect().width > 0 && svg.getBoundingClientRect().height > 0;
@@ -147,7 +149,6 @@
     clearTimeout(dismissTimer);
     if (active && active.svg !== svg) hide();
     if (!active) active = {svg, state, capture:null, touchHeld:false};
-    active.touchHeld = false;
     state.index = index;
     const {data, xs} = state, r = data.rect;
     const x = data.kind === "sparkline" ? xs[index][0] : null;
@@ -204,12 +205,16 @@
     panel.scrollTop = 0;
   }
 
+  function mountedRoot(svg) {
+    let ancestor = svg;
+    while (ancestor && !mounts.has(ancestor)) ancestor = ancestor.parentNode;
+    return ancestor;
+  }
+
   function routed(root, event, cachedOnly = false) {
     const svg = event.target.closest?.("svg[data-ct-tooltip]");
     if (!svg) return null;
-    let nearestRoot = svg;
-    while (nearestRoot && !mounts.has(nearestRoot)) nearestRoot = nearestRoot.parentNode;
-    if (nearestRoot !== root) return null;
+    if (mountedRoot(svg) !== root) return null;
     const state = cachedOnly ? cache.get(svg) : setup(svg);
     return state ? {svg, state} : null;
   }
@@ -236,6 +241,9 @@
     const r = state.data.rect;
     if (active?.capture == null && (local.x < r.left || local.x > r.right || local.y < r.top || local.y > r.bottom)) return;
     render(svg, state, state.data.kind === "forest" ? 0 : nearest(state.xs, local.x));
+    if (active && (event.pointerType === "mouse" || event.type === "pointerdown")) {
+      active.touchHeld = false;
+    }
     if (event.type === "pointerdown" && active) {
       active.capture = event.pointerId;
       // Synthetic pointer events may have no browser-managed pointer to capture.
@@ -270,6 +278,7 @@
     else return;
     event.preventDefault();
     render(svg, state, state.data.kind === "forest" ? 0 : Math.max(0, Math.min(state.xs.length-1, index)));
+    if (active) active.touchHeld = false;
   }
 
   function outside(event) {
@@ -277,6 +286,7 @@
   }
   function scroll(event) { if (!panel?.contains(event.target)) hide(); }
   function escape(event) { if (event.key === "Escape") hide(); }
+  function validateActive() { if (active && !geometry(active.svg)) hide(); }
 
   function initialize() {
     panel = node("div", "ct-tooltip-panel");
@@ -294,20 +304,23 @@
     document.addEventListener("pointerdown", outside, true);
     document.addEventListener("scroll", scroll, true);
     document.addEventListener("keydown", escape);
+    document.addEventListener("toggle", validateActive, true);
+    document.addEventListener("change", validateActive, true);
     window.addEventListener("resize", hide);
     observer = new MutationObserver(records => {
       const relevant = records.some(record => !record.target.closest?.(".ct-tooltip-panel,.ct-tooltip-guide,.ct-tooltip-highlight"));
       if (!relevant) return;
       for (const record of records) {
-        if (record.attributeName === "data-ct-tooltip" && record.target instanceof SVGSVGElement) {
+        if (record.attributeName === "data-ct-tooltip" &&
+            record.target instanceof SVGSVGElement && mountedRoot(record.target)) {
           setup(record.target);
         }
       }
       for (const root of mounts.keys()) scan(root);
-      if (active && (!visible(active.svg) || !geometry(active.svg))) hide();
+      validateActive();
     });
     observer.observe(document.documentElement, {subtree:true, childList:true, attributes:true,
-      attributeFilter:["style", "class", "hidden", "data-ct-tooltip"]});
+      attributeFilter:["style", "class", "hidden", "open", "data-ct-tooltip"]});
   }
 
   function mount(root) {
@@ -336,9 +349,7 @@
       if (active && root.contains(active.svg)) hide();
       const svgs = root.matches?.("svg[data-ct-tooltip]") ? [root] : root.querySelectorAll("svg[data-ct-tooltip]");
       for (const svg of svgs) {
-        let ancestor = svg;
-        while (ancestor && !mounts.has(ancestor)) ancestor = ancestor.parentNode;
-        if (!ancestor) {
+        if (!mountedRoot(svg)) {
           clearGuide(svg);
           svg.querySelector(".ct-tooltip-target")?.remove();
           cache.delete(svg);
@@ -350,6 +361,8 @@
         document.removeEventListener("pointerdown", outside, true);
         document.removeEventListener("scroll", scroll, true);
         document.removeEventListener("keydown", escape);
+        document.removeEventListener("toggle", validateActive, true);
+        document.removeEventListener("change", validateActive, true);
         window.removeEventListener("resize", hide);
         panel.remove();
         style.remove();

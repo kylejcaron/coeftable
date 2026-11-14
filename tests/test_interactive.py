@@ -378,3 +378,77 @@ def test_payload_changes_dismiss_stale_values_and_remove_unsupported_controls(pa
     page.evaluate("document.querySelector('svg').removeAttribute('data-ct-tooltip')")
     page.wait_for_function("document.querySelectorAll('.ct-tooltip-target').length === 0")
     assert page.locator(".ct-tooltip-panel").is_hidden()
+
+
+@pytest.mark.integration
+def test_disposed_root_stays_passive_when_sibling_mount_observes_metadata_changes(page):
+    page.set_content(interactive_html(_plot()) + interactive_html(_plot()))
+    page.evaluate("""() => {
+        const root = document.querySelector('.ct-interactive');
+        coeftableTooltips.mount(root)();
+        const svg = root.querySelector('svg');
+        const data = JSON.parse(svg.dataset.ctTooltip);
+        data.traces[0].label = 'Updated passive plot';
+        svg.dataset.ctTooltip = JSON.stringify(data);
+    }""")
+    page.evaluate("() => new Promise(resolve => requestAnimationFrame(resolve))")
+    roots = page.locator(".ct-interactive")
+    assert roots.first.locator(".ct-tooltip-target").count() == 0
+    roots.last.locator(".ct-tooltip-target").focus()
+    page.keyboard.press("End")
+    assert "5" in _text(page)
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("container", ["card", "table"])
+def test_touch_inspector_dismisses_when_keyboard_collapses_its_container(page, container):
+    import polars as pl
+
+    from coeftable import CoefTable
+    from coeftable.cards import Card, Trend
+
+    if container == "card":
+        fragment = Card(
+            "A",
+            content=[
+                Trend(
+                    x=[0, 2],
+                    y=[1, 2],
+                    x_domain=(0, 2),
+                    domain=(0, 3),
+                    tooltip=Tooltip(),
+                    show_axis=False,
+                )
+            ],
+        ).as_raw_html()
+    else:
+        frame = pl.DataFrame(
+            {
+                "metric": ["A"],
+                "group": ["One"],
+                "x": [[0, 2]],
+                "y": [[1, 2]],
+            }
+        )
+        fragment = (
+            CoefTable(
+                frame,
+                rows="metric",
+                groups="group",
+                collapsible_groups=True,
+            )
+            .sparkline("Trend", value="y", x="x", tooltip=Tooltip())
+            .as_raw_html()
+        )
+    page.clock.install()
+    page.set_content(interactive_html(fragment))
+    target = page.locator(".ct-tooltip-target")
+    box = target.bounding_box()
+    page.touchscreen.tap(box["x"] + box["width"] / 2, box["y"] + 4)
+    assert "1" in _text(page)
+    page.keyboard.press("Shift+Tab")
+    page.clock.run_for(150)
+    assert page.locator(".ct-tooltip-panel").is_visible()
+    page.keyboard.press("Space")
+    assert target.is_hidden()
+    page.locator(".ct-tooltip-panel").wait_for(state="hidden")
