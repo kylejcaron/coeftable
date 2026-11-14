@@ -42,6 +42,7 @@ from coeftable.svg import (
     sparkline_multi,
 )
 from coeftable.theme import DEFAULT, ColorRule, Direction, Role, Theme, role_for
+from coeftable.tooltips import Tooltip, TooltipValues, _resolved_tooltip, format_tooltip_values
 
 if TYPE_CHECKING:
     from great_tables import GT
@@ -452,6 +453,11 @@ def _estimate_by_label(columns: tuple[Column, ...], label: str) -> Estimate:
     raise KeyError(label)  # pragma: no cover - guaranteed by validate_columns
 
 
+def _series_tooltip_values(series: Series) -> tuple[TooltipValues, ...]:
+    """Adapt cached, already-formatted extras without rebinding source fields."""
+    return tuple(TooltipValues(label, values) for label, values in series.tooltip_columns)
+
+
 @dataclass(frozen=True)
 class _ForestState:
     domains: dict[Any, tuple[float, float]]
@@ -461,11 +467,15 @@ class _ForestState:
     high: list[float | None]
     clipped: frozenset[Any]
     annotations: PreparedAnnotations
+    tooltip_columns: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
 
 @dataclass(frozen=True)
 class Forest:
     """A column rendering an inline SVG interval bar.
+
+    ``tooltip=Tooltip()`` includes observation metadata. Its fields bind scalar
+    columns on the main frame; activate the composed HTML with ``interactive_html``.
 
     Parameters
     ----------
@@ -519,10 +529,14 @@ class Forest:
     show_axis: bool = True
     axis_fmt: Format | None = None
     annotations: tuple[Annotation, ...] = ()
+    tooltip: Tooltip | None = None
 
     def sources(self) -> Iterable[str]:
         """Frame columns read by this plot's annotations."""
-        return annotation_sources(self.annotations)
+        return (
+            *annotation_sources(self.annotations),
+            *((field.source for field in self.tooltip.fields) if self.tooltip else ()),
+        )
 
     def prepare(self, scan: Scan) -> Prepared:
         """Compute this column's per-key domains, annotations, and footer schedule."""
@@ -531,6 +545,20 @@ class Forest:
         source_state: _EstimateState = source.prepare(scan).payload
         assert source_state.low is not None and source_state.high is not None  # noqa: S101
         value, low, high = source_state.value, source_state.low, source_state.high
+        tooltip_columns = format_tooltip_values(
+            [
+                TooltipValues(
+                    field.label if field.label is not None else field.source,
+                    scan.frame[field.source].to_list(),
+                    field.fmt,
+                )
+                for field in self.tooltip.fields
+            ]
+            if self.tooltip
+            else (),
+            size=len(value),
+            context=f"Forest {self.label!r}",
+        )
         row_identities = tuple(
             zip(scan.row_keys, scan.nest_keys, scan.group_keys, scan.split_keys, strict=True)
         )
@@ -580,6 +608,7 @@ class Forest:
                 high=high,
                 annotations=annotations,
                 clipped=clipped,
+                tooltip_columns=tooltip_columns,
             ),
             footer_key=footer_key if self.show_axis else None,
             shared_footer=self.scale in ("table", "split_column"),
@@ -608,6 +637,11 @@ class Forest:
             height=_plot_height((state.source,), self.height),
             margin=CLIP_MARGIN if key in state.clipped else 0,
             annotations=state.annotations.by_row[ctx.index],
+            tooltip=_resolved_tooltip(self.tooltip, state.source.fmt),
+            tooltip_values=[
+                TooltipValues(label, (values[ctx.index],))
+                for label, values in state.tooltip_columns
+            ],
         )
 
     def footer(self, ctx: Footer) -> str | None:
@@ -818,6 +852,10 @@ def _last_point(series: Series) -> tuple[float, float | None, float | None] | No
 class Sparkline:
     """A column rendering an inline SVG line plot with an uncertainty ribbon.
 
+    ``tooltip=Tooltip()`` includes observation metadata. Extra fields bind list
+    columns on the main frame or scalar columns on ``data``. Activate the
+    composed HTML with ``interactive_html``; rendering alone stays passive.
+
     Unlike `Forest`, `Sparkline` does not bind to an `Estimate` via `of`; a
     series has no scalar estimate to bind to, so it declares its own
     columns. Two front doors resolve to the same series shape: `value`
@@ -979,6 +1017,7 @@ class Sparkline:
     annotations: tuple[Annotation, ...] = ()
     show_y_axis: bool = False
     y_axis_fmt: Format | None = None
+    tooltip: Tooltip | None = None
 
     def sources(self) -> Iterable[str]:
         """Frame columns this plot reads, including main-frame annotation fields."""
@@ -988,6 +1027,8 @@ class Sparkline:
         if self.data is None and self.x is not None:
             names.append(self.x)
         names.extend(annotation_sources(self.annotations))
+        if self.data is None and self.tooltip is not None:
+            names.extend(field.source for field in self.tooltip.fields)
         return tuple(dict.fromkeys(names))
 
     def prepare(self, scan: Scan) -> Prepared:
@@ -1004,7 +1045,12 @@ class Sparkline:
             series_list: list[list[Series]] = [
                 [s]
                 for s in resolve_list_series(
-                    scan.frame, scan.row_keys, value=self.value, ci=self.ci, x=self.x
+                    scan.frame,
+                    scan.row_keys,
+                    value=self.value,
+                    ci=self.ci,
+                    x=self.x,
+                    tooltip_fields=self.tooltip.fields if self.tooltip else (),
                 )
             ]
         else:
@@ -1071,6 +1117,7 @@ class Sparkline:
                     value=self.value,
                     ci=self.ci,
                     x=self.x,
+                    tooltip_fields=self.tooltip.fields if self.tooltip else (),
                 )
                 series_list = [[by_identity[identity]] for identity in identities]
             else:
@@ -1089,6 +1136,7 @@ class Sparkline:
                     ci=self.ci,
                     x=self.x,
                     series=self.series,
+                    tooltip_fields=self.tooltip.fields if self.tooltip else (),
                 )
                 empty = Series(x=[], y=[], lower=[], upper=[], x_temporal=False)
                 series_list = []
@@ -1168,6 +1216,7 @@ class Sparkline:
         arms = state.series[ctx.index]
         annotations = state.annotations.by_row[ctx.index]
         ref = self.ref if self.show_ref else None
+        tooltip = _resolved_tooltip(self.tooltip, self.fmt, temporal=state.x_temporal)
 
         if self.series is None:
             series = arms[0]
@@ -1202,6 +1251,8 @@ class Sparkline:
                     show_clip_indicators=self.show_clip_indicators,
                     annotations=annotations,
                     theme=ctx.theme,
+                    tooltip=tooltip,
+                    tooltip_values=_series_tooltip_values(series),
                 )
             trace = Trace(
                 x=series.x,
@@ -1229,14 +1280,21 @@ class Sparkline:
                 show_clip_indicators=self.show_clip_indicators,
                 annotations=annotations,
                 theme=ctx.theme,
+                tooltip=tooltip,
+                tooltip_values=[_series_tooltip_values(series)] if tooltip else (),
             )
 
         show_ribbon = self.show_ribbon is True
         traces = []
+        trace_extras = []
+        if not any(_last_point(series) is not None for series in arms):
+            return ""
         for order_index, (arm_key, series) in enumerate(zip(state.series_keys, arms, strict=True)):
-            if _last_point(series) is None:
+            drawable = _last_point(series) is not None
+            if not drawable and tooltip is None:
                 continue
             color = (self.series_colors or {}).get(arm_key, ctx.theme.series_color(order_index))
+            trace_extras.append(_series_tooltip_values(series))
             traces.append(
                 Trace(
                     x=series.x,
@@ -1244,7 +1302,7 @@ class Sparkline:
                     lower=series.lower,
                     upper=series.upper,
                     color=color,
-                    show_ribbon=show_ribbon,
+                    show_ribbon=show_ribbon and drawable,
                     label=str(arm_key),
                 )
             )
@@ -1269,6 +1327,8 @@ class Sparkline:
             show_clip_indicators=self.show_clip_indicators,
             annotations=annotations,
             theme=ctx.theme,
+            tooltip=tooltip,
+            tooltip_values=trace_extras if tooltip else (),
         )
 
     def footer(self, ctx: Footer) -> str | None:
@@ -1551,8 +1611,12 @@ class CoefTable:
         show_axis: bool = True,
         axis_fmt: Format | None = None,
         annotations: Sequence[Annotation] = (),
+        tooltip: Tooltip | None = None,
     ) -> CoefTable:
         """Append a forest-plot column bound to an existing estimate.
+
+        ``tooltip`` fields bind main-frame scalar columns and require explicit
+        HTML activation with ``interactive_html`` for browser inspection.
 
         Parameters
         ----------
@@ -1610,6 +1674,7 @@ class CoefTable:
                 show_axis=show_axis,
                 axis_fmt=axis_fmt,
                 annotations=tuple(annotations),
+                tooltip=tooltip,
             )
         )
 
@@ -1684,8 +1749,12 @@ class CoefTable:
         series_colors: Mapping[Any, str] | None = None,
         show_ribbon: bool | None = None,
         annotations: Sequence[Annotation] = (),
+        tooltip: Tooltip | None = None,
     ) -> CoefTable:
         """Append a sparkline column plotting a series with uncertainty.
+
+        ``tooltip`` fields bind the same frame as ``value`` (main-frame lists
+        or companion scalars). Rendering remains passive until ``interactive_html``.
 
         Parameters
         ----------
@@ -1826,6 +1895,7 @@ class CoefTable:
                 series_colors=series_colors,
                 show_ribbon=show_ribbon,
                 annotations=tuple(annotations),
+                tooltip=tooltip,
             )
         )
 

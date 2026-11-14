@@ -392,3 +392,57 @@ def test_series_arg_identity_with_no_rows_resolves_empty_list(make):
         series="arm",
     )
     assert result[("Ghost", None, None, None)] == []
+
+
+def test_companion_extras_follow_sort_and_stay_with_identity_and_arm(make):
+    from coeftable.tooltips import TooltipField
+
+    raw = {
+        "metric": ["A", "A", "A", "A", "B"],
+        "arm": ["control", "control", "control", "other", "control"],
+        "x": [3, 1, 2, 1, 1],
+        "y": [30, 10, None, 99, 88],
+        "n": [300, 100, 200, 990, 880],
+    }
+    result = resolve_companion_series(
+        make(raw),
+        [("A", None, None, None), ("B", None, None, None)],
+        rows="metric",
+        nest=None,
+        groups=None,
+        split_columns=None,
+        value="y",
+        x="x",
+        series="arm",
+        tooltip_fields=[TooltipField("n", label="Count")],
+    )
+    control, other = result[("A", None, None, None)]
+    assert control[1].x == [1, 2, 3]
+    assert control[1].y == [10, None, 30]
+    assert control[1].tooltip_columns == (("Count", ("100", "200", "300")),)
+    assert other[1].tooltip_columns == (("Count", ("990",)),)
+    assert result[("B", None, None, None)][0][1].tooltip_columns == (("Count", ("880",)),)
+
+
+def test_list_extras_retain_observation_order(make):
+    from coeftable.tooltips import TooltipField
+
+    raw = {"y": [[30, 10, None]], "x": [[3, 1, 2]], "n": [[300, 100, 200]]}
+    resolved = resolve_list_series(
+        _frame(make, raw), ["A"], value="y", x="x", tooltip_fields=[TooltipField("n")]
+    )[0]
+    assert resolved.x == [3, 1, 2]
+    assert resolved.tooltip_columns == (("n", ("300", "100", "200")),)
+
+
+def test_unknown_tooltip_source_raises_column_not_found(make):
+    from coeftable.errors import ColumnNotFoundError
+    from coeftable.tooltips import TooltipField
+
+    with pytest.raises(ColumnNotFoundError):
+        resolve_list_series(
+            _frame(make, {"y": [[1]]}),
+            ["A"],
+            value="y",
+            tooltip_fields=[TooltipField("absent")],
+        )

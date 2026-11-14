@@ -30,3 +30,15 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - run: uv run --with nox nox -s "tests-${{ matrix.python-version }}"
+
+  browser:
+    runs-on: ubuntu-latest
+    needs: prek
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+      - run: uv sync --extra dev --extra browser
+      - run: uv run python -m playwright install --with-deps chromium
+      - run: uv run pytest --no-cov tests/test_interactive.py
