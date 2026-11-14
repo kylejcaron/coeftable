@@ -2086,3 +2086,69 @@ def test_sparkline_empty_multi_series_cell_excludes_its_annotations_from_domains
     ].to_list()
     assert "#123456" in plots[0] and "#abcdef" in plots[0]
     assert plots[1] == ""
+
+
+@pytest.mark.integration
+def test_table_inspection_retains_missing_only_and_absent_arms_without_new_drawing(
+    inspection_table,
+):
+    import html
+    import json
+    import xml.etree.ElementTree as ET
+
+    from coeftable import Tooltip
+
+    output = inspection_table.as_raw_html()
+    payloads = re.findall(r'data-ct-tooltip="([^"]+)"', output)
+    assert len(payloads) == 1
+    payload = json.loads(html.unescape(payloads[0]))
+    arms = {trace["label"]: trace["points"] for trace in payload["traces"]}
+    assert arms["absent"] == []
+    assert arms["drawn"][0]["extras"] == [["n", "10"]]
+    assert arms["drawn"][1]["extras"] == [["n", "30"]]
+    assert arms["missing"][0]["x"] == 2
+    assert arms["missing"][0]["status"] == "missing"
+    assert arms["missing"][0]["extras"] == [["n", "20"]]
+    enabled_frame = nw.from_native(resolve(inspection_table).frame)
+    column = inspection_table.columns[0]
+    passive = inspection_table._with(columns=(replace(column, tooltip=None),))
+    enabled_svg = ET.fromstring(enabled_frame["Trend"].to_list()[0])  # noqa: S314
+    del enabled_svg.attrib["data-ct-tooltip"]
+    static_svg = ET.fromstring(nw.from_native(resolve(passive).frame)["Trend"].to_list()[0])  # noqa: S314
+    assert ET.tostring(enabled_svg) == ET.tostring(static_svg)
+    assert enabled_frame["Trend"].to_list()[1] == ""
+    assert isinstance(column.tooltip, Tooltip)
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("ribbon", [None, False])
+def test_list_table_inspection_preserves_extras_and_full_temporal_text(ribbon):
+    import html
+    import json
+
+    from coeftable import Tooltip, TooltipField
+
+    raw = pl.DataFrame(
+        {
+            "metric": ["A"],
+            "y": [[1, 2]],
+            "x": [[dt.date(2024, 1, 14), dt.date(2024, 2, 14)]],
+            "n": [[1000000, 2]],
+        }
+    )
+    table = CoefTable(raw, rows="metric").sparkline(
+        "Trend",
+        value="y",
+        x="x",
+        ref=None,
+        show_ribbon=ribbon,
+        tooltip=Tooltip(fields=[TooltipField("n")]),
+    )
+    output = table.as_raw_html()
+    payload = json.loads(html.unescape(re.findall(r'data-ct-tooltip="([^"]+)"', output)[0]))
+    point = payload["traces"][0]["points"][0]
+    assert point["x_text"] == "2024-01-14 00:00:00"
+    assert point["extras"] == [["n", "1000000"]]
+    column = table.columns[0]
+    assert isinstance(column, Sparkline)
+    assert _prepared_sparkline(raw, column, rows="metric").domains[("row", "A")][1] < 100

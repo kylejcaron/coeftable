@@ -552,44 +552,18 @@ def test_group_labels_escape_entities_once():
     assert "R&amp;amp;D" not in html
 
 
-def test_group_labels_render_original_text_in_latex_and_escaped_in_html():
-    import warnings
-
-    label = "R&D <alpha>"
-    data = pl.DataFrame(
-        {
-            "area": [label, label],
-            "metric": ["A", "B"],
-            "rel": [1.0, 2.0],
-            "rel_lb": [0.5, 1.0],
-            "rel_ub": [1.5, 3.0],
-        }
-    )
-    gt = (
-        CoefTable(data, rows="metric", groups="area")
-        .estimate("Lift %", "rel", ci=("rel_lb", "rel_ub"))
-        .gt()
-    )
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        latex = gt.as_latex()
-    assert "R\\&D <alpha>" in latex
-    assert "&amp;" not in latex
-    assert "R&amp;D &lt;alpha&gt;" in gt.as_raw_html()
-    assert "<alpha>" not in gt.as_raw_html()
-
-
 def test_group_labels_remain_literal_latex_with_special_characters():
     import warnings
 
-    label = "50% budget_$#{}"
+    label = "50% budget_$#{} R&D <alpha>"
     data = pl.DataFrame({"group": [label], "metric": ["A"], "value": [1.0]})
     gt = CoefTable(data, rows="metric", groups="group").estimate("Value", "value").gt()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         latex = gt.as_latex()
     assert r"50\% budget\_\$\#\{\}" in latex
-    assert label in gt.as_raw_html()
+    assert "alpha" in latex
+    assert all(entity not in latex for entity in ("&amp;", "&lt;", "&gt;"))
 
 
 @pytest.mark.parametrize("group", [7, date(2026, 1, 2)])

@@ -11,14 +11,16 @@ coerces values and detects a temporal x -- callers only ever see a `Series`.
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, overload
 
 import narwhals as nw
 
 from coeftable._axis import _coerce_temporal, _detect_temporal
-from coeftable.errors import SpecError
+from coeftable.errors import ColumnNotFoundError, SpecError
 from coeftable.format import coerce_numeric
+from coeftable.tooltips import TooltipField, TooltipValues, format_tooltip_values
 
 
 @dataclass(frozen=True)
@@ -57,6 +59,7 @@ class Series:
     lower: list[float | None]
     upper: list[float | None]
     x_temporal: bool = False
+    tooltip_columns: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
 
 def _nan_to_none(values: list[Any]) -> list[Any]:
@@ -79,6 +82,7 @@ def _build_series(
     x_raw: list[Any] | None,
     *,
     row_key: Any,
+    tooltip_values: Sequence[TooltipValues] = (),
 ) -> Series:
     """Validate one row's parallel raw lists and coerce them into a `Series`.
 
@@ -148,6 +152,9 @@ def _build_series(
             else coerce_numeric(upper_raw, subject=f"Sparkline row {row_key!r} upper bound")
         ),
         x_temporal=x_temporal,
+        tooltip_columns=format_tooltip_values(
+            tooltip_values, size=n, context=f"Sparkline row {row_key!r}"
+        ),
     )
 
 
@@ -164,6 +171,7 @@ def resolve_list_series(
     value: str,
     ci: tuple[str, str] | None = None,
     x: str | None = None,
+    tooltip_fields: Sequence[TooltipField] = (),
 ) -> list[Series]:
     """Resolve one `Series` per frame row from list-valued columns.
 
@@ -197,10 +205,12 @@ def resolve_list_series(
         When a row's `value`, `ci` bound(s) or `x` lists have unequal
         length.
     """
+    _validate_tooltip_sources(frame, tooltip_fields)
     y_col = frame[value].to_list()
     lower_col = frame[ci[0]].to_list() if ci is not None else None
     upper_col = frame[ci[1]].to_list() if ci is not None else None
     x_col = frame[x].to_list() if x is not None else None
+    extra_cols = [(field, frame[field.source].to_list()) for field in tooltip_fields]
 
     series: list[Series] = []
     for i, row_key in enumerate(row_keys):
@@ -208,7 +218,19 @@ def resolve_list_series(
         lower_raw = _row_cell(lower_col, i) if lower_col is not None else None
         upper_raw = _row_cell(upper_col, i) if upper_col is not None else None
         x_raw = _row_cell(x_col, i) if x_col is not None else None
-        series.append(_build_series(y_raw, lower_raw, upper_raw, x_raw, row_key=row_key))
+        extras = [
+            TooltipValues(
+                field.label if field.label is not None else field.source,
+                _row_cell(column, i),
+                field.fmt,
+            )
+            for field, column in extra_cols
+        ]
+        series.append(
+            _build_series(
+                y_raw, lower_raw, upper_raw, x_raw, row_key=row_key, tooltip_values=extras
+            )
+        )
     return series
 
 
@@ -227,6 +249,9 @@ def _sorted_by_x(series: Series) -> Series:
         lower=[series.lower[i] for i in order],
         upper=[series.upper[i] for i in order],
         x_temporal=series.x_temporal,
+        tooltip_columns=tuple(
+            (label, tuple(values[i] for i in order)) for label, values in series.tooltip_columns
+        ),
     )
 
 
@@ -243,6 +268,7 @@ def resolve_companion_series(
     ci: tuple[str, str] | None = None,
     x: str | None = None,
     series: None = None,
+    tooltip_fields: Sequence[TooltipField] = (),
 ) -> dict[tuple[Any, Any, Any, Any], Series]: ...
 
 
@@ -259,6 +285,7 @@ def resolve_companion_series(
     ci: tuple[str, str] | None = None,
     x: str | None = None,
     series: str,
+    tooltip_fields: Sequence[TooltipField] = (),
 ) -> dict[tuple[Any, Any, Any, Any], list[tuple[Any, Series]]]: ...
 
 
@@ -274,6 +301,7 @@ def resolve_companion_series(
     ci: tuple[str, str] | None = None,
     x: str | None = None,
     series: str | None = None,
+    tooltip_fields: Sequence[TooltipField] = (),
 ) -> (
     dict[tuple[Any, Any, Any, Any], Series]
     | dict[tuple[Any, Any, Any, Any], list[tuple[Any, Series]]]
@@ -337,6 +365,7 @@ def resolve_companion_series(
         but kept so both front doors share one validation path.
     """
     frame = nw.from_native(data, eager_only=True)
+    _validate_tooltip_sources(frame, tooltip_fields)
     n = len(frame)
     c_row_keys = _nan_to_none(frame[rows].to_list()) if rows else [""] * n
     c_nest_keys = _nan_to_none(frame[nest].to_list()) if nest else [None] * n
@@ -346,6 +375,7 @@ def resolve_companion_series(
     lower_all = frame[ci[0]].to_list() if ci is not None else None
     upper_all = frame[ci[1]].to_list() if ci is not None else None
     x_all = frame[x].to_list() if x is not None else None
+    extra_cols = [(field, frame[field.source].to_list()) for field in tooltip_fields]
 
     def build(indices: list[int], row_key: Any) -> Series:
         built = _build_series(
@@ -354,6 +384,14 @@ def resolve_companion_series(
             [upper_all[i] for i in indices] if upper_all is not None else None,
             [x_all[i] for i in indices] if x_all is not None else None,
             row_key=row_key,
+            tooltip_values=[
+                TooltipValues(
+                    field.label if field.label is not None else field.source,
+                    [column[i] for i in indices],
+                    field.fmt,
+                )
+                for field, column in extra_cols
+            ],
         )
         return _sorted_by_x(built) if x_all is not None else built
 
@@ -392,3 +430,10 @@ def resolve_companion_series(
             (arm_key, build(arm_groups[(*identity, arm_key)], identity[0])) for arm_key in arm_keys
         ]
     return out_multi
+
+
+def _validate_tooltip_sources(frame: nw.DataFrame, fields: Sequence[TooltipField]) -> None:
+    """Report unknown extra fields consistently across dataframe backends."""
+    for field in fields:
+        if field.source not in frame.columns:
+            raise ColumnNotFoundError(field.source)

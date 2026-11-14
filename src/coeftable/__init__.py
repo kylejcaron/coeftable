@@ -13,8 +13,10 @@ from coeftable.format import (
     Percent,
     TimeFormat,
 )
+from coeftable.interactive import interactive_html
 from coeftable.spec import CardColumn, CoefTable, Estimate, Forest, Passthrough, Sparkline
 from coeftable.theme import Theme, role_for
+from coeftable.tooltips import Tooltip, TooltipField, TooltipValues
 
 try:
     __version__ = version("coeftable")
@@ -40,7 +42,11 @@ __all__ = [
     "SpecError",
     "Theme",
     "TimeFormat",
+    "Tooltip",
+    "TooltipField",
+    "TooltipValues",
     "__version__",
+    "interactive_html",
     "role_for",
 ]
 
