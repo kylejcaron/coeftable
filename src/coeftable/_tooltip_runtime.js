@@ -5,7 +5,7 @@
   const mounts = new Map();
   const cache = new WeakMap();
   const ns = "http://www.w3.org/2000/svg";
-  let panel, style, observer, active = null, dismissTimer, tabRestoreTimer;
+  let panel, style, observer, active = null, dismissTimer;
   let nextPanelId = 0;
   const css = `
 .ct-tooltip-panel{position:fixed;z-index:2147483647;box-sizing:border-box;
@@ -101,7 +101,6 @@
 
   function hide() {
     clearTimeout(dismissTimer);
-    clearTimeout(tabRestoreTimer);
     if (active) {
       clearGuide(active.svg);
       const {target} = active.state;
@@ -202,7 +201,8 @@
     panel.style.top = `${top}px`;
     const overflow = panel.scrollHeight > panel.clientHeight || panel.scrollWidth > panel.clientWidth;
     panel.style.pointerEvents = overflow ? "auto" : "none";
-    panel.tabIndex = overflow ? 0 : -1;
+    active.overflow = overflow;
+    panel.tabIndex = -1;
     panel.scrollTop = 0;
   }
 
@@ -262,17 +262,9 @@
 
   function panelKey(event) {
     if (event.key !== "Tab" || !active) return;
-    if (event.shiftKey) {
-      event.preventDefault();
-      active.state.target.focus({preventScroll:true});
-      return;
-    }
-    // Resume the browser's natural tab sequence after the active plot.
-    panel.tabIndex = -1;
+    if (event.shiftKey) event.preventDefault();
+    // Forward Tab resumes native order from the plot; backward Tab stops there.
     active.state.target.focus({preventScroll:true});
-    tabRestoreTimer = setTimeout(() => {
-      if (active && !panel.hidden && panel.style.pointerEvents === "auto") panel.tabIndex = 0;
-    }, 0);
   }
 
   function focusEvent(root, event) {
@@ -292,7 +284,7 @@
     const {svg, state} = entry;
     if (event.key === "Escape") { event.preventDefault(); hide(); return; }
     if (event.key === "Tab" && !event.shiftKey && active?.svg === svg &&
-        !panel.hidden && panel.tabIndex === 0) {
+        !panel.hidden && active.overflow) {
       event.preventDefault();
       panel.focus({preventScroll:true});
       return;
@@ -319,7 +311,16 @@
     if (active && !active.svg.contains(event.target) && !panel.contains(event.target)) hide();
   }
   function scroll(event) { if (!panel?.contains(event.target)) hide(); }
-  function escape(event) { if (event.key === "Escape") hide(); }
+  function escape(event) {
+    if (event.key !== "Escape") return;
+    if (active && panel.contains(document.activeElement) &&
+        mountedRoot(active.svg) && geometry(active.svg)) {
+      event.preventDefault();
+      // Preserve the focus origin before hiding the active panel.
+      active.state.target.focus({preventScroll:true});
+    }
+    hide();
+  }
   function validateActive() {
     if (active && (!mountedRoot(active.svg) || !geometry(active.svg))) hide();
   }

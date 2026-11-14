@@ -473,7 +473,11 @@ def test_overflow_tab_enters_current_panel_and_preserves_return_and_onward_order
             tooltip_values=[TooltipValues(label, ["word" * 1500])],
         )
 
-    page.set_content(interactive_html(plot("First") + plot("Second")))
+    page.set_content(
+        interactive_html(
+            plot("First") + plot("Second") + '<button id="after">After plots</button>'
+        )
+    )
     targets = page.locator(".ct-tooltip-target")
     targets.first.focus()
     page.keyboard.press("Tab")
@@ -489,6 +493,26 @@ def test_overflow_tab_enters_current_panel_and_preserves_return_and_onward_order
     page.keyboard.press("Tab")
     assert targets.last.evaluate("el => document.activeElement === el")
     assert "Second" in panel.inner_text()
+    page.keyboard.press("Shift+Tab")
+    page.keyboard.press("Tab")
+    assert panel.evaluate("el => document.activeElement === el")
+    page.keyboard.press("Escape")
+    assert targets.first.evaluate("el => document.activeElement === el")
+    assert panel.is_hidden()
+    page.keyboard.press("Tab")
+    assert targets.last.evaluate("el => document.activeElement === el")
+    assert "Second" in _text(page)
+    page.keyboard.press("Tab")
+    assert panel.evaluate("el => document.activeElement === el")
+    panel.hover()
+    page.clock.install()
+    page.keyboard.press("Tab")
+    page.clock.run_for(10)
+    button = page.locator("#after")
+    assert button.evaluate("el => document.activeElement === el")
+    page.keyboard.press("Tab")
+    assert not panel.evaluate("el => document.activeElement === el")
+    assert not button.evaluate("el => document.activeElement === el")
 
 
 @pytest.mark.integration
