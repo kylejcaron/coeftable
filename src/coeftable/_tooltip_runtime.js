@@ -5,7 +5,7 @@
   const mounts = new Map();
   const cache = new WeakMap();
   const ns = "http://www.w3.org/2000/svg";
-  let panel, style, observer, active = null, dismissTimer;
+  let panel, style, observer, active = null, dismissTimer, tabRestoreTimer;
   let nextPanelId = 0;
   const css = `
 .ct-tooltip-panel{position:fixed;z-index:2147483647;box-sizing:border-box;
@@ -101,6 +101,7 @@
 
   function hide() {
     clearTimeout(dismissTimer);
+    clearTimeout(tabRestoreTimer);
     if (active) {
       clearGuide(active.svg);
       const {target} = active.state;
@@ -251,10 +252,37 @@
     }
   }
 
+  function retireUnowned(node) {
+    if (!node.querySelectorAll) return;
+    if (node.matches?.("svg") && cache.has(node) && !mountedRoot(node)) retire(node);
+    for (const svg of node.querySelectorAll("svg")) {
+      if (cache.has(svg) && !mountedRoot(svg)) retire(svg);
+    }
+  }
+
+  function panelKey(event) {
+    if (event.key !== "Tab" || !active) return;
+    if (event.shiftKey) {
+      event.preventDefault();
+      active.state.target.focus({preventScroll:true});
+      return;
+    }
+    // Resume the browser's natural tab sequence after the active plot.
+    panel.tabIndex = -1;
+    active.state.target.focus({preventScroll:true});
+    tabRestoreTimer = setTimeout(() => {
+      if (active && !panel.hidden && panel.style.pointerEvents === "auto") panel.tabIndex = 0;
+    }, 0);
+  }
+
   function focusEvent(root, event) {
     const entry = routed(root, event, event.type === "focusout");
     if (!entry) return;
     if (event.type === "focusout") { deferHide(); return; }
+    if (active?.svg === entry.svg && !panel.hidden) {
+      clearTimeout(dismissTimer);
+      return;
+    }
     render(entry.svg, entry.state, entry.state.index);
   }
 
@@ -263,6 +291,12 @@
     if (!entry) return;
     const {svg, state} = entry;
     if (event.key === "Escape") { event.preventDefault(); hide(); return; }
+    if (event.key === "Tab" && !event.shiftKey && active?.svg === svg &&
+        !panel.hidden && panel.tabIndex === 0) {
+      event.preventDefault();
+      panel.focus({preventScroll:true});
+      return;
+    }
     if (["PageDown", "PageUp"].includes(event.key)) {
       if (active?.svg === svg && !panel.hidden) {
         event.preventDefault();
@@ -286,7 +320,9 @@
   }
   function scroll(event) { if (!panel?.contains(event.target)) hide(); }
   function escape(event) { if (event.key === "Escape") hide(); }
-  function validateActive() { if (active && !geometry(active.svg)) hide(); }
+  function validateActive() {
+    if (active && (!mountedRoot(active.svg) || !geometry(active.svg))) hide();
+  }
 
   function initialize() {
     panel = node("div", "ct-tooltip-panel");
@@ -298,6 +334,7 @@
     panel.addEventListener("pointerenter", () => clearTimeout(dismissTimer));
     panel.addEventListener("pointerleave", deferHide);
     panel.addEventListener("focusout", deferHide);
+    panel.addEventListener("keydown", panelKey);
     style = node("style", "ct-tooltip-styles", css);
     document.head.append(style);
     document.body.append(panel);
@@ -311,6 +348,7 @@
       const relevant = records.some(record => !record.target.closest?.(".ct-tooltip-panel,.ct-tooltip-guide,.ct-tooltip-highlight"));
       if (!relevant) return;
       for (const record of records) {
+        for (const node of record.removedNodes) retireUnowned(node);
         if (record.attributeName === "data-ct-tooltip" &&
             record.target instanceof SVGSVGElement && mountedRoot(record.target)) {
           setup(record.target);

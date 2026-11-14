@@ -452,3 +452,56 @@ def test_touch_inspector_dismisses_when_keyboard_collapses_its_container(page, c
     page.keyboard.press("Space")
     assert target.is_hidden()
     page.locator(".ct-tooltip-panel").wait_for(state="hidden")
+
+
+@pytest.mark.integration
+def test_overflow_tab_enters_current_panel_and_preserves_return_and_onward_order(page):
+    page.set_viewport_size({"width": 320, "height": 240})
+
+    def plot(label):
+        return sparkline_bar(
+            [0],
+            [1],
+            [None],
+            [None],
+            x_domain=(0, 0),
+            domain=(0, 2),
+            ref=None,
+            color="#123456",
+            fmt=str,
+            tooltip=Tooltip(),
+            tooltip_values=[TooltipValues(label, ["word" * 1500])],
+        )
+
+    page.set_content(interactive_html(plot("First") + plot("Second")))
+    targets = page.locator(".ct-tooltip-target")
+    targets.first.focus()
+    page.keyboard.press("Tab")
+    panel = page.locator(".ct-tooltip-panel")
+    assert panel.evaluate("el => document.activeElement === el")
+    assert "First" in panel.inner_text() and "Second" not in panel.inner_text()
+    page.keyboard.press("PageDown")
+    page.wait_for_function("document.querySelector('.ct-tooltip-panel').scrollTop > 0")
+    page.keyboard.press("Shift+Tab")
+    assert targets.first.evaluate("el => document.activeElement === el")
+    assert panel.evaluate("el => el.scrollTop") > 0
+    page.keyboard.press("Tab")
+    page.keyboard.press("Tab")
+    assert targets.last.evaluate("el => document.activeElement === el")
+    assert "Second" in panel.inner_text()
+
+
+@pytest.mark.integration
+def test_reparented_plot_becomes_passive_and_dismisses_retained_touch_inspector(page):
+    page.set_content(interactive_html(_plot()) + '<div id="passive"></div>')
+    target = page.locator(".ct-tooltip-target")
+    box = target.bounding_box()
+    page.touchscreen.tap(box["x"] + box["width"] / 2, box["y"] + 4)
+    assert "Missing" in _text(page)
+    page.evaluate("""() => {
+        document.querySelector('#passive').append(document.querySelector('svg'));
+    }""")
+    page.evaluate("() => new Promise(resolve => requestAnimationFrame(resolve))")
+    assert page.locator("#passive svg").is_visible()
+    assert page.locator("#passive .ct-tooltip-target").count() == 0
+    assert page.locator(".ct-tooltip-panel").is_hidden()
