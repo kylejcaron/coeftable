@@ -1,3 +1,4 @@
+import pandas as pd
 import pytest
 
 from coeftable.errors import SpecError
@@ -9,12 +10,12 @@ def test_missing_extras_bypass_formatter_and_preserve_field_order():
         return f"{int(value):,}"
 
     fields = [
-        TooltipValues("Count", [1000, None, float("nan")], fmt=integer),
-        TooltipValues("Note", ["a", "b", "c"]),
+        TooltipValues("Count", [1000, None, float("nan"), pd.NA, pd.NaT], fmt=integer),
+        TooltipValues("Note", ["a", "b", "c", "<NA>", "NaT"]),
     ]
-    assert format_tooltip_values(fields, size=3, context="row A") == (
-        ("Count", ("1,000", "—", "—")),
-        ("Note", ("a", "b", "c")),
+    assert format_tooltip_values(fields, size=5, context="row A") == (
+        ("Count", ("1,000", "—", "—", "—", "—")),
+        ("Note", ("a", "b", "c", "<NA>", "NaT")),
     )
 
 

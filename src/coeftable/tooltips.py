@@ -90,7 +90,10 @@ def format_tooltip_values(
             )
         texts: list[str] = []
         for value in field.values:
-            if is_missing(value):
+            backend_null = type(value).__module__.startswith("pandas.") and type(
+                value
+            ).__name__ in ("NAType", "NaTType")
+            if is_missing(value) or backend_null:
                 texts.append("—")
                 continue
             try:
