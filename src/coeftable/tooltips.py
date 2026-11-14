@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 from coeftable.errors import SpecError
-from coeftable.format import Format, is_missing
+from coeftable.format import Format
 
 
 @dataclass(frozen=True)
@@ -93,7 +94,11 @@ def format_tooltip_values(
             backend_null = type(value).__module__.startswith("pandas.") and type(
                 value
             ).__name__ in ("NAType", "NaTType")
-            if is_missing(value) or backend_null:
+            try:
+                numeric_nan = math.isnan(value)
+            except (TypeError, ValueError):
+                numeric_nan = False
+            if value is None or numeric_nan or backend_null:
                 texts.append("—")
                 continue
             try:
