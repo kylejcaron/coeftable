@@ -2723,3 +2723,28 @@ def test_multitrace_tooltip_validates_outer_and_each_inner_alignment():
     )
     payload = json.loads(ET.fromstring(svg).attrib["data-ct-tooltip"])  # noqa: S314
     assert payload["traces"][1]["points"][0]["extras"] == [["n", "30"]]
+
+
+def test_forest_nan_bounds_match_existing_unbounded_drawing_semantics():
+    import json
+    import xml.etree.ElementTree as ET
+
+    from coeftable import Tooltip
+
+    points = []
+    for bound in (None, float("nan")):
+        svg = forest_bar(
+            1,
+            bound,
+            bound,
+            domain=(-2, 2),
+            ref=0,
+            color="#123",
+            theme=DEFAULT,
+            tooltip=Tooltip(),
+        )
+        payload = json.loads(ET.fromstring(svg).attrib["data-ct-tooltip"])  # noqa: S314
+        points.append(payload["traces"][0]["points"][0])
+    assert points[0] == points[1]
+    assert points[1]["unbounded_lower"] is True
+    assert points[1]["unbounded_upper"] is True

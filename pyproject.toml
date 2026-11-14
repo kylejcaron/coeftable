@@ -39,6 +39,7 @@ dev = [
     "nox>=2025.5",
     "pyarrow>=25.0.0",
 ]
+browser = ["playwright>=1.50"]
 
 [project.urls]
 Homepage = "https://github.com/kylejcaron/coeftable"
@@ -96,6 +97,7 @@ convention = "numpy"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["integration: exercises rendering, subprocess, filesystem, or browser boundaries"]
 addopts = [
     "-v",
     "--strict-markers",
