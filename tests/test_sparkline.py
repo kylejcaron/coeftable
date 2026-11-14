@@ -2088,6 +2088,7 @@ def test_sparkline_empty_multi_series_cell_excludes_its_annotations_from_domains
     assert plots[1] == ""
 
 
+@pytest.mark.integration
 def test_table_inspection_retains_missing_only_and_absent_arms_without_new_drawing(
     inspection_table,
 ):
@@ -2119,6 +2120,7 @@ def test_table_inspection_retains_missing_only_and_absent_arms_without_new_drawi
     assert isinstance(column.tooltip, Tooltip)
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize("ribbon", [None, False])
 def test_list_table_inspection_preserves_extras_and_full_temporal_text(ribbon):
     import html

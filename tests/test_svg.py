@@ -2576,6 +2576,7 @@ def test_two_tier_axis_super_row_escapes_ampersand_and_angle_brackets():
     assert "Q1 &amp; Q2 &lt;2024&gt;" in svg
 
 
+@pytest.mark.integration
 def test_tooltip_payload_preserves_original_clipped_values_and_literal_extras():
     import json
     import xml.etree.ElementTree as ET
@@ -2621,6 +2622,7 @@ def test_tooltip_payload_preserves_original_clipped_values_and_literal_extras():
     assert ET.tostring(root) == ET.tostring(ET.fromstring(static))  # noqa: S314
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize(
     ("estimate", "bounds", "status"),
     [
@@ -2655,6 +2657,7 @@ def test_forest_tooltip_retains_missing_offscale_and_unbounded_records(estimate,
     json.dumps(payload, allow_nan=False)
 
 
+@pytest.mark.integration
 def test_tooltip_equal_domains_keep_positive_interaction_bounds():
     import json
     import xml.etree.ElementTree as ET
@@ -2693,6 +2696,7 @@ def test_tooltip_equal_domains_keep_positive_interaction_bounds():
         )
 
 
+@pytest.mark.integration
 def test_multitrace_tooltip_validates_outer_and_each_inner_alignment():
     import json
     import xml.etree.ElementTree as ET
@@ -2725,6 +2729,7 @@ def test_multitrace_tooltip_validates_outer_and_each_inner_alignment():
     assert payload["traces"][1]["points"][0]["extras"] == [["n", "30"]]
 
 
+@pytest.mark.integration
 def test_forest_nan_bounds_match_existing_unbounded_drawing_semantics():
     import json
     import xml.etree.ElementTree as ET

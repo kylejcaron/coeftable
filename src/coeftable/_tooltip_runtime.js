@@ -6,6 +6,7 @@
   const cache = new WeakMap();
   const ns = "http://www.w3.org/2000/svg";
   let panel, style, observer, active = null, dismissTimer;
+  let nextPanelId = 0;
   const css = `
 .ct-tooltip-panel{position:fixed;z-index:2147483647;box-sizing:border-box;
  max-width:min(360px,calc(100vw - 16px));max-height:calc(100vh - 16px);
@@ -42,16 +43,25 @@
     return matrix;
   }
 
+  function retire(svg) {
+    cache.delete(svg);
+    if (active?.svg === svg) hide();
+    clearGuide(svg);
+    svg.querySelector(".ct-tooltip-target")?.remove();
+    return null;
+  }
+
   function setup(svg) {
     const raw = svg.getAttribute("data-ct-tooltip");
     const previous = cache.get(svg);
     if (previous && previous.raw === raw) return previous;
+    if (previous) retire(svg);
     let data;
-    try { data = JSON.parse(raw); } catch { return null; }
-    if (data?.version !== 1 || !["sparkline", "forest"].includes(data.kind)) return null;
+    try { data = JSON.parse(raw); } catch { return retire(svg); }
+    if (data?.version !== 1 || !["sparkline", "forest"].includes(data.kind)) return retire(svg);
     const r = data.rect;
     if (!r || ![r.left, r.right, r.top, r.bottom].every(Number.isFinite) ||
-        r.right <= r.left || r.bottom <= r.top || !Array.isArray(data.traces)) return null;
+        r.right <= r.left || r.bottom <= r.top || !Array.isArray(data.traces)) return retire(svg);
     const positions = new Map();
     for (const trace of data.traces) {
       for (const point of trace.points) {
@@ -59,7 +69,7 @@
       }
     }
     const xs = [...positions].sort((a, b) => a[0] - b[0]);
-    if (data.kind === "sparkline" && !xs.length) return null;
+    if (data.kind === "sparkline" && !xs.length) return retire(svg);
     let target = svg.querySelector(".ct-tooltip-target");
     if (!target) target = document.createElementNS(ns, "rect");
     target.setAttribute("class", "ct-tooltip-target");
@@ -71,6 +81,7 @@
     target.setAttribute("tabindex", "0");
     target.setAttribute("role", "img");
     target.setAttribute("aria-label", "Inspect plot values. Use Left, Right, Home, End; Escape dismisses.");
+    target.removeAttribute("aria-describedby");
     const state = {raw, data, xs, index:0, target};
     cache.set(svg, state);
     svg.append(target);
@@ -91,6 +102,7 @@
     if (active) {
       clearGuide(active.svg);
       const {target} = active.state;
+      target.removeAttribute("aria-describedby");
       if (active.capture !== null && target.hasPointerCapture(active.capture)) {
         target.releasePointerCapture(active.capture);
       }
@@ -135,6 +147,7 @@
     clearTimeout(dismissTimer);
     if (active && active.svg !== svg) hide();
     if (!active) active = {svg, state, capture:null, touchHeld:false};
+    active.touchHeld = false;
     state.index = index;
     const {data, xs} = state, r = data.rect;
     const x = data.kind === "sparkline" ? xs[index][0] : null;
@@ -176,6 +189,7 @@
       panel.append(section);
     }
     panel.hidden = false;
+    state.target.setAttribute("aria-describedby", panel.id);
     panel.style.left = "8px";
     panel.style.top = "8px";
     const anchor = new DOMPoint(data.kind === "sparkline" ? xs[index][1] : (r.left+r.right)/2, r.bottom).matrixTransform(matrix);
@@ -190,18 +204,19 @@
     panel.scrollTop = 0;
   }
 
-  function routed(root, event) {
+  function routed(root, event, cachedOnly = false) {
     const svg = event.target.closest?.("svg[data-ct-tooltip]");
     if (!svg) return null;
     let nearestRoot = svg;
     while (nearestRoot && !mounts.has(nearestRoot)) nearestRoot = nearestRoot.parentNode;
     if (nearestRoot !== root) return null;
-    const state = setup(svg);
+    const state = cachedOnly ? cache.get(svg) : setup(svg);
     return state ? {svg, state} : null;
   }
 
   function pointEvent(root, event) {
-    const entry = routed(root, event);
+    const exiting = ["pointerout", "pointerup", "pointercancel"].includes(event.type);
+    const entry = routed(root, event, exiting);
     if (!entry) return;
     const {svg, state} = entry;
     if (event.type === "pointercancel") { if (active?.svg === svg) hide(); return; }
@@ -222,7 +237,6 @@
     if (active?.capture == null && (local.x < r.left || local.x > r.right || local.y < r.top || local.y > r.bottom)) return;
     render(svg, state, state.data.kind === "forest" ? 0 : nearest(state.xs, local.x));
     if (event.type === "pointerdown" && active) {
-      active.touchHeld = false;
       active.capture = event.pointerId;
       // Synthetic pointer events may have no browser-managed pointer to capture.
       try { state.target.setPointerCapture(event.pointerId); } catch { /* no active native pointer */ }
@@ -230,7 +244,7 @@
   }
 
   function focusEvent(root, event) {
-    const entry = routed(root, event);
+    const entry = routed(root, event, event.type === "focusout");
     if (!entry) return;
     if (event.type === "focusout") { deferHide(); return; }
     render(entry.svg, entry.state, entry.state.index);
@@ -267,7 +281,10 @@
   function initialize() {
     panel = node("div", "ct-tooltip-panel");
     panel.hidden = true;
+    do { panel.id = `ct-tooltip-${++nextPanelId}`; } while (document.getElementById(panel.id));
     panel.setAttribute("role", "tooltip");
+    panel.setAttribute("aria-live", "polite");
+    panel.setAttribute("aria-atomic", "true");
     panel.addEventListener("pointerenter", () => clearTimeout(dismissTimer));
     panel.addEventListener("pointerleave", deferHide);
     panel.addEventListener("focusout", deferHide);
@@ -281,6 +298,11 @@
     observer = new MutationObserver(records => {
       const relevant = records.some(record => !record.target.closest?.(".ct-tooltip-panel,.ct-tooltip-guide,.ct-tooltip-highlight"));
       if (!relevant) return;
+      for (const record of records) {
+        if (record.attributeName === "data-ct-tooltip" && record.target instanceof SVGSVGElement) {
+          setup(record.target);
+        }
+      }
       for (const root of mounts.keys()) scan(root);
       if (active && (!visible(active.svg) || !geometry(active.svg))) hide();
     });

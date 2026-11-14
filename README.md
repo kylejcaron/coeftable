@@ -497,6 +497,111 @@ shaded intervals via each function's `annotations=` parameter. Because a
 standalone plot and a table column share one `Theme`, a report that mixes
 both stays visually consistent.
 
+## Inspect plot values
+
+Pass `tooltip=ct.Tooltip()` to opt a plot into value inspection, then activate
+the composed HTML with `ct.interactive_html`. Existing renderers remain passive:
+`as_raw_html()`, `_repr_html_()`, `.gt()`, and standalone SVG strings do not
+execute scripts themselves.
+
+```python
+from pathlib import Path
+
+import coeftable as ct
+import polars as pl
+from coeftable.cards import Card, Trend
+from coeftable.plots import sparkline_bar
+
+history = pl.DataFrame({
+    "metric": ["Revenue", "Revenue", "Revenue"],
+    "day": [0, 2, 4],
+    "estimate": [1.0, None, 5.0],
+    "n": [10, 20, 30],
+})
+table = ct.CoefTable(pl.DataFrame({"metric": ["Revenue"]}), rows="metric").sparkline(
+    "Trend", value="estimate", x="day", data=history, ylim=(0, 3),
+    tooltip=ct.Tooltip(fields=[ct.TooltipField("n", label="Sample size")]),
+)
+
+# Direct plots and card regions receive aligned arrays, not dataframe fields.
+extras = [ct.TooltipValues("Sample size", [10, 20, 30])]
+line = sparkline_bar(
+    [0, 2, 4], [1, None, 5], [None] * 3, [None] * 3,
+    x_domain=(0, 4), domain=(0, 3), ref=None, color="#4C72B0", fmt=ct.Number(),
+    tooltip=ct.Tooltip(), tooltip_values=extras,
+)
+card = Card("Revenue", content=[
+    Trend(
+        x=[0, 2, 4], y=[1, None, 5], x_domain=(0, 4), domain=(0, 3),
+        tooltip=ct.Tooltip(), tooltip_values=extras,
+    ),
+])
+fragment = table.as_raw_html() + line + card.as_raw_html()
+document = ct.interactive_html(fragment, full_document=True)
+Path("inspection.html").write_text(document, encoding="utf-8")
+```
+
+`TooltipField` binds **main-frame scalar columns for forest plots**, main-frame
+list columns for list-mode sparklines, and **companion-frame scalar columns**
+when `data=` is supplied. Companion sorting applies the same permutation to
+the extra measures. List-mode drawing retains its input order. Extras never
+affect plot domains or make an otherwise blank table cell drawable.
+
+`forest_bar` and card `Interval` accept `tooltip_values` of length one per
+field; `sparkline_bar` and `Trend` require each field to match the point arrays.
+For `sparkline_multi`, `tooltip_values` is an outer sequence aligned to the
+input traces: include an empty entry for any trace without extras. An empty
+outer sequence means no extras on any trace. `Trace` remains unchanged.
+Direct plots/regions reject unresolved `Tooltip.fields`; extra values without
+an enabled tooltip raise `SpecError`.
+
+**Selection and formatting.** Move anywhere horizontally inside the plot's
+data area, or drag, to select the nearest observed x. Midpoint ties choose
+the smaller x. Missing y displays “Missing”; an arm without that exact x
+displays “No observation”. Duplicate observations at one x remain separate.
+No interpolation or substitution from another date. Off-scale values keep
+their actual values and an above/below (forest: left/right) indication.
+Forest plots expose their one interval anywhere in the data area.
+
+`Tooltip(fmt=..., x_fmt=...)` overrides observation value/interval and x
+formatters independently. Otherwise the primary plot/region formatter is used
+for values (`Number()` for direct `forest_bar`). Numeric x defaults to
+`Number()`. Temporal table coordinates and `Trend(temporal=True)` use full
+`YYYY-MM-DD HH:MM:SS` coordinate dates, not contextual axis ticks such as “14”.
+These dates follow the existing epoch-coordinate convention formatted in UTC;
+this does not reinterpret the source timezone. Direct numeric emitters need
+an explicit `x_fmt` for date coordinates. Each extra field has its own `fmt`;
+null/NaN extras display “—” without invoking it. Formatters must return strings.
+
+**Input.** Focus an enabled plot, then use Left/Right, Home/End, or Escape.
+There is one tab stop per plot, not per point. Touch/pen release leaves the
+inspector available to read until dismissal or another selection; cancellation
+clears it and vertical page scrolling remains available. Long inspectors wrap
+and scroll within the viewport: PageUp/PageDown work while the plot is focused;
+Tab can enter the scroll region. Escape or an outside tap dismisses.
+
+| Delivery path | Behavior |
+|---|---|
+| Saved full document | Interactive offline when scripts are permitted; no kernel/server/CDN needed. |
+| Parser-inserted fragment | `interactive_html(fragment)` activates within its own wrapper. |
+| Dynamic `innerHTML` insertion | Scripts are inert. Load the packaged `coeftable/_tooltip_runtime.js` yourself and call `window.coeftableTooltips.mount(root)`; the returned function disposes the mount. Repeated mounts of the same root are idempotent. |
+| Live marimo | `mo.iframe(ct.interactive_html(fragment, full_document=True), height="500px")`; `mo.Html` is a passive path. |
+| SVG as an image, PNG/PDF, scripts blocked/disabled | Existing static appearance, without inspection. |
+
+Compose table, standalone and card HTML first, then activate once.
+`interactive_html` accepts **trusted fragments only**, not complete
+`html`/`head`/`body` documents, and is not an HTML sanitizer. If using
+`table.gt().as_raw_html(...)`, request a fragment rather than a document.
+Restrictive CSP policies may block the inline bootstrap/styles; asset/nonces
+integration, automatic notebook activation, Python callbacks and untested
+notebook/export hosts are not promised.
+
+**Data disclosure:** all configured observation values and extra fields are
+embedded in browser-readable output, including missing/off-scale observations.
+Plain-text escaping prevents formatter output from becoming markup; it does
+not make sensitive data private. Include only fields intended for recipients.
+
+
 ## Metric cards
 
 `coeftable.cards` composes the standalone plots into measured, foldable
@@ -1077,3 +1182,12 @@ the Sparkline y-domain and clip or omit distant marks. Annotations supplement
 rather than replace
 `ref`: `ref` remains the built-in semantic reference that controls colors and
 its optional dashed line.
+
+## Development checks
+
+`make setup` installs development dependencies without enabling optional browser
+tests. `make tests` runs the installed test selection. For plot interaction
+checks, `make tests-browser` installs the optional Playwright package and
+Chromium, then runs `tests/test_interactive.py`. Without the browser extra,
+only browser-dependent cases skip; HTML assembly checks still run. An installed
+Playwright package without Chromium is an error, not a passing skip.

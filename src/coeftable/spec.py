@@ -474,6 +474,9 @@ class _ForestState:
 class Forest:
     """A column rendering an inline SVG interval bar.
 
+    ``tooltip=Tooltip()`` includes observation metadata. Its fields bind scalar
+    columns on the main frame; activate the composed HTML with ``interactive_html``.
+
     Parameters
     ----------
     label
@@ -848,6 +851,10 @@ def _last_point(series: Series) -> tuple[float, float | None, float | None] | No
 @dataclass(frozen=True)
 class Sparkline:
     """A column rendering an inline SVG line plot with an uncertainty ribbon.
+
+    ``tooltip=Tooltip()`` includes observation metadata. Extra fields bind list
+    columns on the main frame or scalar columns on ``data``. Activate the
+    composed HTML with ``interactive_html``; rendering alone stays passive.
 
     Unlike `Forest`, `Sparkline` does not bind to an `Estimate` via `of`; a
     series has no scalar estimate to bind to, so it declares its own
@@ -1608,6 +1615,9 @@ class CoefTable:
     ) -> CoefTable:
         """Append a forest-plot column bound to an existing estimate.
 
+        ``tooltip`` fields bind main-frame scalar columns and require explicit
+        HTML activation with ``interactive_html`` for browser inspection.
+
         Parameters
         ----------
         label
@@ -1742,6 +1752,9 @@ class CoefTable:
         tooltip: Tooltip | None = None,
     ) -> CoefTable:
         """Append a sparkline column plotting a series with uncertainty.
+
+        ``tooltip`` fields bind the same frame as ``value`` (main-frame lists
+        or companion scalars). Rendering remains passive until ``interactive_html``.
 
         Parameters
         ----------

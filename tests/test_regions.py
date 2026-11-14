@@ -966,6 +966,7 @@ def test_projection_guards_name_effective_spans(region, width, message):
         region.resolve(width=width, theme=DEFAULT, chrome=DEFAULT_CHROME)
 
 
+@pytest.mark.integration
 def test_region_inspection_matches_direct_primitives_without_changing_dimensions():
     import json
     import xml.etree.ElementTree as ET

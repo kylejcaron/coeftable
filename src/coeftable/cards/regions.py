@@ -346,7 +346,12 @@ def _svg_height(svg: str, *, name: str) -> int:
 
 @dataclass(frozen=True, slots=True)
 class Trend(Region):
-    """A line plot with optional in-cell y-axis, uncertainty ribbon, and shared x-axis."""
+    """A line plot with optional axes, uncertainty ribbon and value inspection.
+
+    ``tooltip=Tooltip()`` enables passive observation metadata. Extras use
+    aligned ``TooltipValues``, never dataframe-bound fields. Activate the
+    composed card HTML explicitly with ``interactive_html``.
+    """
 
     x: Sequence[float]
     y: Sequence[float | None]
@@ -548,7 +553,11 @@ class Trend(Region):
 
 @dataclass(frozen=True, slots=True)
 class Interval(Region):
-    """A forest interval bar with an optional shared x-axis."""
+    """A forest interval bar with optional shared x-axis and value inspection.
+
+    ``tooltip_values`` holds length-one measures and requires ``tooltip``.
+    The card remains passive until its HTML is composed with ``interactive_html``.
+    """
 
     estimate: float
     lower: float

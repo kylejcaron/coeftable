@@ -126,6 +126,25 @@ def test_union_selection_ties_gaps_duplicates_and_keyboard(page):
     assert page.locator(".ct-tooltip-x").inner_text() == "4"
     page.keyboard.press("ArrowLeft")
     assert page.locator(".ct-tooltip-x").inner_text() == "2"
+    accessibility = page.context.new_cdp_session(page)
+    document = accessibility.send("DOM.getDocument")
+    node_id = accessibility.send(
+        "DOM.querySelector",
+        {
+            "nodeId": document["root"]["nodeId"],
+            "selector": ".ct-tooltip-target",
+        },
+    )["nodeId"]
+    ax = accessibility.send(
+        "Accessibility.getPartialAXTree",
+        {
+            "nodeId": node_id,
+            "fetchRelatives": False,
+        },
+    )
+    description = ax["nodes"][0].get("description", {}).get("value", "")
+    assert "Missing" in description and "20" in description
+    accessibility.detach()
     page.keyboard.press("Escape")
     assert page.locator(".ct-tooltip-panel").is_hidden()
 
@@ -141,6 +160,8 @@ def test_table_missing_only_arm_remains_selectable(page, inspection_table):
 
 @pytest.mark.integration
 def test_forest_and_equal_domain_plots_are_inspectable_without_guides(page):
+    from coeftable.cards import Card, Trend
+
     fragments = []
     for estimate, bounds in [(None, (-1, 1)), (5, (4, 6))]:
         fragments.append(
@@ -170,6 +191,21 @@ def test_forest_and_equal_domain_plots_are_inspectable_without_guides(page):
             show_endpoint=False,
         )
     )
+    constant = Card(
+        "Constant",
+        content=[
+            Trend(
+                x=[0, 2],
+                y=[1, 1],
+                x_domain=(0, 2),
+                domain=(1, 1),
+                show_axis=False,
+                show_endpoint=False,
+                tooltip=Tooltip(),
+            )
+        ],
+    )
+    fragments.append('<div id="constant">' + constant.as_raw_html() + "</div>")
     page.set_content(interactive_html("".join(fragments)))
     _move(page, 0, "svg:nth-of-type(1)")
     assert "Missing" in _text(page) and "-1" in _text(page)
@@ -177,6 +213,8 @@ def test_forest_and_equal_domain_plots_are_inspectable_without_guides(page):
     page.locator("svg:nth-of-type(2) .ct-tooltip-target").focus()
     assert "5" in _text(page) and "right" in _text(page) and "6" in _text(page)
     _move(page, 0, "svg:nth-of-type(3)")
+    assert "1" in _text(page)
+    _move(page, 1, "#constant svg[data-ct-tooltip]")
     assert "1" in _text(page)
 
 
@@ -195,6 +233,7 @@ def test_scaled_plot_portal_escapes_clipping_drag_cancel_and_touch_release(page)
     box = page.locator(".ct-tooltip-panel").bounding_box()
     assert 0 <= box["x"] and box["x"] + box["width"] <= 640
     assert 0 <= box["y"] and box["y"] + box["height"] <= 480
+    assert box["y"] + box["height"] > 190
     page.mouse.down()
     page.mouse.move(620, 130)
     assert page.locator(".ct-tooltip-x").inner_text() == "4"
@@ -205,6 +244,11 @@ def test_scaled_plot_portal_escapes_clipping_drag_cancel_and_touch_release(page)
     bounds = target.bounding_box()
     page.touchscreen.tap(bounds["x"] + bounds["width"] / 2, bounds["y"] + 4)
     assert page.locator(".ct-tooltip-panel").is_visible()
+    target.evaluate("el => el.blur()")
+    _move(page, 2)
+    page.mouse.move(5, 5)
+    page.locator(".ct-tooltip-panel").wait_for(state="hidden")
+    page.touchscreen.tap(bounds["x"] + bounds["width"] / 2, bounds["y"] + 4)
     page.touchscreen.tap(5, 5)
     assert page.locator(".ct-tooltip-panel").is_hidden()
 
@@ -299,3 +343,38 @@ def test_overlapping_mounts_dynamic_plots_removal_and_literal_content(page):
     page.evaluate("() => { coeftableTooltips.mount(document.querySelector('.ct-interactive')); }")
     page.locator("#one svg").last.locator(".ct-tooltip-target").focus()
     assert "Note" in _text(page)
+
+
+@pytest.mark.integration
+def test_payload_changes_dismiss_stale_values_and_remove_unsupported_controls(page):
+    page.set_content(interactive_html(_plot()))
+    page.locator(".ct-tooltip-target").focus()
+    assert "1" in _text(page)
+    page.evaluate("""() => {
+        const svg = document.querySelector('svg');
+        const data = JSON.parse(svg.dataset.ctTooltip);
+        data.traces[0].points[0].value_text = 'Updated observation';
+        svg.dataset.ctTooltip = JSON.stringify(data);
+    }""")
+    page.locator(".ct-tooltip-panel").wait_for(state="hidden")
+    page.locator(".ct-tooltip-target").focus()
+    assert "Updated observation" in _text(page)
+    page.evaluate("""() => {
+        const svg = document.querySelector('svg');
+        const data = JSON.parse(svg.dataset.ctTooltip);
+        data.version = 99;
+        svg.dataset.ctTooltip = JSON.stringify(data);
+    }""")
+    page.wait_for_function("document.querySelectorAll('.ct-tooltip-target').length === 0")
+    assert page.locator(".ct-tooltip-panel").is_hidden()
+    page.evaluate("""() => {
+        const svg = document.querySelector('svg');
+        const data = JSON.parse(svg.dataset.ctTooltip);
+        data.version = 1;
+        svg.dataset.ctTooltip = JSON.stringify(data);
+    }""")
+    page.locator(".ct-tooltip-target").focus()
+    assert "Updated observation" in _text(page)
+    page.evaluate("document.querySelector('svg').removeAttribute('data-ct-tooltip')")
+    page.wait_for_function("document.querySelectorAll('.ct-tooltip-target').length === 0")
+    assert page.locator(".ct-tooltip-panel").is_hidden()

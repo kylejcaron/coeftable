@@ -1037,6 +1037,10 @@ def forest_bar(
 ) -> str:
     """Render one interval as an inline SVG bar.
 
+    ``tooltip=Tooltip()`` adds passive observation metadata, not scripts.
+    ``tooltip_values`` supplies length-one extras; unresolved dataframe fields
+    are rejected. Activate composed HTML explicitly with ``interactive_html``.
+
     The bar spans the interval, a light tick marks the point estimate, and a
     dashed line marks `ref` when it falls inside `domain`.  A bound outside the
     domain, including an unbounded one, is clipped visibly rather than
@@ -1554,6 +1558,10 @@ def sparkline_multi(
 ) -> str:
     """Render one or more overlaid series as an inline SVG line plot.
 
+    ``tooltip`` enables passive metadata. ``tooltip_values`` is aligned to
+    input traces (empty entries are allowed), with each field matching that
+    trace's observations. It does not change ``Trace`` or drawn geometry.
+
     Generalises `sparkline_bar` to `N` traces sharing one `x_domain` and
     `domain`. All ribbons draw first (each in its own trace colour, gated
     by that trace's `show_ribbon`), then the single dashed reference line
@@ -1840,6 +1848,10 @@ def sparkline_bar(
     tooltip_values: Sequence[TooltipValues] = (),
 ) -> str:
     """Render one series as an inline SVG line plot with an uncertainty ribbon.
+
+    ``tooltip`` enables passive metadata for horizontal inspection;
+    ``tooltip_values`` fields must match the point arrays. Compose and activate
+    with ``interactive_html``; this emitter never adds executable scripts.
 
     A gap (`None`/NaN) in `x` or `y` breaks both the ribbon and the series
     line into separate segments rather than joining across it; there is no
