@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 from coeftable.errors import SpecError
@@ -96,7 +97,7 @@ def format_tooltip_values(
             ).__name__ in ("NAType", "NaTType")
             try:
                 numeric_nan = math.isnan(value)
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 numeric_nan = False
             if value is None or numeric_nan or backend_null:
                 texts.append("—")
@@ -114,3 +115,18 @@ def format_tooltip_values(
             texts.append(text)
         result.append((field.label, tuple(texts)))
     return tuple(result)
+
+
+def _resolved_tooltip(
+    tooltip: Tooltip | None, fmt: Format, *, temporal: bool = False
+) -> Tooltip | None:
+    """Strip resolved source fields and choose independent observation formatters."""
+    if tooltip is None:
+        return None
+    x_fmt = tooltip.x_fmt
+    if x_fmt is None and temporal:
+
+        def x_fmt(value: float) -> str:
+            return datetime.fromtimestamp(value, tz=UTC).strftime("%Y-%m-%d %H:%M:%S")
+
+    return Tooltip(fmt=tooltip.fmt or fmt, x_fmt=x_fmt)

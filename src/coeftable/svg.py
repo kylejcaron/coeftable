@@ -3,17 +3,27 @@
 from __future__ import annotations
 
 import html
+import json
 import math
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from itertools import pairwise
-from typing import NamedTuple
+from typing import Any, NamedTuple, cast
 
 from coeftable.annotations import Layer, ResolvedAnnotation, ResolvedRule
 from coeftable.errors import SpecError
-from coeftable.format import _MONTH_ABBR, CalendarStep, DateAxis, Format, TimeFormat, is_missing
+from coeftable.format import (
+    _MONTH_ABBR,
+    CalendarStep,
+    DateAxis,
+    Format,
+    Number,
+    TimeFormat,
+    is_missing,
+)
 from coeftable.theme import DEFAULT, Theme
+from coeftable.tooltips import Tooltip, TooltipValues, format_tooltip_values
 
 _TICK_STEPS = (1.0, 2.0, 2.5, 5.0, 10.0)
 
@@ -313,6 +323,111 @@ def _svg(width: int, height: int, body: str) -> str:
         f'xmlns="http://www.w3.org/2000/svg" style="display:block;margin:0 auto">'
         f"{body}</svg>"
     )
+
+
+def _tooltip_extras(
+    tooltip: Tooltip | None, values: Sequence[TooltipValues], *, size: int
+) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """Validate direct declarations even when there are no selectable points."""
+    if tooltip is None:
+        if values:
+            raise SpecError("TooltipValues require an enabled tooltip.")
+        return ()
+    if tooltip.fields:
+        raise SpecError("Direct plots require TooltipValues, not unresolved Tooltip.fields.")
+    return format_tooltip_values(values, size=size, context="Plot tooltip")
+
+
+def _tooltip_text(value: float | None, fmt: Format) -> str:
+    """Format original numbers with contextual errors and no nonfinite JSON."""
+    if value is None or is_missing(value):
+        return "Missing"
+    if value == float("inf"):
+        return "∞"
+    if value == float("-inf"):
+        return "−∞"
+    try:
+        text = fmt(value)
+    except Exception as error:
+        raise SpecError("Plot tooltip value formatter failed.") from error
+    if not isinstance(text, str):
+        raise SpecError("Plot tooltip formatter must return a string.")
+    return text
+
+
+def _inspection_svg(
+    width: int,
+    height: int,
+    body: str,
+    *,
+    kind: str,
+    rect: dict[str, float],
+    traces: list[dict[str, Any]],
+    theme: Theme,
+) -> str:
+    """Attach escaped payload v1 without altering existing drawing geometry."""
+    if rect["right"] <= rect["left"] or rect["bottom"] <= rect["top"]:
+        raise SpecError("Enabled plot tooltip requires positive usable dimensions.")
+    payload = {
+        "version": 1,
+        "kind": kind,
+        "rect": rect,
+        "colors": {"surface": theme.surface, "text": theme.text, "axis": theme.axis},
+        "traces": traces,
+    }
+    attribute = html.escape(
+        json.dumps(payload, allow_nan=False, separators=(",", ":")), quote=True
+    )
+    return _svg(width, height, body).replace("<svg ", f'<svg data-ct-tooltip="{attribute}" ', 1)
+
+
+def _sparkline_tooltip_trace(
+    trace: Trace,
+    extras: tuple[tuple[str, tuple[str, ...]], ...],
+    *,
+    x_domain: tuple[float, float],
+    domain: tuple[float, float],
+    project_x: Callable[[float], float],
+    project_y: Callable[[float], float],
+    tooltip: Tooltip,
+    fmt: Format,
+) -> dict[str, Any]:
+    """Retain original observation order, gaps and duplicate x positions."""
+    points = []
+    if len({len(trace.x), len(trace.y), len(trace.lower), len(trace.upper)}) != 1:
+        raise SpecError("Tooltip plot x/y/interval arrays must have matching lengths.")
+    for index, (x, y, lower, upper) in enumerate(
+        zip(trace.x, trace.y, trace.lower, trace.upper, strict=True)
+    ):
+        if x is None or not math.isfinite(x) or not x_domain[0] <= x <= x_domain[1]:
+            continue
+        missing = is_missing(y)
+        status = (
+            "missing"
+            if missing
+            else "above"
+            if cast(float, y) > domain[1]
+            else "below"
+            if cast(float, y) < domain[0]
+            else "value"
+        )
+        points.append(
+            {
+                "index": index,
+                "x": x,
+                "px": project_x(x),
+                "py": None
+                if missing
+                else project_y(max(domain[0], min(domain[1], cast(float, y)))),
+                "x_text": _tooltip_text(x, tooltip.x_fmt or Number()),
+                "value_text": _tooltip_text(y, tooltip.fmt or fmt),
+                "lower_text": _tooltip_text(lower, tooltip.fmt or fmt),
+                "upper_text": _tooltip_text(upper, tooltip.fmt or fmt),
+                "status": status,
+                "extras": [(label, values[index]) for label, values in extras],
+            }
+        )
+    return {"label": trace.label, "color": trace.color, "points": points}
 
 
 def _tick_anchor(tick_x: float, label: str, width: int, font_size: float = 9.0) -> str:
@@ -917,6 +1032,8 @@ def forest_bar(
     inset: int = 3,
     margin: int = 0,
     annotations: Sequence[ResolvedAnnotation] = (),
+    tooltip: Tooltip | None = None,
+    tooltip_values: Sequence[TooltipValues] = (),
 ) -> str:
     """Render one interval as an inline SVG bar.
 
@@ -956,6 +1073,7 @@ def forest_bar(
     str
         A complete ``<svg>`` element.
     """
+    extras = _tooltip_extras(tooltip, tooltip_values, size=1)
     low, high = domain
     plot_width = width - 2 * margin
     inner_project = _projector(domain, plot_width, inset)
@@ -1014,7 +1132,7 @@ def forest_bar(
                 f'<polygon points="{tip:.2f},{middle:.2f} {tip + cap:.2f},{middle - cap:.2f} '
                 f'{tip + cap:.2f},{middle + cap:.2f}" fill="{_attr(color)}"/>'
             )
-    if not annotations:
+    if not annotations and tooltip is None:
         return _svg(width, height, "".join(parts))
     area = _PlotArea(
         x_domain=domain,
@@ -1031,6 +1149,40 @@ def forest_bar(
         + parts
         + _annotation_fragments(annotations, area=area, layer="overlay", theme=theme)
     )
+    if tooltip is not None:
+        status = (
+            "missing"
+            if is_missing(estimate)
+            else "left"
+            if cast(float, estimate) < low
+            else "right"
+            if cast(float, estimate) > high
+            else "value"
+        )
+        formatter = tooltip.fmt or Number()
+        point = {
+            "index": 0,
+            "x": None,
+            "px": None,
+            "py": None,
+            "x_text": "",
+            "value_text": _tooltip_text(estimate, formatter),
+            "lower_text": "−∞" if lower is None else _tooltip_text(lower, formatter),
+            "upper_text": "∞" if upper is None else _tooltip_text(upper, formatter),
+            "unbounded_lower": lower is None or lower == float("-inf"),
+            "unbounded_upper": upper is None or upper == float("inf"),
+            "status": status,
+            "extras": [(label, values[0]) for label, values in extras],
+        }
+        return _inspection_svg(
+            width,
+            height,
+            "".join(body),
+            kind="forest",
+            rect={"left": area.left, "right": area.right, "top": 0, "bottom": height},
+            traces=[{"label": "", "color": color, "points": [point]}],
+            theme=theme,
+        )
     return _svg(width, height, "".join(body))
 
 
@@ -1397,6 +1549,8 @@ def sparkline_multi(
     show_clip_indicators: bool = True,
     annotations: Sequence[ResolvedAnnotation] = (),
     theme: Theme = DEFAULT,
+    tooltip: Tooltip | None = None,
+    tooltip_values: Sequence[Sequence[TooltipValues]] = (),
 ) -> str:
     """Render one or more overlaid series as an inline SVG line plot.
 
@@ -1468,6 +1622,18 @@ def sparkline_multi(
     str
         A complete ``<svg>`` element.
     """
+    if tooltip_values and len(tooltip_values) != len(traces):
+        raise SpecError("Tooltip values require one entry per input trace.")
+    extras = (
+        [
+            _tooltip_extras(
+                tooltip, tooltip_values[i] if tooltip_values else (), size=len(trace.x)
+            )
+            for i, trace in enumerate(traces)
+        ]
+        if tooltip is not None or tooltip_values
+        else []
+    )
     per_trace = [
         (
             trace,
@@ -1616,6 +1782,35 @@ def sparkline_multi(
             + body
             + _annotation_fragments(annotations, area=area, layer="overlay", theme=theme)
         )
+    if tooltip is not None:
+        payload_traces = [
+            _sparkline_tooltip_trace(
+                trace,
+                extra,
+                x_domain=x_domain,
+                domain=domain,
+                project_x=project_x,
+                project_y=project_y,
+                tooltip=tooltip,
+                fmt=fmt,
+            )
+            for trace, extra in zip(traces, extras, strict=True)
+        ]
+        if any(trace["points"] for trace in payload_traces):
+            return _inspection_svg(
+                width,
+                height,
+                "".join(body),
+                kind="sparkline",
+                rect={
+                    "left": left_edge,
+                    "right": plot_right,
+                    "top": inset,
+                    "bottom": height - inset,
+                },
+                traces=payload_traces,
+                theme=theme,
+            )
     return _svg(width, height, "".join(body))
 
 
@@ -1641,6 +1836,8 @@ def sparkline_bar(
     show_clip_indicators: bool = True,
     annotations: Sequence[ResolvedAnnotation] = (),
     theme: Theme = DEFAULT,
+    tooltip: Tooltip | None = None,
+    tooltip_values: Sequence[TooltipValues] = (),
 ) -> str:
     """Render one series as an inline SVG line plot with an uncertainty ribbon.
 
@@ -1748,6 +1945,8 @@ def sparkline_bar(
         show_clip_indicators=show_clip_indicators,
         annotations=annotations,
         theme=theme,
+        tooltip=tooltip,
+        tooltip_values=[tooltip_values] if tooltip_values else (),
     )
 
 

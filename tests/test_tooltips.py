@@ -41,3 +41,9 @@ def test_formatter_failure_preserves_original_cause():
     with pytest.raises(SpecError) as error:
         format_tooltip_values([TooltipValues("Count", [1], fmt=broken)], size=1, context="row A")
     assert isinstance(error.value.__cause__, ValueError)
+
+
+def test_large_integer_extra_is_formatted_without_float_conversion():
+    assert format_tooltip_values([TooltipValues("Count", [10**400])], size=1, context="row A") == (
+        ("Count", ("1" + "0" * 400,)),
+    )

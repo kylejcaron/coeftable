@@ -44,6 +44,7 @@ from coeftable.svg import (
     sparkline_bar,
 )
 from coeftable.theme import Direction, Role, Theme, role_for
+from coeftable.tooltips import Tooltip, TooltipValues, _resolved_tooltip
 
 _DEFAULT_FORMAT = Number()
 
@@ -368,6 +369,8 @@ class Trend(Region):
     annotations: Sequence[ResolvedAnnotation] = ()
     show_y_axis: bool = False
     y_axis_fmt: Format | None = None
+    tooltip: Tooltip | None = None
+    tooltip_values: Sequence[TooltipValues] = ()
 
     def __post_init__(self) -> None:
         """Canonicalize and validate all intrinsic region inputs."""
@@ -377,6 +380,8 @@ class Trend(Region):
         _set(self, "x", x)
         _set(self, "y", y)
         _set(self, "annotations", annotations)
+        _set(self, "tooltip_values", _canonical(self.tooltip_values, name="Trend.tooltip_values"))
+        _validate_plot_tooltip(self.tooltip, self.tooltip_values, size=len(x))
         if self.lower is not None:
             lower = _canonical(self.lower, name="Trend.lower")
             _set(self, "lower", lower)
@@ -515,6 +520,8 @@ class Trend(Region):
             endpoint_width=self.endpoint_width,
             annotations=self.annotations,
             theme=theme,
+            tooltip=_resolved_tooltip(self.tooltip, self.fmt, temporal=self.temporal),
+            tooltip_values=self.tooltip_values,
         )
         spark = InlineSvg(spark_svg, width=width, height=self.height)
         if not self.show_axis:
@@ -556,9 +563,15 @@ class Interval(Region):
     axis_height: int = 22
     inset: int = 3
     margin: int = 0
+    tooltip: Tooltip | None = None
+    tooltip_values: Sequence[TooltipValues] = ()
 
     def __post_init__(self) -> None:
         """Validate all intrinsic interval inputs."""
+        _set(
+            self, "tooltip_values", _canonical(self.tooltip_values, name="Interval.tooltip_values")
+        )
+        _validate_plot_tooltip(self.tooltip, self.tooltip_values, size=1)
         _set(self, "domain", _canonical_domain(self.domain, name="Interval.domain"))
         _require_finite_number(self.estimate, name="Interval.estimate")
         _require_finite_number(self.lower, name="Interval.lower")
@@ -604,6 +617,8 @@ class Interval(Region):
             height=self.height,
             inset=self.inset,
             margin=self.margin,
+            tooltip=_resolved_tooltip(self.tooltip, self.fmt),
+            tooltip_values=self.tooltip_values,
         )
         bar = InlineSvg(bar_svg, width=width, height=self.height)
         if not self.show_axis:
@@ -620,3 +635,16 @@ class Interval(Region):
         )
         axis = InlineSvg(axis_svg, width=width, height=_svg_height(axis_svg, name="Interval axis"))
         return (bar, axis)
+
+
+def _validate_plot_tooltip(
+    tooltip: Tooltip | None, fields: Sequence[TooltipValues], *, size: int
+) -> None:
+    """Validate direct region bindings without evaluating formatters twice."""
+    if fields and tooltip is None:
+        raise SpecError("TooltipValues require an enabled Tooltip.")
+    if tooltip is not None and tooltip.fields:
+        raise SpecError("Regions require TooltipValues, not unresolved Tooltip.fields.")
+    for field in fields:
+        if not isinstance(field, TooltipValues) or len(field.values) != size:
+            raise SpecError("Region tooltip values must align with plot observations.")
