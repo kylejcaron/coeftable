@@ -129,4 +129,4 @@ def _resolved_tooltip(
         def x_fmt(value: float) -> str:
             return datetime.fromtimestamp(value, tz=UTC).strftime("%Y-%m-%d %H:%M:%S")
 
-    return Tooltip(fmt=tooltip.fmt or fmt, x_fmt=x_fmt)
+    return Tooltip(fmt=fmt if tooltip.fmt is None else tooltip.fmt, x_fmt=x_fmt)

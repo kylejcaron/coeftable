@@ -974,7 +974,14 @@ def test_region_inspection_matches_direct_primitives_without_changing_dimensions
     from coeftable import Tooltip, TooltipValues
     from coeftable.plots import forest_bar, sparkline_bar
 
-    tooltip = Tooltip(fmt=str)
+    class ObservationFormat:
+        def __bool__(self):
+            return False
+
+        def __call__(self, value):
+            return f"observed:{value:g}"
+
+    tooltip = Tooltip(fmt=ObservationFormat(), x_fmt=ObservationFormat())
     extras = [TooltipValues("n", [10, 20])]
     trend = Trend(
         x=[0, 2],
@@ -1007,6 +1014,9 @@ def test_region_inspection_matches_direct_primitives_without_changing_dimensions
     assert json.loads(region_root.attrib["data-ct-tooltip"]) == json.loads(
         direct_root.attrib["data-ct-tooltip"]
     )
+    point = json.loads(region_root.attrib["data-ct-tooltip"])["traces"][0]["points"][0]
+    assert point["value_text"] == "observed:1"
+    assert point["x_text"] == "observed:0"
     assert (inline.width, inline.height) == (220, 30)
     interval = Interval(
         1,

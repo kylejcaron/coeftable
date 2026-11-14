@@ -396,6 +396,8 @@ def _sparkline_tooltip_trace(
     points = []
     if len({len(trace.x), len(trace.y), len(trace.lower), len(trace.upper)}) != 1:
         raise SpecError("Tooltip plot x/y/interval arrays must have matching lengths.")
+    value_fmt = fmt if tooltip.fmt is None else tooltip.fmt
+    x_fmt = Number() if tooltip.x_fmt is None else tooltip.x_fmt
     for index, (x, y, lower, upper) in enumerate(
         zip(trace.x, trace.y, trace.lower, trace.upper, strict=True)
     ):
@@ -419,10 +421,10 @@ def _sparkline_tooltip_trace(
                 "py": None
                 if missing
                 else project_y(max(domain[0], min(domain[1], cast(float, y)))),
-                "x_text": _tooltip_text(x, tooltip.x_fmt or Number()),
-                "value_text": _tooltip_text(y, tooltip.fmt or fmt),
-                "lower_text": _tooltip_text(lower, tooltip.fmt or fmt),
-                "upper_text": _tooltip_text(upper, tooltip.fmt or fmt),
+                "x_text": _tooltip_text(x, x_fmt),
+                "value_text": _tooltip_text(y, value_fmt),
+                "lower_text": _tooltip_text(lower, value_fmt),
+                "upper_text": _tooltip_text(upper, value_fmt),
                 "status": status,
                 "extras": [(label, values[index]) for label, values in extras],
             }
@@ -1163,7 +1165,7 @@ def forest_bar(
             if cast(float, estimate) > high
             else "value"
         )
-        formatter = tooltip.fmt or Number()
+        formatter = Number() if tooltip.fmt is None else tooltip.fmt
         point = {
             "index": 0,
             "x": None,
