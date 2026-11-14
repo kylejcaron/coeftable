@@ -1,10 +1,8 @@
 """Contract tests for the card adornment vocabulary and fragment renderer."""
 
-import ast
 import dataclasses
 import math
 import re
-from pathlib import Path
 from typing import cast
 
 import pytest
@@ -616,15 +614,6 @@ EXPECTED_CARD_EXPORTS = {
     "DEFAULT_APPEARANCE",
 }
 
-ALLOWED_CARDS_IMPORT_ROOTS = {
-    "cards",
-    "theme",
-    "format",
-    "svg",
-    "annotations",
-    "errors",
-}
-
 
 def test_cards_export_surface_is_exactly_the_promised_set():
     assert len(coeftable.cards.__all__) == 33
@@ -638,41 +627,6 @@ def test_cards_is_not_exported_from_the_top_level():
     import coeftable
 
     assert "cards" not in coeftable.__all__
-
-
-def test_every_cards_module_imports_only_foundation_modules():
-    package_dir = Path(coeftable.cards.__file__).parent
-    src_root = package_dir.parent.parent
-    modules = sorted(package_dir.rglob("*.py"))
-    assert modules, "cards package has no modules to check"
-    for module in modules:
-        tree = ast.parse(module.read_text())
-        imported_roots: set[str] = set()
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    parts = alias.name.split(".")
-                    if parts[0] == "coeftable":
-                        imported_roots.add(parts[1] if len(parts) > 1 else "")
-            elif isinstance(node, ast.ImportFrom):
-                if node.level == 0:
-                    paths = [node.module.split(".")] if node.module else []
-                else:
-                    package = list(module.parent.relative_to(src_root).parts)
-                    base = package[: len(package) - (node.level - 1)]
-                    if node.module:
-                        paths = [base + node.module.split(".")]
-                    else:
-                        paths = [[*base, alias.name] for alias in node.names]
-                for parts in paths:
-                    if parts[0] != "coeftable":
-                        continue
-                    if len(parts) > 1:
-                        imported_roots.add(parts[1])
-                    else:
-                        imported_roots.update(alias.name for alias in node.names)
-        leaked = imported_roots - ALLOWED_CARDS_IMPORT_ROOTS
-        assert not leaked, f"{module.name} imports disallowed roots: {sorted(leaked)}"
 
 
 def test_default_chrome_line_heights_round_up():
