@@ -1,3 +1,24 @@
+<a id="v0.14.0"></a>
+# [v0.14.0](https://github.com/kylejcaron/coeftable/releases/tag/v0.14.0) - 2026-11-15
+
+<!-- Release notes generated using configuration in .github/release.yml at v0.14.0 -->
+
+## What's Changed
+### New Features
+* Add opt-in plot value inspection by [@kylejcaron](https://github.com/kylejcaron) in [#69](https://github.com/kylejcaron/coeftable/pull/69)
+### Bug Fixes
+* Update filelock and virtualenv to patched releases by [@dependabot](https://github.com/dependabot)[bot] in [#68](https://github.com/kylejcaron/coeftable/pull/68)
+### Maintenance
+* Update changelog for v0.13.1 by [@github-actions](https://github.com/github-actions)[bot] in [#65](https://github.com/kylejcaron/coeftable/pull/65)
+
+## New Contributors
+* [@dependabot](https://github.com/dependabot)[bot] made their first contribution in [#68](https://github.com/kylejcaron/coeftable/pull/68)
+
+**Full Changelog**: https://github.com/kylejcaron/coeftable/compare/v0.13.1...v0.14.0
+
+[Changes][v0.14.0]
+
+
 <a id="v0.13.1"></a>
 # [v0.13.1](https://github.com/kylejcaron/coeftable/releases/tag/v0.13.1) - 2026-09-30
 
@@ -298,6 +319,7 @@
 [Changes][v0.1.0]
 
 
+[v0.14.0]: https://github.com/kylejcaron/coeftable/compare/v0.13.1...v0.14.0
 [v0.13.1]: https://github.com/kylejcaron/coeftable/compare/v0.13.0...v0.13.1
 [v0.13.0]: https://github.com/kylejcaron/coeftable/compare/v0.12.1...v0.13.0
 [v0.12.1]: https://github.com/kylejcaron/coeftable/compare/v0.12.0...v0.12.1
