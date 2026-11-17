@@ -9,6 +9,8 @@ EXPECTED_EXPORTS = {
     "Trace",
     "forest_axis",
     "forest_bar",
+    "quantile_dotplot",
+    "quantile_dotplot_axis",
     "sparkline_axis",
     "sparkline_bar",
     "sparkline_multi",
