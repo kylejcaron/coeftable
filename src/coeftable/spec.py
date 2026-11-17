@@ -46,7 +46,15 @@ from coeftable.svg import (
     sparkline_bar,
     sparkline_multi,
 )
-from coeftable.theme import DEFAULT, ColorRule, Direction, Role, Theme, role_for
+from coeftable.theme import (
+    DEFAULT,
+    ColorRule,
+    Direction,
+    Role,
+    Theme,
+    _dotplot_color_domain,
+    role_for,
+)
 
 if TYPE_CHECKING:
     from great_tables import GT
@@ -478,6 +486,7 @@ class _DotForestState:
     source: Estimate
     estimates: _EstimateState
     annotations: PreparedAnnotations
+    color_domain: tuple[float, float] | None
 
 
 @dataclass(frozen=True)
@@ -536,6 +545,12 @@ class Forest:
         to fit stacks; an explicit insufficient height raises ``SpecError``.
     show_legend
         Show the shared equal-mass explanation independently of axis ticks.
+    gradient
+        Colour dots by original x-value, overriding dot colour rules but not
+        estimate colours. Solid dots remain the default.
+    color_domain
+        Shared colour limits when gradient is enabled; by default the union of
+        this column's displayed domains across groups and splits.
 
     Notes
     -----
@@ -563,6 +578,8 @@ class Forest:
     dot_count: int | None = None
     dot_size: float = 6.0
     show_legend: bool = True
+    gradient: bool = False
+    color_domain: tuple[float, float] | None = None
 
     def sources(self) -> Iterable[str]:
         """Frame columns read by the distribution and annotations."""
@@ -706,6 +723,14 @@ class Forest:
         heights = tuple(
             row.automatic_height if self.height is None else self.height for row in rows
         )
+        colors = _dotplot_color_domain(
+            self.gradient,
+            self.color_domain,
+            (
+                min((d[0] for d in domains.values()), default=0),
+                max((d[1] for d in domains.values()), default=1),
+            ),
+        )
         footer_key = (
             (lambda row, group, split: _domain_key(self, row, group, split))
             if count is not None and (self.show_axis or self.show_legend)
@@ -713,7 +738,7 @@ class Forest:
         )
         return Prepared(
             payload=_DotForestState(
-                domains, rows, values, count, heights, source, estimates, annotations
+                domains, rows, values, count, heights, source, estimates, annotations, colors
             ),
             footer_key=footer_key,
             shared_footer=self.scale in ("table", "split_column"),
@@ -724,7 +749,7 @@ class Forest:
             return ""
         estimates = state.estimates
         role: Role = "neutral"
-        if ctx.color_rule is not None:
+        if ctx.color_rule is not None and not self.gradient:
             role = ctx.color_rule(
                 estimates.value[ctx.index],
                 estimates.low[ctx.index] if estimates.low is not None else None,
@@ -743,6 +768,7 @@ class Forest:
             dot_size=self.dot_size,
             inset=5,
             annotations=state.annotations.by_row[ctx.index],
+            color_domain=state.color_domain,
         )
 
     def cell(self, ctx: Cell) -> str:
@@ -788,6 +814,8 @@ class Forest:
                 dot_size=self.dot_size,
                 show_axis=self.show_axis,
                 show_legend=self.show_legend,
+                gradient=self.gradient,
+                color_domain=dots.color_domain,
             )
         state: _ForestState = ctx.prepared.payload
         return forest_axis(
@@ -1529,13 +1557,16 @@ def validate_columns(columns: tuple[Column, ...]) -> None:
             )
         if column.style not in ("interval", "dotplot"):
             raise SpecError(f"Forest {column.label!r}: style must be interval or dotplot")
+        _dotplot_color_domain(column.gradient, column.color_domain, (0, 1))
         if column.style == "interval":
             if (
                 column.samples is not None
                 or column.quantiles is not None
                 or column.dot_count is not None
+                or column.gradient
+                or column.color_domain is not None
             ):
-                raise SpecError("Distribution sources and dot_count require style='dotplot'")
+                raise SpecError("Distribution and gradient options require style='dotplot'")
         else:
             if (column.samples is None) == (column.quantiles is None):
                 raise SpecError("Dotplot Forest requires exactly one samples or quantiles column")
@@ -1752,6 +1783,8 @@ class CoefTable:
         dot_count: int | None = None,
         dot_size: float = 6.0,
         show_legend: bool = True,
+        gradient: bool = False,
+        color_domain: tuple[float, float] | None = None,
     ) -> CoefTable:
         """Append a forest-plot column bound to an existing estimate.
 
@@ -1802,6 +1835,8 @@ class CoefTable:
             Shared dot diameter in pixels. Automatic height fits dense stacks.
         show_legend
             Display the shared dot-mass explanation independently of axis ticks.
+        gradient, color_domain
+            Optional original-value colouring with shared limits; see `Forest`.
 
         Returns
         -------
@@ -1828,6 +1863,8 @@ class CoefTable:
                 dot_count=dot_count,
                 dot_size=dot_size,
                 show_legend=show_legend,
+                gradient=gradient,
+                color_domain=color_domain,
             )
         )
 

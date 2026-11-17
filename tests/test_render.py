@@ -870,3 +870,25 @@ def test_label_markup_roundtrips_as_text_in_latex():
     assert "Rev" in latex
     assert "<b>" not in latex
     assert "A\\&B" in latex
+
+
+@pytest.mark.integration
+def test_mixed_dotplot_legend_heights_align_footer_cells_not_body_cells():
+    data = pl.DataFrame({"term": ["a"], "value": [0.0], "q": [[-1.0, 0.0, 1.0]]})
+    markup = (
+        CoefTable(data, rows="term")
+        .estimate("Effect", "value")
+        .forest("Solid", of="Effect", style="dotplot", quantiles="q")
+        .forest("Gradient", of="Effect", style="dotplot", quantiles="q", gradient=True)
+        .as_raw_html()
+    )
+    cells = [attrs for tag, attrs in _tags(markup) if tag == "td"]
+    _, _, body_solid, body_gradient, _, _, footer_solid, footer_gradient = cells
+    assert all(
+        "vertical-align: top;" in (cell.get("style") or "")
+        for cell in (footer_solid, footer_gradient)
+    )
+    assert all(
+        "vertical-align: top;" not in (cell.get("style") or "")
+        for cell in (body_solid, body_gradient)
+    )

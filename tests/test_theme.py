@@ -160,3 +160,29 @@ def test_series_color_rejects_empty_palette():
 def test_series_color_rejects_negative_index():
     with pytest.raises(ValueError, match="non-negative"):
         DEFAULT.series_color(-1)
+
+
+def test_dotplot_gradient_interpolates_values_and_clamps_without_alpha():
+    theme = dataclasses.replace(DEFAULT, dotplot_palette=("#000000", "#ffffff"))
+    assert [theme.dotplot_color(v, (-2, 2)) for v in (-3, -2, 0, 2, 3)] == [
+        "#000000",
+        "#000000",
+        "#808080",
+        "#ffffff",
+        "#ffffff",
+    ]
+    for value in (-1, 0, 1):
+        shade = MONO.dotplot_color(value, (-1, 1))
+        assert shade[1:3] == shade[3:5] == shade[5:7]
+
+
+def test_dotplot_gradient_rejects_invalid_scale_or_nonopaque_palette():
+    from coeftable.errors import SpecError
+
+    for domain in ((0, 0), (1, -1), (0, float("inf")), (False, 1)):
+        with pytest.raises(SpecError):
+            DEFAULT.dotplot_color(0, domain)
+    for palette in (("#000000",), ("red", "#ffffff"), ("#00000000", "#ffffff")):
+        theme = dataclasses.replace(DEFAULT, dotplot_palette=palette)
+        with pytest.raises(SpecError):
+            theme.dotplot_color(0, (-1, 1))

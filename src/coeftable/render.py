@@ -132,6 +132,7 @@ def to_gt(table: CoefTable) -> GT:
                 style.fill(color=theme.surface),
                 style.borders(sides="top", color=theme.rule, weight="1px"),
                 style.borders(sides="bottom", color=theme.surface, weight="0px"),
+                style.css("vertical-align: top;"),
             ],
             locations=loc.body(rows=resolved.axis_rows),
         )

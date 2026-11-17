@@ -47,7 +47,7 @@ from coeftable.svg import (
     sparkline_axis,
     sparkline_bar,
 )
-from coeftable.theme import Direction, Role, Theme, role_for
+from coeftable.theme import Direction, Role, Theme, _dotplot_color_domain, role_for
 
 _DEFAULT_FORMAT = Number()
 
@@ -634,6 +634,9 @@ class QuantileDotplot(Region):
     cannot determine the distribution. Source arrays are snapshotted. The
     default is 20 inverse empirical quantiles for samples; precomputed values
     determine their own count. Off-scale representatives retain their denominator.
+    ``gradient=True`` colours original values with ``theme.dotplot_palette``
+    instead of ``role``. Pass a common ``color_domain`` to compare separate
+    cards; it defaults to this region's domain and is snapshotted when supplied.
     """
 
     domain: tuple[float, float]
@@ -649,6 +652,8 @@ class QuantileDotplot(Region):
     show_axis: bool = True
     show_legend: bool = True
     annotations: Sequence[ResolvedAnnotation] = ()
+    gradient: bool = False
+    color_domain: tuple[float, float] | None = None
     _values: DotValues = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -665,6 +670,9 @@ class QuantileDotplot(Region):
         if self.quantiles is not None:
             _set(self, "quantiles", tuple(self.quantiles))
         _set(self, "domain", _canonical_domain(self.domain, name="QuantileDotplot.domain"))
+        colors = _dotplot_color_domain(self.gradient, self.color_domain, self.domain)
+        if self.color_domain is not None:
+            _set(self, "color_domain", colors)
         _require_finite_number(self.ref, name="QuantileDotplot.ref")
         _require_finite_number(self.dot_size, name="QuantileDotplot.dot_size")
         if self.dot_size <= 0:
@@ -705,6 +713,7 @@ class QuantileDotplot(Region):
             dot_size=self.dot_size,
             inset=self.inset,
             annotations=self.annotations,
+            color_domain=_dotplot_color_domain(self.gradient, self.color_domain, self.domain),
         )
         bar = InlineSvg(svg, width=width, height=height)
         if self._values.dot_count is None or not (self.show_axis or self.show_legend):
@@ -720,6 +729,8 @@ class QuantileDotplot(Region):
             inset=self.inset,
             show_axis=self.show_axis,
             show_legend=self.show_legend,
+            gradient=self.gradient,
+            color_domain=self.color_domain,
         )
         return (
             bar,

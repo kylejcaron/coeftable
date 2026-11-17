@@ -2666,3 +2666,68 @@ def test_dotplot_annotations_and_fractional_inset_share_true_axis():
     assert line is not None and float(line.attrib["x1"]) == 5
     with pytest.raises(SpecError):
         _dots_svg(annotations=[ResolvedRule(0, "y", "overlay", False, None, 1, 1, "solid")])
+
+
+def test_dotplot_gradient_uses_original_values_not_bin_centers():
+    from dataclasses import replace
+
+    from coeftable.plots import quantile_dotplot
+
+    theme = replace(DEFAULT, dotplot_palette=("#000000", "#ffffff"))
+    root = ET.fromstring(  # noqa: S314 - generated SVG
+        quantile_dotplot(
+            quantiles=[0.01, 0.02],
+            domain=(0, 1),
+            ref=0,
+            color="red",
+            theme=theme,
+            gradient=True,
+        )
+    )
+    circles = root.findall("{*}circle")
+    assert circles[0].attrib["cx"] == circles[1].attrib["cx"]
+    assert [c.attrib["fill"] for c in circles] == ["#030303", "#050505"]
+    assert all(c.attrib["r"] == "3.00" and "opacity" not in c.attrib for c in circles)
+
+
+def test_dotplot_gradient_footer_is_measured_escaped_and_independent_of_axis():
+    from coeftable.plots import quantile_dotplot_axis
+
+    def footer(**kwargs):
+        return quantile_dotplot_axis(
+            domain=(-1, 1),
+            ref=0,
+            dot_count=20,
+            fmt=lambda v: f"<{v:g}&",
+            theme=DEFAULT,
+            gradient=True,
+            color_domain=(-2, 4),
+            show_axis=False,
+            **kwargs,
+        )
+
+    root = ET.fromstring(footer())  # noqa: S314
+    rects = root.findall("{*}rect")
+    assert rects[0].attrib["fill"].lower() == DEFAULT.dotplot_palette[0].lower()
+    assert rects[-1].attrib["fill"].lower() == DEFAULT.dotplot_palette[1].lower()
+    texts = root.findall("{*}text")
+    assert {"Color: value", "<-2&", "<4&"} <= {t.text for t in texts}
+    assert all(float(t.attrib["y"]) < int(root.attrib["height"]) for t in texts)
+    assert not root.findall("{*}line")
+    hidden = ET.fromstring(footer(show_legend=False))  # noqa: S314
+    assert not list(hidden)
+    with pytest.raises(SpecError):
+        footer(width=50)
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"gradient": 1},
+        {"color_domain": (-1, 1)},
+        {"gradient": True, "color_domain": (1, 1)},
+    ],
+)
+def test_dotplot_invalid_color_options_fail_even_for_empty_distribution(options):
+    with pytest.raises(SpecError):
+        _dots_svg(quantiles=[], **options)

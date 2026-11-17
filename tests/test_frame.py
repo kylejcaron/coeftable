@@ -877,3 +877,48 @@ def test_dotplot_point_mass_grows_only_its_own_row():
         for i, s in enumerate(nw.from_native(short.frame)["Dots"].to_list())
         if i not in short.axis_rows
     )
+
+
+@pytest.mark.integration
+def test_dotplot_gradient_shares_values_across_distinct_group_domains():
+    from dataclasses import replace
+
+    from coeftable.theme import DEFAULT
+
+    data = pd.DataFrame(
+        {
+            "term": ["a", "b"],
+            "group": ["A", "B"],
+            "value": [0.5, 0.5],
+            "q": [[-2, 0.5, 1], [0, 0.5, 4]],
+        }
+    )
+    theme = replace(DEFAULT, dotplot_palette=("#000000", "#ffffff"))
+
+    def build(**kwargs):
+        return (
+            CoefTable(data, rows="term", groups="group", theme=theme)
+            .estimate("Effect", "value")
+            .forest(
+                "Dots",
+                of="Effect",
+                style="dotplot",
+                quantiles="q",
+                scale="row_group",
+                gradient=True,
+                **kwargs,
+            )
+        )
+
+    table = build()
+    out = resolve(table)
+    cells = nw.from_native(out.frame)["Dots"].to_list()
+    colors = [_circles(s)[1].attrib["fill"] for i, s in enumerate(cells) if i not in out.axis_rows]
+    # Default domains include 6% padding; same value still has one color.
+    assert colors[0] == colors[1]
+    explicit = build(color_domain=(-2, 4))
+    cells = nw.from_native(resolve(explicit).frame)["Dots"].to_list()
+    assert [_circles(s)[1].attrib["fill"] for s in cells if _circles(s)] == ["#6a6a6a", "#6a6a6a"]
+    footers = [ET.fromstring(s) for s in cells if s and not _circles(s)]  # noqa: S314
+    assert all("Color: value" in "".join(r.itertext()) for r in footers)
+    assert [r.findall("{*}rect")[0].attrib["fill"] for r in footers] == ["#000000"] * 2

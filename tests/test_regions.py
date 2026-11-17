@@ -968,12 +968,21 @@ def test_projection_guards_name_effective_spans(region, width, message):
 
 
 @pytest.mark.integration
-def test_quantile_dotplot_region_matches_shared_svg_and_measures_footer():
+@pytest.mark.parametrize("gradient", [False, True])
+def test_quantile_dotplot_region_matches_shared_svg_and_measures_footer(gradient):
     from coeftable.cards import Card, QuantileDotplot
-    from coeftable.plots import quantile_dotplot
+    from coeftable.plots import quantile_dotplot, quantile_dotplot_axis
 
     source = [-3, -1, 0, 0, 1, 3]
-    region = QuantileDotplot(quantiles=source, domain=(-1, 1))
+    colors = [-2, 4] if gradient else None
+    region = QuantileDotplot(
+        quantiles=source,
+        domain=(-1, 1),
+        gradient=gradient,
+        color_domain=colors,  # ty: ignore[invalid-argument-type] - exercise mutable input snapshot
+    )
+    if colors is not None:
+        colors[:] = [0, 99]
     source[:] = [99]
     row, footer = region.resolve(width=120, theme=DEFAULT, chrome=DEFAULT_CHROME)
     expected = quantile_dotplot(
@@ -983,6 +992,8 @@ def test_quantile_dotplot_region_matches_shared_svg_and_measures_footer():
         color=DEFAULT.neutral,
         theme=DEFAULT,
         width=120,
+        gradient=gradient,
+        color_domain=(-2, 4) if gradient else None,
     )
     root = ET.fromstring(row.svg)  # noqa: S314 - generated SVG
     other = ET.fromstring(expected)  # noqa: S314
@@ -992,6 +1003,17 @@ def test_quantile_dotplot_region_matches_shared_svg_and_measures_footer():
     assert row.height == int(root.attrib["height"]) == 76
     axis = ET.fromstring(footer.svg)  # noqa: S314
     assert footer.height == int(axis.attrib["height"])
+    expected_footer = quantile_dotplot_axis(
+        domain=(-1, 1),
+        ref=0,
+        dot_count=6,
+        fmt=region.fmt,
+        theme=DEFAULT,
+        width=120,
+        gradient=gradient,
+        color_domain=(-2, 4) if gradient else None,
+    )
+    assert footer.svg == expected_footer
     assert "1/6" in "".join(root.itertext())
     assert "supplied" in "".join(axis.itertext())
     card = Card("Posterior", content=[region], width=160)

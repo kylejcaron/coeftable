@@ -14,7 +14,7 @@ from coeftable.annotations import Layer, ResolvedAnnotation, ResolvedRule
 from coeftable.dotplots import DotLayout, DotValues, layout_dots, prepare_dots
 from coeftable.errors import SpecError
 from coeftable.format import _MONTH_ABBR, CalendarStep, DateAxis, Format, TimeFormat, is_missing
-from coeftable.theme import DEFAULT, Theme
+from coeftable.theme import DEFAULT, Theme, _dotplot_color_domain
 
 _TICK_STEPS = (1.0, 2.0, 2.5, 5.0, 10.0)
 
@@ -2102,12 +2102,14 @@ def _render_dotplot_row(
     dot_size: float,
     inset: int,
     annotations: Sequence[ResolvedAnnotation] = (),
+    color_domain: tuple[float, float] | None = None,
 ) -> str:
     """Render cached binned positions while retaining original-value semantics."""
     if isinstance(height, bool) or not isinstance(height, int) or height < row.minimum_height:
         raise SpecError(f"Dotplot height must be at least {row.minimum_height}px")
     if any(mark.axis != "x" for mark in annotations):
         raise SpecError("Dotplots support x annotations only")
+    color_scale = theme._dotplot_color_scale(color_domain) if color_domain is not None else None
     layout = row.layout
     if not layout.dots and not (layout.below or layout.above):
         return _svg(width, height, "")
@@ -2133,8 +2135,9 @@ def _render_dotplot_row(
     baseline = plot_height - effective - dot_size / 2
     for dot in layout.dots:
         y = baseline - dot.level * (dot_size + 1)
+        fill = color_scale(dot.value) if color_scale is not None else color
         parts.append(
-            f'<circle cx="{dot.x:.2f}" cy="{y:.2f}" r="{dot_size / 2:.2f}" fill="{_attr(color)}"/>'
+            f'<circle cx="{dot.x:.2f}" cy="{y:.2f}" r="{dot_size / 2:.2f}" fill="{_attr(fill)}"/>'
         )
     parts.extend(_annotation_fragments(annotations, area=area, layer="overlay", theme=theme))
     for i, (left, right) in enumerate(row.tail_rows):
@@ -2162,6 +2165,8 @@ def quantile_dotplot(
     dot_size: float = 6.0,
     inset: int = 5,
     annotations: Sequence[ResolvedAnnotation] = (),
+    gradient: bool = False,
+    color_domain: tuple[float, float] | None = None,
 ) -> str:
     """Render equal-mass midpoint representatives in aligned baseline stacks.
 
@@ -2169,7 +2174,11 @@ def quantile_dotplot(
     Samples use inverse empirical quantiles (no interpolation), with 20 dots by
     default. Cropped dots are counted visibly without changing the denominator.
     Pair with ``quantile_dotplot_axis`` for the shared axis and legend.
+    ``gradient=True`` colours original values using ``theme.dotplot_palette``,
+    overriding ``color``. ``color_domain`` defaults to the plot domain; pass
+    the same limits to separate plots and their axes to compare colours.
     """
+    colors = _dotplot_color_domain(gradient, color_domain, domain)
     values = prepare_dots(samples=samples, quantiles=quantiles, dot_count=dot_count)
     row = _prepare_dotplot_row(
         values, domain=domain, ref=ref, width=width, dot_size=dot_size, inset=inset
@@ -2185,6 +2194,7 @@ def quantile_dotplot(
         dot_size=dot_size,
         inset=inset,
         annotations=annotations,
+        color_domain=colors,
     )
 
 
@@ -2200,8 +2210,12 @@ def quantile_dotplot_axis(
     inset: int = 5,
     show_axis: bool = True,
     show_legend: bool = True,
+    gradient: bool = False,
+    color_domain: tuple[float, float] | None = None,
 ) -> str:
     """Render a matching axis and independently switchable equal-mass legend."""
+    colors = _dotplot_color_domain(gradient, color_domain, domain)
+    color_scale = theme._dotplot_color_scale(colors) if colors is not None else None
     effective = _dotplot_geometry(domain, ref, width, dot_size, inset)
     if isinstance(dot_count, bool) or not isinstance(dot_count, int) or dot_count < 2:
         raise SpecError("Dotplot axis requires a known integer dot_count >= 2")
@@ -2231,4 +2245,54 @@ def quantile_dotplot_axis(
             f'<text x="{inset}" y="{offset + 12 + 16 * i}" font-size="12" '
             f'fill="{_attr(theme.text)}">{html.escape(line)}</text>'
         )
+    if show_legend and colors is not None and color_scale is not None:
+        parts.extend(
+            _dotplot_gradient_legend(
+                colors, color_scale, fmt=fmt, theme=theme, width=width, inset=inset, y=height
+            )
+        )
+        height += 44
     return _svg(width, height, "".join(parts))
+
+
+def _dotplot_gradient_legend(
+    domain: tuple[float, float],
+    color: Callable[[float], str],
+    *,
+    fmt: Format,
+    theme: Theme,
+    width: int,
+    inset: int,
+    y: int,
+) -> list[str]:
+    """Draw a self-contained colour ramp with measured, escaped endpoint labels."""
+    low, high = domain
+    labels = (str(fmt(low)), str(fmt(high)))
+    usable = width - 2 * inset
+    if (
+        max(
+            len("Color: value") * 11 * _CHAR_WIDTH_RATIO,
+            sum(map(len, labels)) * 11 * _CHAR_WIDTH_RATIO + 8,
+        )
+        > usable
+    ):
+        raise SpecError("Dotplot colour legend does not fit; increase width or shorten labels")
+    parts = [
+        f'<text x="{inset}" y="{y + 12}" font-size="11" '
+        f'fill="{_attr(theme.text)}">Color: value</text>'
+    ]
+    steps = 32
+    for i in range(steps):
+        t = i / (steps - 1)
+        value = low * (1 - t) + high * t
+        parts.append(
+            f'<rect x="{inset + usable * i / steps:.4f}" y="{y + 16}" '
+            f'width="{usable / steps:.4f}" height="8" fill="{color(value)}" '
+            'shape-rendering="crispEdges"/>'
+        )
+    for label, x, anchor in ((labels[0], inset, "start"), (labels[1], width - inset, "end")):
+        parts.append(
+            f'<text x="{x}" y="{y + 38}" font-size="11" text-anchor="{anchor}" '
+            f'fill="{_attr(theme.text)}">{html.escape(label)}</text>'
+        )
+    return parts

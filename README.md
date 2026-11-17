@@ -206,6 +206,22 @@ outcomes are not interchangeable. Dots default to neutral color, not a
 significance verdict; existing explicit color rules/roles remain available.
 Coeftable does not fit a distribution from interval endpoints.
 
+For optional value colouring, add `gradient=True` to `.forest(...)`,
+`Forest(...)`, or `QuantileDotplot(...)`. For standalone output, pass it to
+both `quantile_dotplot(...)` and `quantile_dotplot_axis(...)`. Solid is the default.
+The gradient repeats the **original x-value**, not density, probability or
+significance. All dots keep equal size and full opacity, including the tails.
+
+A table shares one colour scale across its groups and splits. Use
+`color_domain=(-1, 2)` with `gradient=True` to fix that scale across separate
+tables, plots or cards; otherwise standalone/card colour limits follow their
+plot domain. The gradient overrides dot colour rules/roles, not estimate colours.
+`show_legend=False` hides both the mass and colour explanations.
+
+Customize the two opaque hex endpoints with
+`dataclasses.replace(DEFAULT, dotplot_palette=("#3366AA", "#AA3377"))`.
+Choose endpoints that contrast with your background; MONO uses a gray ramp.
+
 ## Comparing methods
 
 Use `split_columns` to compare multiple methods side by side. Each value in the
