@@ -20,6 +20,7 @@ from coeftable.annotations import (
 )
 from coeftable.cards import Card
 from coeftable.collapsible import make_collapsible
+from coeftable.dotplots import DotValues, prepare_dots
 from coeftable.errors import ColumnNotFoundError, SpecError
 from coeftable.format import (
     CIStyle,
@@ -34,14 +35,26 @@ from coeftable.format import (
 from coeftable.svg import (
     CLIP_MARGIN,
     Trace,
+    _DotRow,
+    _prepare_dotplot_row,
+    _render_dotplot_row,
     _sparkline_y_axis_gutter,
     forest_axis,
     forest_bar,
+    quantile_dotplot_axis,
     sparkline_axis,
     sparkline_bar,
     sparkline_multi,
 )
-from coeftable.theme import DEFAULT, ColorRule, Direction, Role, Theme, role_for
+from coeftable.theme import (
+    DEFAULT,
+    ColorRule,
+    Direction,
+    Role,
+    Theme,
+    _dotplot_color_domain,
+    role_for,
+)
 from coeftable.tooltips import Tooltip, TooltipValues, _resolved_tooltip, format_tooltip_values
 
 if TYPE_CHECKING:
@@ -310,14 +323,22 @@ def _pad_domain(
     if symmetric and ref is None:
         raise ValueError("_pad_domain: symmetric=True requires ref to be set, got ref=None")
     if not values:
-        return (-1.0, 1.0) if ref is None else (ref - 1.0, ref + 1.0)
-    low, high = min(values), max(values)
+        low = high = 0.0 if ref is None else ref
+    else:
+        low, high = min(values), max(values)
     if ref is not None:
         low, high = min(low, ref), max(high, ref)
     if low == high:
-        return (low - 1.0, high + 1.0)
-    margin = (high - low) * 0.08
-    low, high = low - margin, high + margin
+        if low - 1.0 < high + 1.0:
+            return (low - 1.0, high + 1.0)
+        margin = abs(low) * 0.08
+    else:
+        span = high - low
+        margin = span * 0.08 if math.isfinite(span) else high * 0.08 - low * 0.08
+    padded_low, padded_high = low - margin, high + margin
+    # At float limits, retain the data endpoint rather than padding to infinity.
+    low = padded_low if math.isfinite(padded_low) else low
+    high = padded_high if math.isfinite(padded_high) else high
     if symmetric and ref is not None:
         half = max(ref - low, high - ref)
         return (ref - half, ref + half)
@@ -471,8 +492,21 @@ class _ForestState:
 
 
 @dataclass(frozen=True)
+class _DotForestState:
+    domains: dict[Any, tuple[float, float]]
+    rows: tuple[_DotRow, ...]
+    values: tuple[DotValues, ...]
+    dot_count: int | None
+    heights: tuple[int, ...]
+    source: Estimate
+    estimates: _EstimateState
+    annotations: PreparedAnnotations
+    color_domain: tuple[float, float] | None
+
+
+@dataclass(frozen=True)
 class Forest:
-    """A column rendering an inline SVG interval bar.
+    """A column rendering an inline interval bar or equal-mass quantile dotplot.
 
     ``tooltip=Tooltip()`` includes observation metadata. Its fields bind scalar
     columns on the main frame; activate the composed HTML with ``interactive_html``.
@@ -515,6 +549,33 @@ class Forest:
         Callable labelling axis ticks; defaults to the bound estimate's `fmt`.
     annotations
         Rules and bands drawn in each non-empty plot cell.
+    style
+        ``"interval"`` (default), or ``"dotplot"`` for a supplied distribution.
+    samples, quantiles
+        Exactly one list-valued source column in dotplot mode. Samples use
+        inverse empirical midpoint quantiles without interpolation. Precomputed
+        quantiles must be ordered values at levels ``(i + 0.5) / N``.
+    dot_count
+        Sample display count (default 20), or a check on supplied quantile count.
+        Nonempty quantile rows must share N across groups/splits.
+    dot_size
+        Dot diameter in pixels, shared across rows. Automatic row height grows
+        to fit stacks; an explicit insufficient height raises ``SpecError``.
+    show_legend
+        Show the shared equal-mass explanation independently of axis ticks.
+    gradient
+        Colour dots by original x-value, overriding dot colour rules but not
+        estimate colours. Solid dots remain the default.
+    color_domain
+        Shared colour limits when gradient is enabled; by default the union of
+        this column's displayed domains across groups and splits.
+
+    Notes
+    -----
+    Dotplots need no CI and survive missing point estimates. Missing/empty
+    distributions render blank. Neutral dots do not claim significance; an
+    explicit color rule still applies. Cropping shows omitted-dot counts with
+    original N, not exact source tail probabilities. Interval mode is unchanged.
     """
 
     label: str
@@ -529,17 +590,28 @@ class Forest:
     show_axis: bool = True
     axis_fmt: Format | None = None
     annotations: tuple[Annotation, ...] = ()
+    style: Literal["interval", "dotplot"] = "interval"
+    samples: str | None = None
+    quantiles: str | None = None
+    dot_count: int | None = None
+    dot_size: float = 6.0
+    show_legend: bool = True
+    gradient: bool = False
+    color_domain: tuple[float, float] | None = None
     tooltip: Tooltip | None = None
 
     def sources(self) -> Iterable[str]:
-        """Frame columns read by this plot's annotations."""
-        return (
-            *annotation_sources(self.annotations),
-            *((field.source for field in self.tooltip.fields) if self.tooltip else ()),
-        )
+        """Frame columns read by the distribution, annotations, and tooltip."""
+        sources = list(annotation_sources(self.annotations))
+        sources.extend(name for name in (self.samples, self.quantiles) if name is not None)
+        if self.tooltip is not None:
+            sources.extend(field.source for field in self.tooltip.fields)
+        return sources
 
     def prepare(self, scan: Scan) -> Prepared:
         """Compute this column's per-key domains, annotations, and footer schedule."""
+        if self.style == "dotplot":
+            return self._prepare_dots(scan)
         source = _estimate_by_label(scan.columns, self.of)
         assert source.ci is not None  # noqa: S101 - guaranteed by validate_columns
         source_state: _EstimateState = source.prepare(scan).payload
@@ -614,8 +686,133 @@ class Forest:
             shared_footer=self.scale in ("table", "split_column"),
         )
 
+    def _prepare_dots(self, scan: Scan) -> Prepared:
+        source = _estimate_by_label(scan.columns, self.of)
+        estimates: _EstimateState = source.prepare(scan).payload
+        name = self.samples if self.samples is not None else self.quantiles
+        assert name is not None  # noqa: S101 - validated source configuration
+        source_values = scan.frame[name]
+        raw = source_values.to_list()
+        missing = source_values.is_null().to_list()
+        values = tuple(
+            prepare_dots(
+                samples=([] if missing[i] else cell) if self.samples is not None else None,
+                quantiles=([] if missing[i] else cell) if self.quantiles is not None else None,
+                dot_count=self.dot_count,
+                context=f"Forest {self.label!r}, column {name!r}, row {scan.row_keys[i]!r}",
+            )
+            for i, cell in enumerate(raw)
+        )
+        counts = {v.dot_count for v in values if v.dot_count is not None}
+        if len(counts) > 1:
+            raise SpecError(f"Forest {self.label!r}: all rows must share one dot_count")
+        count = next(iter(counts), self.dot_count)
+        annotations = prepare_annotations(
+            self.annotations,
+            scan.frame,
+            axis_kinds={"x": "numeric"},
+            plot_label=self.label,
+            row_identities=tuple(
+                zip(scan.row_keys, scan.nest_keys, scan.group_keys, scan.split_keys, strict=True)
+            ),
+        )
+        keys = [
+            _domain_key(self, row, group, split)
+            for row, group, split in zip(
+                scan.row_keys, scan.group_keys, scan.split_keys, strict=True
+            )
+        ]
+        buckets: dict[Any, list[float]] = {}
+        required: dict[Any, list[float]] = {}
+        for i, key in enumerate(keys):
+            buckets.setdefault(key, []).extend(values[i].quantiles)
+            if values[i].quantiles:
+                required.setdefault(key, []).extend(domain_values(annotations.by_row[i], axis="x"))
+        domains = {
+            key: _bucket_domain(
+                vals,
+                self.ref,
+                override=self.ylim,
+                max_domain=None,
+                autoscale=self.autoscale,
+                required=required.get(key, ()),
+                symmetric=self.symmetric,
+            )
+            for key, vals in buckets.items()
+        }
+        rows = tuple(
+            _prepare_dotplot_row(
+                value,
+                domain=domains[key],
+                ref=self.ref,
+                width=self.width,
+                dot_size=self.dot_size,
+                inset=5,
+            )
+            for value, key in zip(values, keys, strict=True)
+        )
+        minimum = max((row.minimum_height for row in rows), default=1)
+        if self.height is not None and (
+            isinstance(self.height, bool)
+            or not isinstance(self.height, int)
+            or self.height < minimum
+        ):
+            raise SpecError(f"Forest {self.label!r}: height must be at least {minimum}px")
+        heights = tuple(
+            row.automatic_height if self.height is None else self.height for row in rows
+        )
+        colors = _dotplot_color_domain(
+            self.gradient,
+            self.color_domain,
+            (
+                min((d[0] for d in domains.values()), default=0),
+                max((d[1] for d in domains.values()), default=1),
+            ),
+        )
+        footer_key = (
+            (lambda row, group, split: _domain_key(self, row, group, split))
+            if count is not None and (self.show_axis or self.show_legend)
+            else None
+        )
+        return Prepared(
+            payload=_DotForestState(
+                domains, rows, values, count, heights, source, estimates, annotations, colors
+            ),
+            footer_key=footer_key,
+            shared_footer=self.scale in ("table", "split_column"),
+        )
+
+    def _dot_cell(self, ctx: Cell, state: _DotForestState) -> str:
+        if not state.values[ctx.index].quantiles:
+            return ""
+        estimates = state.estimates
+        role: Role = "neutral"
+        if ctx.color_rule is not None and not self.gradient:
+            role = ctx.color_rule(
+                estimates.value[ctx.index],
+                estimates.low[ctx.index] if estimates.low is not None else None,
+                estimates.high[ctx.index] if estimates.high is not None else None,
+                self.ref,
+            )
+        key = _domain_key(self, ctx.row_key, ctx.group, ctx.split)
+        return _render_dotplot_row(
+            state.rows[ctx.index],
+            domain=state.domains[key],
+            ref=self.ref,
+            color=ctx.theme.color(role),
+            theme=ctx.theme,
+            width=self.width,
+            height=state.heights[ctx.index],
+            dot_size=self.dot_size,
+            inset=5,
+            annotations=state.annotations.by_row[ctx.index],
+            color_domain=state.color_domain,
+        )
+
     def cell(self, ctx: Cell) -> str:
         """Render an interval bar, coloured by role, against its shared domain."""
+        if isinstance(ctx.prepared.payload, _DotForestState):
+            return self._dot_cell(ctx, ctx.prepared.payload)
         state: _ForestState = ctx.prepared.payload
         value = state.value[ctx.index]
         low = state.low[ctx.index]
@@ -646,6 +843,23 @@ class Forest:
 
     def footer(self, ctx: Footer) -> str | None:
         """Render the shared axis for a completed domain."""
+        if isinstance(ctx.prepared.payload, _DotForestState):
+            dots = ctx.prepared.payload
+            if dots.dot_count is None:
+                return None
+            return quantile_dotplot_axis(
+                domain=dots.domains[ctx.key],
+                ref=self.ref,
+                dot_count=dots.dot_count,
+                fmt=self.axis_fmt or dots.source.fmt,
+                theme=ctx.theme,
+                width=self.width,
+                dot_size=self.dot_size,
+                show_axis=self.show_axis,
+                show_legend=self.show_legend,
+                gradient=self.gradient,
+                color_domain=dots.color_domain,
+            )
         state: _ForestState = ctx.prepared.payload
         return forest_axis(
             domain=state.domains[ctx.key],
@@ -1372,6 +1586,33 @@ class Sparkline:
 type Column = Estimate | Forest | Passthrough | Sparkline | CardColumn
 
 
+def _validate_forest_style(column: Forest) -> None:
+    """Validate configuration specific to a forest representation."""
+    if column.style not in ("interval", "dotplot"):
+        raise SpecError(f"Forest {column.label!r}: style must be interval or dotplot")
+    _dotplot_color_domain(column.gradient, column.color_domain, (0, 1))
+    if column.style == "interval":
+        if (
+            column.samples is not None
+            or column.quantiles is not None
+            or column.dot_count is not None
+            or column.gradient
+            or column.color_domain is not None
+        ):
+            raise SpecError("Distribution and gradient options require style='dotplot'")
+    else:
+        if column.tooltip is not None:
+            raise SpecError("Forest tooltips require style='interval'; dotplots are static")
+        if (column.samples is None) == (column.quantiles is None):
+            raise SpecError("Dotplot Forest requires exactly one samples or quantiles column")
+        if any(
+            name is not None and (not isinstance(name, str) or not name)
+            for name in (column.samples, column.quantiles)
+        ):
+            raise SpecError("Dotplot source column names must be nonempty strings")
+        prepare_dots(samples=[], dot_count=column.dot_count)
+
+
 def validate_columns(columns: tuple[Column, ...]) -> None:
     """Check a column specification for internal consistency.
 
@@ -1410,7 +1651,8 @@ def validate_columns(columns: tuple[Column, ...]) -> None:
                 f"Forest column {column.label!r} references estimate {column.of!r}, "
                 f"which is not declared. Declared estimates: {sorted(estimates)}."
             )
-        if target.ci is None:
+        _validate_forest_style(column)
+        if target.ci is None and column.style == "interval":
             raise SpecError(
                 f"Forest column {column.label!r} references estimate {column.of!r}, "
                 "which has no confidence interval to plot."
@@ -1611,12 +1853,21 @@ class CoefTable:
         show_axis: bool = True,
         axis_fmt: Format | None = None,
         annotations: Sequence[Annotation] = (),
+        style: Literal["interval", "dotplot"] = "interval",
+        samples: str | None = None,
+        quantiles: str | None = None,
+        dot_count: int | None = None,
+        dot_size: float = 6.0,
+        show_legend: bool = True,
+        gradient: bool = False,
+        color_domain: tuple[float, float] | None = None,
         tooltip: Tooltip | None = None,
     ) -> CoefTable:
         """Append a forest-plot column bound to an existing estimate.
 
-        ``tooltip`` fields bind main-frame scalar columns and require explicit
-        HTML activation with ``interactive_html`` for browser inspection.
+        ``tooltip`` fields bind main-frame scalar columns in interval mode and
+        require ``interactive_html`` for browser inspection. Dotplots are static
+        and reject ``tooltip``.
 
         Parameters
         ----------
@@ -1640,20 +1891,35 @@ class CoefTable:
             instead, so a single extreme interval stops flattening every
             other bar; a discounted interval clips against the resulting
             domain edge and continues into a reserved margin as a
-            gradient fade rather than being hidden. Composes with
-            `symmetric`: the fence runs first, then the mirrored padding.
+            gradient fade rather than being hidden. Dotplots instead count
+            excluded representatives in visible off-scale labels, retaining
+            the original denominator. Composes with `symmetric`: the fence
+            runs first, then the mirrored padding.
         width
             Bar width in pixels.
         height
-            Bar row height in pixels. `None` (the default) picks a height
-            that fills the row based on the bound estimate's
-            `ci_style.layout`.
+            Plot row height in pixels. For intervals, `None` fills the row
+            based on the bound estimate's `ci_style.layout`. For dotplots,
+            automatic height grows each row to fit its stacks and tail labels.
         show_axis
             Emit an axis row per distinct domain.
         axis_fmt
             Callable labelling axis ticks.
         annotations
             Rules and bands drawn in each non-empty plot cell.
+        style
+            ``"interval"`` (default) or ``"dotplot"``; see `Forest`.
+        samples, quantiles
+            Exactly one distribution source column for dotplots: equal-weight
+            draws or nondecreasing midpoint quantiles, never CI endpoints.
+        dot_count
+            Sample display count (default 20); precomputed rows infer/check N.
+        dot_size
+            Shared dot diameter in pixels. Automatic height fits dense stacks.
+        show_legend
+            Display the shared dot-mass explanation independently of axis ticks.
+        gradient, color_domain
+            Optional original-value colouring with shared limits; see `Forest`.
 
         Returns
         -------
@@ -1674,6 +1940,14 @@ class CoefTable:
                 show_axis=show_axis,
                 axis_fmt=axis_fmt,
                 annotations=tuple(annotations),
+                style=style,
+                samples=samples,
+                quantiles=quantiles,
+                dot_count=dot_count,
+                dot_size=dot_size,
+                show_legend=show_legend,
+                gradient=gradient,
+                color_domain=color_domain,
                 tooltip=tooltip,
             )
         )

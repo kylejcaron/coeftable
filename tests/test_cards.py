@@ -603,6 +603,7 @@ EXPECTED_CARD_EXPORTS = {
     "Events",
     "Interval",
     "Metric",
+    "QuantileDotplot",
     "Region",
     "resolve_content",
     "Trend",
@@ -616,8 +617,6 @@ EXPECTED_CARD_EXPORTS = {
 
 
 def test_cards_export_surface_is_exactly_the_promised_set():
-    assert len(coeftable.cards.__all__) == 33
-
     assert set(coeftable.cards.__all__) == EXPECTED_CARD_EXPORTS
     for name in EXPECTED_CARD_EXPORTS:
         assert hasattr(coeftable.cards, name)

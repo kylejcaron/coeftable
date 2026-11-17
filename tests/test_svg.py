@@ -2,6 +2,7 @@ import re
 from datetime import UTC, datetime, timedelta
 from itertools import pairwise
 from typing import Any, Literal
+from xml.etree import ElementTree as ET
 
 import pytest
 
@@ -644,6 +645,21 @@ def test_forest_axis_anchors_a_tick_label_only_when_it_would_clip():
     assert labels
     assert labels[0] == ("middle", "0")
     assert labels[-1][0] == "end"
+
+
+def test_forest_axis_numeric_labels_do_not_overlap_after_edge_anchoring():
+    root = ET.fromstring(  # noqa: S314 - generated SVG
+        forest_axis(domain=(-1, 1), ref=0, fmt=lambda v: f"{v:+.5f}", theme=DEFAULT)
+    )
+    boxes = []
+    for label in root.findall("{*}text"):
+        x = float(label.attrib["x"])
+        width = len(label.text or "") * float(label.attrib["font-size"]) * 0.6
+        anchor = label.attrib["text-anchor"]
+        left = x if anchor == "start" else x - width if anchor == "end" else x - width / 2
+        boxes.append((left, left + width))
+    assert len(boxes) >= 2
+    assert all(right[0] - left[1] >= 2 for left, right in pairwise(boxes))
 
 
 def test_sparkline_axis_anchors_a_clipping_temporal_tick_label():
@@ -2574,6 +2590,235 @@ def test_two_tier_axis_super_row_escapes_ampersand_and_angle_brackets():
     svg = "".join(parts)
     assert "<2024>" not in svg
     assert "Q1 &amp; Q2 &lt;2024&gt;" in svg
+
+
+def _dots_svg(**kwargs):
+    from coeftable.plots import quantile_dotplot
+
+    kwargs.setdefault("quantiles", [-3, -1, 0, 1, 3])
+    return ET.fromstring(  # noqa: S314 - generated SVG, not external XML
+        quantile_dotplot(domain=(-1, 1), ref=0, color=DEFAULT.neutral, theme=DEFAULT, **kwargs)
+    )
+
+
+def test_dotplot_clipping_keeps_original_denominator():
+    root = _dots_svg()
+    circles = root.findall("{*}circle")
+    xs = [float(c.attrib["cx"]) for c in circles]
+    assert 5 <= xs[0] < 110 == xs[1] < xs[2] <= 215
+    assert [float(c.attrib["r"]) for c in circles] == [3, 3, 3]
+    texts = [t.text for t in root.findall("{*}text")]
+    assert "← 1/5 off-scale" in texts
+    assert "1/5 off-scale →" in texts
+    outside = _dots_svg(quantiles=[-3, 3])
+    assert not outside.findall("{*}circle")
+    assert "1/2" in "".join(outside.itertext())
+
+
+def test_dotplot_height_preserves_dense_stacks():
+    root = _dots_svg(quantiles=[0] * 20)
+    assert int(root.attrib["height"]) == 149
+    circles = root.findall("{*}circle")
+    assert len(circles) == 20
+    ys = [float(c.attrib["cy"]) for c in circles]
+    assert [b - a for a, b in pairwise(ys)] == [-7] * 19
+    with pytest.raises(SpecError):
+        _dots_svg(quantiles=[0] * 20, height=148)
+    short = _dots_svg(quantiles=[-0.8, 0.8], height=16)
+    assert short.attrib["height"] == "16"
+    assert _dots_svg(quantiles=[-0.8, 0.8]).attrib["height"] == "44"
+
+
+def test_dotplot_footer_wraps_and_toggles_axis_independently():
+    from coeftable.plots import quantile_dotplot_axis
+
+    def footer(width, **kwargs):
+        return ET.fromstring(  # noqa: S314 - generated SVG
+            quantile_dotplot_axis(
+                domain=(-1, 1),
+                ref=0,
+                dot_count=20,
+                fmt=lambda x: f"<{x}&",
+                theme=DEFAULT,
+                width=width,
+                **kwargs,
+            )
+        )
+
+    wide = footer(220, show_axis=False)
+    narrow = footer(70, show_axis=False)
+    assert int(narrow.attrib["height"]) > int(wide.attrib["height"])
+    assert not wide.findall("{*}line")
+    assert "supplied distribution" in " ".join(wide.itertext())
+    axis = footer(220, show_legend=False)
+    assert axis.findall("{*}line")
+    assert "<" in "".join(axis.itertext()) and "&" in "".join(axis.itertext())
+    assert "Each dot" not in "".join(axis.itertext())
+    tails = _dots_svg(width=120)
+    assert len({t.attrib["y"] for t in tails.findall("{*}text")}) == 2
+
+
+def test_dotplot_annotations_and_fractional_inset_share_true_axis():
+    from coeftable.plots import quantile_dotplot_axis
+
+    band = ResolvedBand(-1, 1, "x", "underlay", False, None, 0.1)
+    rule = ResolvedRule(0, "x", "overlay", False, None, 1, 1, "solid")
+    root = _dots_svg(quantiles=[-1, 0, 1], dot_size=9, annotations=[band, rule])
+    circles = root.findall("{*}circle")
+    xs = [float(c.attrib["cx"]) for c in circles]
+    assert 5 <= xs[0] < 110 == xs[1] < xs[2] <= 215
+    children = list(root)
+    assert children.index(root.find("{*}rect")) < children.index(circles[0])
+    overlay = root.findall("{*}line")[-1]
+    assert float(overlay.attrib["x1"]) == 110
+    assert children.index(overlay) > children.index(circles[-1])
+    axis = ET.fromstring(  # noqa: S314 - generated SVG
+        quantile_dotplot_axis(
+            domain=(-1, 1), ref=0, dot_count=3, dot_size=9, fmt=Number(), theme=DEFAULT
+        )
+    )
+    line = axis.find("{*}line")
+    assert line is not None and float(line.attrib["x1"]) == 5
+    with pytest.raises(SpecError):
+        _dots_svg(annotations=[ResolvedRule(0, "y", "overlay", False, None, 1, 1, "solid")])
+
+
+def test_dotplot_gradient_uses_original_values_not_bin_centers():
+    from dataclasses import replace
+
+    from coeftable.plots import quantile_dotplot
+
+    theme = replace(DEFAULT, dotplot_palette=("#000000", "#ffffff"))
+    root = ET.fromstring(  # noqa: S314 - generated SVG
+        quantile_dotplot(
+            quantiles=[0.01, 0.02],
+            domain=(0, 1),
+            ref=0,
+            color="red",
+            theme=theme,
+            gradient=True,
+        )
+    )
+    circles = root.findall("{*}circle")
+    assert circles[0].attrib["cx"] == circles[1].attrib["cx"]
+    assert [c.attrib["fill"] for c in circles] == ["#030303", "#050505"]
+    assert all(float(c.attrib["r"]) == 3 and "opacity" not in c.attrib for c in circles)
+
+
+def test_dotplot_gradient_footer_is_measured_escaped_and_independent_of_axis():
+    from coeftable.plots import quantile_dotplot_axis
+
+    def footer(**kwargs):
+        return quantile_dotplot_axis(
+            domain=(-1, 1),
+            ref=0,
+            dot_count=20,
+            fmt=lambda v: f"<{v:g}&",
+            theme=DEFAULT,
+            gradient=True,
+            color_domain=(-2, 4),
+            show_axis=False,
+            **kwargs,
+        )
+
+    root = ET.fromstring(footer())  # noqa: S314
+    rects = root.findall("{*}rect")
+    assert rects[0].attrib["fill"].lower() == DEFAULT.dotplot_palette[0].lower()
+    assert rects[-1].attrib["fill"].lower() == DEFAULT.dotplot_palette[1].lower()
+    texts = root.findall("{*}text")
+    assert {"Color: value", "<-2&", "<4&"} <= {t.text for t in texts}
+    assert all(float(t.attrib["y"]) < int(root.attrib["height"]) for t in texts)
+    assert not root.findall("{*}line")
+    hidden = ET.fromstring(footer(show_legend=False))  # noqa: S314
+    assert not list(hidden)
+    with pytest.raises(SpecError):
+        footer(width=50)
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"gradient": 1},
+        {"color_domain": (-1, 1)},
+        {"gradient": True, "color_domain": (1, 1)},
+    ],
+)
+def test_dotplot_invalid_color_options_fail_even_for_empty_distribution(options):
+    with pytest.raises(SpecError):
+        _dots_svg(quantiles=[], **options)
+
+
+def test_dotplot_preserves_subpixel_radius():
+    root = _dots_svg(quantiles=[0, 0], dot_size=0.001)
+    radii = [float(c.attrib["r"]) for c in root.findall("{*}circle")]
+    assert radii == pytest.approx([0.0005, 0.0005], abs=0)
+
+
+def test_dotplot_rejects_size_whose_radius_underflows():
+    with pytest.raises(SpecError):
+        _dots_svg(quantiles=[0, 0], dot_size=float.fromhex("0x0.0000000000001p-1022"))
+
+
+def test_dotplot_extreme_finite_domain_keeps_dots_and_axis_aligned():
+    from coeftable.plots import quantile_dotplot, quantile_dotplot_axis
+
+    domain = (-1e308, 1e308)
+    row = ET.fromstring(  # noqa: S314 - generated SVG
+        quantile_dotplot(
+            quantiles=[-1e308, 0, 1e308],
+            domain=domain,
+            ref=0,
+            color="black",
+            theme=DEFAULT,
+        )
+    )
+    left, middle, right = [float(c.attrib["cx"]) for c in row.findall("{*}circle")]
+    assert 5 <= left < middle == 110 < right <= 215
+    axis = ET.fromstring(  # noqa: S314 - generated SVG
+        quantile_dotplot_axis(
+            domain=domain,
+            ref=0,
+            dot_count=3,
+            fmt=lambda v: f"{v:.0e}",
+            theme=DEFAULT,
+        )
+    )
+    labels = axis.findall("{*}text")
+    zero = next(t for t in labels if t.text == "0e+00")
+    assert float(zero.attrib["x"]) == middle
+    tick_values = [
+        float(t.text or "") for t in labels if re.fullmatch(r"-?\d+e[+-]\d+", t.text or "")
+    ]
+    assert min(tick_values) < 0 < max(tick_values)
+
+
+@pytest.mark.parametrize("low", [1e-12, 1e-323])
+def test_dotplot_small_domain_ticks_stay_distinct_and_inside_viewport(low):
+    from coeftable.plots import quantile_dotplot_axis
+
+    high = 2 * low
+    axis = ET.fromstring(  # noqa: S314 - generated SVG
+        quantile_dotplot_axis(
+            domain=(low, high),
+            ref=0,
+            dot_count=20,
+            fmt=lambda v: f"{v:.3g}",
+            theme=DEFAULT,
+            show_legend=False,
+        )
+    )
+    xs = [
+        float(line.attrib["x1"])
+        for line in axis.findall("{*}line")
+        if line.attrib["x1"] == line.attrib["x2"]
+    ]
+    assert len(xs) >= 2
+    assert all(5 <= x <= 215 for x in xs)
+    assert xs == sorted(set(xs))
+    values = [float(label.text or "nan") for label in axis.findall("{*}text")]
+    assert len(values) >= 2
+    assert all(low <= value <= high for value in values)
+    assert values == sorted(set(values))
 
 
 @pytest.mark.integration

@@ -115,6 +115,117 @@ experiment = pl.DataFrame(
 )
 ```
 
+## Quantile dotplots
+
+Use `style="dotplot"` to show a supplied uncertainty distribution instead of an
+interval. Each dot represents approximately the same share of that distribution;
+20 dots means about 5% per dot. This is display resolution, **not sample size**.
+Existing `.forest(...)` calls still render intervals.
+
+Supply a list of equal-weight draws for each row. No confidence interval is
+required, and a missing point estimate does not hide a valid distribution:
+
+```python
+import pandas as pd
+import coeftable as ct
+
+results = pd.DataFrame({
+    "term": ["Treatment", "Interaction"],
+    "effect": [0.3, -0.1],
+    "draws": [
+        [-0.2, 0.0, 0.1, 0.2, 0.3, 0.3, 0.4, 0.5, 0.7, 1.0],
+        [-0.8, -0.4, -0.3, -0.2, -0.1, -0.1, 0.0, 0.1, 0.3, 0.5],
+    ],
+})
+
+table = (
+    ct.CoefTable(results, rows="term")
+    .estimate("Effect", "effect")
+    .forest("Uncertainty", of="Effect", style="dotplot",
+            samples="draws", dot_count=20)
+)
+html = table.as_raw_html()
+```
+
+Samples use deterministic inverse empirical quantiles at probabilities
+`(i + 0.5) / N`, without interpolation. Repeated values retain their weight;
+discrete outcomes never acquire invented intermediate values. For display,
+horizontal positions are rounded into shared bins without crossing the reference;
+original values still determine clipping. Dots stack upward from a baseline.
+`dot_size` sets their shared diameter in pixels (default 6). Each row grows only
+as needed; a point mass does not enlarge unrelated rows. An explicit height that
+cannot fit raises `SpecError`. Subpixel diameters retain their radius in SVG;
+sizes whose radius underflows to zero raise `SpecError`. Subpixel dots can still
+be too small to see at normal zoom, so 6px remains the default.
+For very small or large values, a compact formatter such as
+`axis_fmt=lambda v: f"{v:.3g}"` keeps the axis readable.
+
+For another quantile convention or an analytical distribution, calculate the
+midpoint quantiles yourself. `quantiles="column"` selects a list-valued column
+instead of `samples`; every nonempty row must have the same count N and contain
+nondecreasing values. An explicit `dot_count` must match N.
+
+The same primitives work outside tables:
+
+```python
+from statistics import NormalDist
+from coeftable import Number
+from coeftable.plots import quantile_dotplot, quantile_dotplot_axis
+from coeftable.theme import DEFAULT
+from coeftable.cards import Card, QuantileDotplot
+
+quantiles = [NormalDist(0.3, 0.4).inv_cdf((i + 0.5) / 20) for i in range(20)]
+plot_svg = quantile_dotplot(
+    quantiles=quantiles, domain=(-1, 2), ref=0,
+    color=DEFAULT.neutral, theme=DEFAULT,
+)
+axis_svg = quantile_dotplot_axis(
+    domain=(-1, 2), ref=0, dot_count=20, fmt=Number(), theme=DEFAULT,
+)
+card = Card("Uncertainty", content=[
+    QuantileDotplot(quantiles=quantiles, domain=(-1, 2))
+])
+card_html = card.as_raw_html()
+```
+
+Table axes fit all represented quantiles by default. Explicit `ylim` or
+`autoscale="robust"` may crop them: directional labels count off-scale dots
+using the **original denominator**, never renormalizing or piling them onto
+the boundary. These counts approximate omitted mass, not exact model tail
+probabilities. Even a full-range dotplot does not show an unbounded
+distribution's entire support.
+For example, a fixed axis from -1 to 1 might show 15 dots, with 3 below -1 and
+2 above 1: all 20 are accounted for, not redistributed into the visible area.
+Prefer the full represented range unless comparison on a fixed axis is useful.
+
+`show_axis=False` hides ticks without hiding the explanation;
+`show_legend=False` hides the explanation independently. In standalone output,
+pair the row SVG with the matching axis/legend SVG. Empty precomputed input
+without a known count has no footer. `None`/empty table cells are blank;
+nonempty distributions containing null, nonfinite, or nonnumeric entries fail
+rather than silently changing weights.
+
+Label what the inputs mean: posterior draws, bootstrap replicates and predictive
+outcomes are not interchangeable. Dots default to neutral color, not a
+significance verdict; existing explicit color rules/roles remain available.
+Coeftable does not fit a distribution from interval endpoints.
+
+For optional value colouring, add `gradient=True` to `.forest(...)`,
+`Forest(...)`, or `QuantileDotplot(...)`. For standalone output, pass it to
+both `quantile_dotplot(...)` and `quantile_dotplot_axis(...)`. Solid is the default.
+The gradient repeats the **original x-value**, not density, probability or
+significance. All dots keep equal size and full opacity, including the tails.
+
+A table shares one colour scale across its groups and splits. Use
+`color_domain=(-1, 2)` with `gradient=True` to fix that scale across separate
+tables, plots or cards; otherwise standalone/card colour limits follow their
+plot domain. The gradient overrides dot colour rules/roles, not estimate colours.
+`show_legend=False` hides both the mass and colour explanations.
+
+Customize the two opaque hex endpoints with
+`dataclasses.replace(DEFAULT, dotplot_palette=("#3366AA", "#AA3377"))`.
+Choose endpoints that contrast with your background; MONO uses a gray ramp.
+
 ## Comparing methods
 
 Use `split_columns` to compare multiple methods side by side. Each value in the
@@ -503,6 +614,9 @@ Pass `tooltip=ct.Tooltip()` to opt a plot into value inspection, then activate
 the composed HTML with `ct.interactive_html`. Existing renderers remain passive:
 `as_raw_html()`, `_repr_html_()`, `.gt()`, and standalone SVG strings do not
 execute scripts themselves.
+Inspection supports interval forest plots and sparklines. Quantile dotplots
+remain static across tables, standalone SVGs, and cards; a dotplot Forest
+rejects `tooltip` instead of silently ignoring it.
 
 ```python
 from pathlib import Path

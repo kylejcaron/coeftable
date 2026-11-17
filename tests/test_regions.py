@@ -3,6 +3,7 @@
 import re
 from dataclasses import replace
 from typing import Any, TypedDict
+from xml.etree import ElementTree as ET
 
 import pytest
 
@@ -964,6 +965,74 @@ def test_interval_explicit_role_override():
 def test_projection_guards_name_effective_spans(region, width, message):
     with pytest.raises(SpecError, match=message):
         region.resolve(width=width, theme=DEFAULT, chrome=DEFAULT_CHROME)
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("gradient", [False, True])
+def test_quantile_dotplot_region_matches_shared_svg_and_measures_footer(gradient):
+    from coeftable.cards import Card, QuantileDotplot
+    from coeftable.plots import quantile_dotplot, quantile_dotplot_axis
+
+    source = [-3, -1, 0, 0, 1, 3]
+    colors = [-2, 4] if gradient else None
+    region = QuantileDotplot(
+        quantiles=source,
+        domain=(-1, 1),
+        gradient=gradient,
+        color_domain=colors,  # ty: ignore[invalid-argument-type] - exercise mutable input snapshot
+    )
+    if colors is not None:
+        colors[:] = [0, 99]
+    source[:] = [99]
+    row, footer = region.resolve(width=120, theme=DEFAULT, chrome=DEFAULT_CHROME)
+    expected = quantile_dotplot(
+        quantiles=[-3, -1, 0, 0, 1, 3],
+        domain=(-1, 1),
+        ref=0,
+        color=DEFAULT.neutral,
+        theme=DEFAULT,
+        width=120,
+        gradient=gradient,
+        color_domain=(-2, 4) if gradient else None,
+    )
+    root = ET.fromstring(row.svg)  # noqa: S314 - generated SVG
+    other = ET.fromstring(expected)  # noqa: S314
+    assert [c.attrib for c in root.findall("{*}circle")] == [
+        c.attrib for c in other.findall("{*}circle")
+    ]
+    assert row.height == int(root.attrib["height"]) == 76
+    axis = ET.fromstring(footer.svg)  # noqa: S314
+    assert footer.height == int(axis.attrib["height"])
+    expected_footer = quantile_dotplot_axis(
+        domain=(-1, 1),
+        ref=0,
+        dot_count=6,
+        fmt=region.fmt,
+        theme=DEFAULT,
+        width=120,
+        gradient=gradient,
+        color_domain=(-2, 4) if gradient else None,
+    )
+    assert footer.svg == expected_footer
+    assert "1/6" in "".join(root.itertext())
+    assert "supplied" in "".join(axis.itertext())
+    card = Card("Posterior", content=[region], width=160)
+    assert "1/6" in card.as_raw_html()
+    assert card.measure().expanded_height > row.height + footer.height
+    (short,) = QuantileDotplot(
+        quantiles=[-0.8, 0.8], domain=(-1, 1), height=16, show_axis=False, show_legend=False
+    ).resolve(width=120, theme=DEFAULT, chrome=DEFAULT_CHROME)
+    assert short.height == 16
+
+
+def test_empty_quantile_region_omits_unknown_count_footer():
+    from coeftable.cards import QuantileDotplot
+
+    (row,) = QuantileDotplot(quantiles=[], domain=(-1, 1)).resolve(**RESOLVE_KW)
+    root = ET.fromstring(row.svg)  # noqa: S314
+    assert not list(root)
+    known = QuantileDotplot(quantiles=[], dot_count=20, domain=(-1, 1)).resolve(**RESOLVE_KW)
+    assert "1/20" in known[1].svg
 
 
 @pytest.mark.integration

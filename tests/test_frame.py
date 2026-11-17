@@ -1,4 +1,5 @@
 import re
+from xml.etree import ElementTree as ET
 
 import narwhals as nw
 import pandas as pd
@@ -761,6 +762,200 @@ def test_ordered_unique_dedupes_distinct_nan_objects():
     assert non_nans == [1.0, 2.0]
 
 
+def _dot_table(data, **kwargs):
+    return (
+        CoefTable(data, rows="term")
+        .estimate("Effect", "value")
+        .forest("Dots", of="Effect", style="dotplot", **kwargs)
+    )
+
+
+def _circles(svg):
+    return ET.fromstring(svg).findall("{*}circle") if svg else []  # noqa: S314
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "backend", ["pandas", "polars", "arrow", "arrow_pandas", "arrow_nullable_pandas"]
+)
+def test_dotplot_rows_keep_their_distribution_through_grouping_and_splits(backend):
+    raw = {
+        "term": ["same", "same", "same", "same"],
+        "group": ["B", "A", "B", "A"],
+        "split": ["x", "x", "y", "y"],
+        "value": [None, 99.0, 3.0, 2.0],
+        "draws": [[0.0], [-1.0, 1.0], None, [0.5]],
+    }
+    if backend == "pandas":
+        data = pd.DataFrame(raw)
+    elif backend == "polars":
+        data = pl.DataFrame(raw)
+    else:
+        import pyarrow as pa
+
+        data = pa.table(raw)
+        if backend == "arrow_pandas":
+            data = data.to_pandas()
+        elif backend == "arrow_nullable_pandas":
+            data = data.to_pandas(types_mapper=pd.ArrowDtype)
+    table = (
+        CoefTable(data, rows="term", groups="group", split_columns="split")
+        .estimate("Effect", "value")
+        .forest("Dots", of="Effect", style="dotplot", samples="draws", dot_count=4, ylim=(-1, 1))
+    )
+    out = resolve(table)
+    rows = nw.from_native(out.frame).rows(named=True)
+    body = [row for i, row in enumerate(rows) if i not in out.axis_rows]
+    xs = [[float(c.attrib["cx"]) for c in _circles(row["x\u2009|\u2009Dots"])] for row in body]
+    assert xs[0] == [110] * 4
+    assert 5 <= xs[1][0] == xs[1][1] < 110 < xs[1][2] == xs[1][3] <= 215
+    assert not _circles(body[0]["y\u2009|\u2009Dots"])
+    assert len(_circles(body[1]["y\u2009|\u2009Dots"])) == 4
+    assert "1/4" in table.as_raw_html()
+
+
+@pytest.mark.integration
+def test_dotplot_quantile_count_cannot_vary_behind_shared_legend():
+    data = pd.DataFrame({"term": ["a", "b"], "value": [1, 2], "q": [[0, 1], [0, 1, 2]]})
+    with pytest.raises(SpecError):
+        resolve(_dot_table(data, quantiles="q", scale="row"))
+    data["q"] = [[], None]
+    assert not resolve(_dot_table(data, quantiles="q")).axis_rows
+
+
+@pytest.mark.integration
+def test_dotplot_robust_domain_excludes_outlier_without_reweighting():
+    data = pd.DataFrame({"term": ["a"], "value": [99999], "q": [[*range(19), 1000]]})
+    tight = resolve(_dot_table(data, quantiles="q"))
+    robust = resolve(_dot_table(data, quantiles="q", autoscale="robust"))
+    a = nw.from_native(tight.frame)["Dots"].to_list()[0]
+    b = nw.from_native(robust.frame)["Dots"].to_list()[0]
+    assert len(_circles(a)) == 20
+    assert len(_circles(b)) == 19
+    assert "1/20 off-scale" in b
+    explicit = resolve(_dot_table(data, quantiles="q", autoscale="robust", ylim=(-1, 1001)))
+    assert len(_circles(nw.from_native(explicit.frame)["Dots"].to_list()[0])) == 20
+
+
+@pytest.mark.integration
+def test_dotplot_footer_toggles_and_empty_estimate_do_not_hide_distribution():
+    data = pd.DataFrame({"term": ["a"], "value": [None], "q": [[-1, 1]]})
+    table = _dot_table(data, quantiles="q", show_axis=False)
+    out = resolve(table)
+    assert len(out.axis_rows) == 1
+    cells = nw.from_native(out.frame)["Dots"].to_list()
+    assert len(_circles(cells[0])) == 2
+    assert "supplied distribution" in cells[-1]
+    assert not resolve(
+        _dot_table(data, quantiles="q", show_axis=False, show_legend=False)
+    ).axis_rows
+    custom = CoefTable(
+        data,
+        rows="term",
+        columns=table.columns,
+        color_rule=lambda value, low, high, ref: "unfavorable",
+    )
+    root = _circles(nw.from_native(resolve(custom).frame)["Dots"].to_list()[0])
+    assert root[0].attrib["fill"] == custom.theme.unfavorable
+
+
+@pytest.mark.integration
+def test_dotplot_point_mass_grows_only_its_own_row():
+    data = pd.DataFrame(
+        {
+            "term": ["point", "spread"],
+            "value": [0, 0],
+            "q": [[0] * 20, [i / 10 - 0.95 for i in range(20)]],
+        }
+    )
+    out = resolve(_dot_table(data, quantiles="q", ylim=(-1, 1)))
+    cells = nw.from_native(out.frame)["Dots"].to_list()
+    roots = [ET.fromstring(s) for i, s in enumerate(cells) if i not in out.axis_rows]  # noqa: S314
+    assert [int(r.attrib["height"]) for r in roots] == [149, 44]
+    with pytest.raises(SpecError):
+        resolve(_dot_table(data, quantiles="q", ylim=(-1, 1), height=148))
+    data["q"] = [[-0.8, 0.8], [-0.8, 0.8]]
+    short = resolve(_dot_table(data, quantiles="q", ylim=(-1, 1), height=16))
+    assert all(
+        ET.fromstring(s).attrib["height"] == "16"  # noqa: S314
+        for i, s in enumerate(nw.from_native(short.frame)["Dots"].to_list())
+        if i not in short.axis_rows
+    )
+
+
+@pytest.mark.integration
+def test_dotplot_gradient_shares_values_across_distinct_group_domains():
+    from dataclasses import replace
+
+    from coeftable.theme import DEFAULT
+
+    data = pd.DataFrame(
+        {
+            "term": ["a", "b"],
+            "group": ["A", "B"],
+            "value": [0.5, 0.5],
+            "q": [[-2, 0.5, 1], [0, 0.5, 4]],
+        }
+    )
+    theme = replace(DEFAULT, dotplot_palette=("#000000", "#ffffff"))
+
+    def build(**kwargs):
+        return (
+            CoefTable(data, rows="term", groups="group", theme=theme)
+            .estimate("Effect", "value")
+            .forest(
+                "Dots",
+                of="Effect",
+                style="dotplot",
+                quantiles="q",
+                scale="row_group",
+                gradient=True,
+                **kwargs,
+            )
+        )
+
+    table = build()
+    out = resolve(table)
+    cells = nw.from_native(out.frame)["Dots"].to_list()
+    colors = [_circles(s)[1].attrib["fill"] for i, s in enumerate(cells) if i not in out.axis_rows]
+    # Default domains include 6% padding; same value still has one color.
+    assert colors[0] == colors[1]
+    explicit = build(color_domain=(-2, 4))
+    cells = nw.from_native(resolve(explicit).frame)["Dots"].to_list()
+    assert [_circles(s)[1].attrib["fill"] for s in cells if _circles(s)] == ["#6a6a6a", "#6a6a6a"]
+    footers = [ET.fromstring(s) for s in cells if s and not _circles(s)]  # noqa: S314
+    assert all("Color: value" in "".join(r.itertext()) for r in footers)
+    assert [r.findall("{*}rect")[0].attrib["fill"] for r in footers] == ["#000000"] * 2
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "quantiles,ref",
+    [
+        ([-1e308, 0, 1e308], 0),
+        (
+            [
+                -float.fromhex("0x1.fffffffffffffp+1023"),
+                0,
+                float.fromhex("0x1.fffffffffffffp+1023"),
+            ],
+            0,
+        ),
+        ([1e308, 1e308, 1e308], 1e308),
+    ],
+)
+def test_dotplot_automatic_domain_retains_extreme_finite_values(quantiles, ref):
+    data = pd.DataFrame({"term": ["a"], "value": [0.0], "q": [quantiles]})
+    resolved = resolve(_dot_table(data, quantiles="q", ref=ref, axis_fmt=lambda v: f"{v:.0e}"))
+    cells = nw.from_native(resolved.frame)["Dots"].to_list()
+    left, middle, right = [float(c.attrib["cx"]) for c in _circles(cells[0])]
+    if quantiles[0] == quantiles[-1]:
+        assert [left, middle, right] == pytest.approx([110, 110, 110])
+    else:
+        assert 5 <= left < middle == 110 < right <= 215
+    assert resolved.axis_rows
+
+
 @pytest.mark.integration
 def test_forest_inspection_uses_row_fields_primary_format_and_preserves_blank_cells():
     import html
@@ -798,3 +993,12 @@ def test_forest_inspection_uses_row_fields_primary_format_and_preserves_blank_ce
     assert point["upper_text"] == "v=6"
     assert point["status"] == "right"
     assert point["extras"] == [["n", "20"]]
+
+
+@pytest.mark.integration
+def test_dotplot_rejects_interval_tooltip_instead_of_silently_ignoring_it():
+    from coeftable import SpecError, Tooltip
+
+    data = pd.DataFrame({"term": ["a"], "value": [0.0], "q": [[-1, 1]]})
+    with pytest.raises(SpecError):
+        _dot_table(data, quantiles="q", tooltip=Tooltip()).as_raw_html()

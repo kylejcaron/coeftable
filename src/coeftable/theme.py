@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import math
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
+from numbers import Real
 from typing import Literal
+
+from coeftable.errors import SpecError
 
 type Role = Literal["favorable", "unfavorable", "inconclusive", "neutral"]
 type Direction = Literal["higher_is_better", "lower_is_better", "neutral"]
@@ -52,6 +57,10 @@ class Theme:
         sparkline (see ``series_color``). Independent of ``Role``: a
         role encodes a value judgement about one interval, this scale
         encodes arm identity and carries no such judgement.
+    dotplot_palette
+        Two opaque six-digit hex colours for low/high values in optional dotplot
+        gradients. Independent of significance roles; choose endpoints with
+        adequate contrast against ``surface``.
     """
 
     favorable: str = "#55A868"
@@ -89,6 +98,7 @@ class Theme:
         "#BCBD22",
         "#17BECF",
     )
+    dotplot_palette: tuple[str, str] = ("#3366AA", "#AA3377")
 
     def color(self, role: Role) -> str:
         """Return the colour registered for `role`.
@@ -142,6 +152,71 @@ class Theme:
         if index < 0:
             raise ValueError(f"series_color index must be non-negative, got {index}")
         return self.series_palette[index % len(self.series_palette)]
+
+    def dotplot_color(self, value: float, domain: tuple[float, float]) -> str:
+        """Map an original value onto an opaque, clamped sRGB colour ramp."""
+        return self._dotplot_color_scale(domain)(value)
+
+    def _dotplot_color_scale(self, domain: tuple[float, float]) -> Callable[[float], str]:
+        """Validate and decode endpoints once for a rendered group of dots."""
+        bounds = _dotplot_color_domain(True, domain, domain)
+        assert bounds is not None  # noqa: S101 - gradient is enabled
+        low, high = bounds
+        span = high - low
+        palette = self.dotplot_palette
+        if (
+            not isinstance(palette, (tuple, list))
+            or len(palette) != 2
+            or any(
+                not isinstance(c, str) or re.fullmatch(r"#[0-9a-fA-F]{6}", c) is None
+                for c in palette
+            )
+        ):
+            raise SpecError("Dotplot palette requires two opaque six-digit hex colours")
+        start, end = (tuple(int(c[i : i + 2], 16) for i in (1, 3, 5)) for c in palette)
+
+        def color(value: float) -> str:
+            if isinstance(value, bool) or not isinstance(value, Real) or not math.isfinite(value):
+                raise SpecError("Dotplot colour value must be finite")
+            value = float(value)
+            if value <= low:
+                t = 0.0
+            elif value >= high:
+                t = 1.0
+            elif math.isfinite(span):
+                t = (value - low) / span
+            else:
+                t = (value / 2 - low / 2) / (high / 2 - low / 2)
+            return "#" + "".join(
+                f"{round(a + (b - a) * t):02x}" for a, b in zip(start, end, strict=True)
+            )
+
+        return color
+
+
+def _dotplot_color_domain(
+    gradient: bool,
+    color_domain: tuple[float, float] | None,
+    domain: tuple[float, float],
+) -> tuple[float, float] | None:
+    """Validate optional value colouring consistently across public surfaces."""
+    if not isinstance(gradient, bool):
+        raise SpecError("Dotplot gradient must be a bool")
+    if not gradient:
+        if color_domain is not None:
+            raise SpecError("Dotplot color_domain requires gradient=True")
+        return None
+    bounds = domain if color_domain is None else color_domain
+    if (
+        not isinstance(bounds, (tuple, list))
+        or len(bounds) != 2
+        or any(
+            isinstance(v, bool) or not isinstance(v, Real) or not math.isfinite(v) for v in bounds
+        )
+        or bounds[0] >= bounds[1]
+    ):
+        raise SpecError("Dotplot color_domain must have finite increasing endpoints")
+    return (float(bounds[0]), float(bounds[1]))
 
 
 def role_for(
@@ -226,6 +301,7 @@ MONO = Theme(
         "#A6A6A6",
         "#CCCCCC",
     ),
+    dotplot_palette=("#444444", "#777777"),
 )
 
 TEXTUAL = Theme(
