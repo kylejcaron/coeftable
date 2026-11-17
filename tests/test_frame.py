@@ -926,3 +926,31 @@ def test_dotplot_gradient_shares_values_across_distinct_group_domains():
     footers = [ET.fromstring(s) for s in cells if s and not _circles(s)]  # noqa: S314
     assert all("Color: value" in "".join(r.itertext()) for r in footers)
     assert [r.findall("{*}rect")[0].attrib["fill"] for r in footers] == ["#000000"] * 2
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "quantiles,ref",
+    [
+        ([-1e308, 0, 1e308], 0),
+        (
+            [
+                -float.fromhex("0x1.fffffffffffffp+1023"),
+                0,
+                float.fromhex("0x1.fffffffffffffp+1023"),
+            ],
+            0,
+        ),
+        ([1e308, 1e308, 1e308], 1e308),
+    ],
+)
+def test_dotplot_automatic_domain_retains_extreme_finite_values(quantiles, ref):
+    data = pd.DataFrame({"term": ["a"], "value": [0.0], "q": [quantiles]})
+    resolved = resolve(_dot_table(data, quantiles="q", ref=ref, axis_fmt=lambda v: f"{v:.0e}"))
+    cells = nw.from_native(resolved.frame)["Dots"].to_list()
+    left, middle, right = [float(c.attrib["cx"]) for c in _circles(cells[0])]
+    if quantiles[0] == quantiles[-1]:
+        assert [left, middle, right] == pytest.approx([110, 110, 110])
+    else:
+        assert 5 <= left < middle == 110 < right <= 215
+    assert resolved.axis_rows

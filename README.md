@@ -154,7 +154,9 @@ horizontal positions are rounded into shared bins without crossing the reference
 original values still determine clipping. Dots stack upward from a baseline.
 `dot_size` sets their shared diameter in pixels (default 6). Each row grows only
 as needed; a point mass does not enlarge unrelated rows. An explicit height that
-cannot fit raises `SpecError`.
+cannot fit raises `SpecError`. Subpixel diameters retain their radius in SVG;
+sizes whose radius underflows to zero raise `SpecError`. Subpixel dots can still
+be too small to see at normal zoom, so 6px remains the default.
 
 For another quantile convention or an analytical distribution, calculate the
 midpoint quantiles yourself. `quantiles="column"` selects a list-valued column

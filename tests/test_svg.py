@@ -647,6 +647,21 @@ def test_forest_axis_anchors_a_tick_label_only_when_it_would_clip():
     assert labels[-1][0] == "end"
 
 
+def test_forest_axis_numeric_labels_do_not_overlap_after_edge_anchoring():
+    root = ET.fromstring(  # noqa: S314 - generated SVG
+        forest_axis(domain=(-1, 1), ref=0, fmt=lambda v: f"{v:+.5f}", theme=DEFAULT)
+    )
+    boxes = []
+    for label in root.findall("{*}text"):
+        x = float(label.attrib["x"])
+        width = len(label.text or "") * float(label.attrib["font-size"]) * 0.6
+        anchor = label.attrib["text-anchor"]
+        left = x if anchor == "start" else x - width if anchor == "end" else x - width / 2
+        boxes.append((left, left + width))
+    assert len(boxes) >= 2
+    assert all(right[0] - left[1] >= 2 for left, right in pairwise(boxes))
+
+
 def test_sparkline_axis_anchors_a_clipping_temporal_tick_label():
     # The originally observed bug: a month label on the first tick sits at
     # x=inset and, centred, loses its leading character off-canvas ("Jan" ->
@@ -2687,7 +2702,7 @@ def test_dotplot_gradient_uses_original_values_not_bin_centers():
     circles = root.findall("{*}circle")
     assert circles[0].attrib["cx"] == circles[1].attrib["cx"]
     assert [c.attrib["fill"] for c in circles] == ["#030303", "#050505"]
-    assert all(c.attrib["r"] == "3.00" and "opacity" not in c.attrib for c in circles)
+    assert all(float(c.attrib["r"]) == 3 and "opacity" not in c.attrib for c in circles)
 
 
 def test_dotplot_gradient_footer_is_measured_escaped_and_independent_of_axis():
@@ -2731,3 +2746,47 @@ def test_dotplot_gradient_footer_is_measured_escaped_and_independent_of_axis():
 def test_dotplot_invalid_color_options_fail_even_for_empty_distribution(options):
     with pytest.raises(SpecError):
         _dots_svg(quantiles=[], **options)
+
+
+def test_dotplot_preserves_subpixel_radius():
+    root = _dots_svg(quantiles=[0, 0], dot_size=0.001)
+    radii = [float(c.attrib["r"]) for c in root.findall("{*}circle")]
+    assert radii == pytest.approx([0.0005, 0.0005], abs=0)
+
+
+def test_dotplot_rejects_size_whose_radius_underflows():
+    with pytest.raises(SpecError):
+        _dots_svg(quantiles=[0, 0], dot_size=float.fromhex("0x0.0000000000001p-1022"))
+
+
+def test_dotplot_extreme_finite_domain_keeps_dots_and_axis_aligned():
+    from coeftable.plots import quantile_dotplot, quantile_dotplot_axis
+
+    domain = (-1e308, 1e308)
+    row = ET.fromstring(  # noqa: S314 - generated SVG
+        quantile_dotplot(
+            quantiles=[-1e308, 0, 1e308],
+            domain=domain,
+            ref=0,
+            color="black",
+            theme=DEFAULT,
+        )
+    )
+    left, middle, right = [float(c.attrib["cx"]) for c in row.findall("{*}circle")]
+    assert 5 <= left < middle == 110 < right <= 215
+    axis = ET.fromstring(  # noqa: S314 - generated SVG
+        quantile_dotplot_axis(
+            domain=domain,
+            ref=0,
+            dot_count=3,
+            fmt=lambda v: f"{v:.0e}",
+            theme=DEFAULT,
+        )
+    )
+    labels = axis.findall("{*}text")
+    zero = next(t for t in labels if t.text == "0e+00")
+    assert float(zero.attrib["x"]) == middle
+    tick_values = [
+        float(t.text or "") for t in labels if re.fullmatch(r"-?\d+e[+-]\d+", t.text or "")
+    ]
+    assert min(tick_values) < 0 < max(tick_values)

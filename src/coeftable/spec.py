@@ -322,14 +322,22 @@ def _pad_domain(
     if symmetric and ref is None:
         raise ValueError("_pad_domain: symmetric=True requires ref to be set, got ref=None")
     if not values:
-        return (-1.0, 1.0) if ref is None else (ref - 1.0, ref + 1.0)
-    low, high = min(values), max(values)
+        low = high = 0.0 if ref is None else ref
+    else:
+        low, high = min(values), max(values)
     if ref is not None:
         low, high = min(low, ref), max(high, ref)
     if low == high:
-        return (low - 1.0, high + 1.0)
-    margin = (high - low) * 0.08
-    low, high = low - margin, high + margin
+        if low - 1.0 < high + 1.0:
+            return (low - 1.0, high + 1.0)
+        margin = abs(low) * 0.08
+    else:
+        span = high - low
+        margin = span * 0.08 if math.isfinite(span) else high * 0.08 - low * 0.08
+    padded_low, padded_high = low - margin, high + margin
+    # At float limits, retain the data endpoint rather than padding to infinity.
+    low = padded_low if math.isfinite(padded_low) else low
+    high = padded_high if math.isfinite(padded_high) else high
     if symmetric and ref is not None:
         half = max(ref - low, high - ref)
         return (ref - half, ref + half)

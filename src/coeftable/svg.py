@@ -48,7 +48,11 @@ def nice_ticks(low: float, high: float, target: int = 4) -> list[float]:
         return []
     if high == low:
         return [low]
-    raw = (high - low) / max(target, 1)
+    span = high - low
+    if math.isinf(span):
+        # Scale before subtraction; finite endpoints can have an infinite span.
+        return [tick * 10 for tick in nice_ticks(low / 10, high / 10, target)]
+    raw = span / max(target, 1)
     magnitude = 10.0 ** math.floor(math.log10(raw))
     step = next((m * magnitude for m in _TICK_STEPS if raw <= m * magnitude), 10.0 * magnitude)
     start = math.ceil(low / step) * step
@@ -223,6 +227,14 @@ def _projector(domain: tuple[float, float], width: float, inset: float):
     if span <= 0:
         span = 1.0
     inner = width - 2 * inset
+    if math.isinf(span):
+        scaled_low = low / 2
+        scaled_span = high / 2 - scaled_low
+
+        def project_wide(value: float) -> float:
+            return inset + (value / 2 - scaled_low) / scaled_span * inner
+
+        return project_wide
 
     def project(value: float) -> float:
         return inset + (value - low) / span * inner
@@ -1222,6 +1234,16 @@ def _forest_axis_parts(
         )
     ticks = nice_ticks(low, high, target_ticks)
     texts = _dedupe_consecutive_labels([fmt(t) for t in ticks])
+    # Edge anchoring can move otherwise separated numeric labels into each other.
+    # Keep every tick mark; omit only text that would overlap an earlier label.
+    last_right = -math.inf
+    for i, (left, right) in enumerate(_label_boxes(ticks, texts, project, width)):
+        if not texts[i]:
+            continue
+        if left - last_right < _MIN_LABEL_GAP:
+            texts[i] = ""
+        else:
+            last_right = right
     parts.extend(
         _render_tick_axis(
             ticks,
@@ -2043,8 +2065,8 @@ def _dotplot_geometry(
         or not math.isfinite(ref)
     ):
         raise SpecError("Dotplot requires a finite increasing domain and finite reference")
-    if not math.isfinite(dot_size) or dot_size <= 0 or inset < 0:
-        raise SpecError("Dotplot requires positive finite dot_size and nonnegative inset")
+    if not math.isfinite(dot_size) or dot_size <= 0 or dot_size / 2 == 0 or inset < 0:
+        raise SpecError("Dotplot requires a positive finite radius and nonnegative inset")
     effective = max(inset, dot_size / 2)
     if width <= 2 * effective:
         raise SpecError("Dotplot width must leave positive space inside its insets")
@@ -2137,7 +2159,7 @@ def _render_dotplot_row(
         y = baseline - dot.level * (dot_size + 1)
         fill = color_scale(dot.value) if color_scale is not None else color
         parts.append(
-            f'<circle cx="{dot.x:.2f}" cy="{y:.2f}" r="{dot_size / 2:.2f}" fill="{_attr(fill)}"/>'
+            f'<circle cx="{dot.x:.2f}" cy="{y:.2f}" r="{dot_size / 2}" fill="{_attr(fill)}"/>'
         )
     parts.extend(_annotation_fragments(annotations, area=area, layer="overlay", theme=theme))
     for i, (left, right) in enumerate(row.tail_rows):
