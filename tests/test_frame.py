@@ -775,7 +775,7 @@ def _circles(svg):
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize("backend", ["pandas", "polars", "arrow"])
+@pytest.mark.parametrize("backend", ["pandas", "polars", "arrow", "arrow_pandas"])
 def test_dotplot_rows_keep_their_distribution_through_grouping_and_splits(backend):
     raw = {
         "term": ["same", "same", "same", "same"],
@@ -792,6 +792,8 @@ def test_dotplot_rows_keep_their_distribution_through_grouping_and_splits(backen
         import pyarrow as pa
 
         data = pa.table(raw)
+        if backend == "arrow_pandas":
+            data = data.to_pandas()
     table = (
         CoefTable(data, rows="term", groups="group", split_columns="split")
         .estimate("Effect", "value")

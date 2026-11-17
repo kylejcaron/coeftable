@@ -58,6 +58,10 @@ def prepare_dots(
     ):
         raise SpecError(f"{context}: dot_count must be an integer >= 2")
     raw = samples if samples is not None else quantiles
+    # Arrow-to-pandas list cells are arrays, not collections.abc.Sequence.
+    to_list = getattr(raw, "tolist", None)
+    if callable(to_list):
+        raw = to_list()
     if isinstance(raw, (str, bytes)) or not isinstance(raw, Sequence):
         raise SpecError(f"{context}: distribution must be a sequence of finite numbers")
     values = []
