@@ -2215,8 +2215,17 @@ def quantile_dotplot_axis(
             else:
                 lines.append(word)
     offset = 22 if show_axis else 0
-    height = max(1, offset + 12 * len(lines))
-    parts = _forest_axis_parts(domain, ref, fmt, theme, width, 22, effective) if show_axis else []
+    height = max(1, offset + 16 * len(lines))
+    parts = (
+        [
+            f"<desc>Each dot represents approximately 1/{dot_count} "
+            "of the supplied distribution.</desc>"
+        ]
+        if show_legend
+        else []
+    )
+    if show_axis:
+        parts.extend(_forest_axis_parts(domain, ref, fmt, theme, width, 22, effective))
     for i, line in enumerate(lines):
         parts.append(
             f'<text x="{inset}" y="{offset + 12 + 16 * i}" font-size="12" '
