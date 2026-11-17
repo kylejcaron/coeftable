@@ -989,7 +989,7 @@ def test_quantile_dotplot_region_matches_shared_svg_and_measures_footer():
     assert [c.attrib for c in root.findall("{*}circle")] == [
         c.attrib for c in other.findall("{*}circle")
     ]
-    assert row.height == int(root.attrib["height"]) == 39
+    assert row.height == int(root.attrib["height"]) == 76
     axis = ET.fromstring(footer.svg)  # noqa: S314
     assert footer.height == int(axis.attrib["height"])
     assert "1/6" in "".join(root.itertext())
@@ -997,6 +997,10 @@ def test_quantile_dotplot_region_matches_shared_svg_and_measures_footer():
     card = Card("Posterior", content=[region], width=160)
     assert "1/6" in card.as_raw_html()
     assert card.measure().expanded_height > row.height + footer.height
+    (short,) = QuantileDotplot(
+        quantiles=[-0.8, 0.8], domain=(-1, 1), height=16, show_axis=False, show_legend=False
+    ).resolve(width=120, theme=DEFAULT, chrome=DEFAULT_CHROME)
+    assert short.height == 16
 
 
 def test_empty_quantile_region_omits_unknown_count_footer():

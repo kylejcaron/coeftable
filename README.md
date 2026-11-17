@@ -149,10 +149,12 @@ html = table.as_raw_html()
 
 Samples use deterministic inverse empirical quantiles at probabilities
 `(i + 0.5) / N`, without interpolation. Repeated values retain their weight;
-discrete outcomes never acquire invented intermediate values. Dots keep their
-horizontal values and stack vertically. `dot_size` sets their shared diameter
-in pixels (default 4). Automatic row height fits the densest stack; an explicit
-height that cannot fit raises `SpecError`.
+discrete outcomes never acquire invented intermediate values. For display,
+horizontal positions are rounded into shared bins without crossing the reference;
+original values still determine clipping. Dots stack upward from a baseline.
+`dot_size` sets their shared diameter in pixels (default 6). Each row grows only
+as needed; a point mass does not enlarge unrelated rows. An explicit height that
+cannot fit raises `SpecError`.
 
 For another quantile convention or an analytical distribution, calculate the
 midpoint quantiles yourself. `quantiles="column"` selects a list-valued column
@@ -188,6 +190,9 @@ using the **original denominator**, never renormalizing or piling them onto
 the boundary. These counts approximate omitted mass, not exact model tail
 probabilities. Even a full-range dotplot does not show an unbounded
 distribution's entire support.
+For example, a fixed axis from -1 to 1 might show 15 dots, with 3 below -1 and
+2 above 1: all 20 are accounted for, not redistributed into the visible area.
+Prefer the full represented range unless comparison on a fixed axis is useful.
 
 `show_axis=False` hides ticks without hiding the explanation;
 `show_legend=False` hides the explanation independently. In standalone output,

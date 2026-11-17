@@ -2025,6 +2025,12 @@ class _DotRow:
     tail_rows: tuple[tuple[str, str], ...]
     minimum_height: int
 
+    @property
+    def automatic_height(self) -> int:
+        """Keep the automatic plot floor separate from explicit fit checks."""
+        tails = 16 * len(self.tail_rows)
+        return max(44, self.minimum_height - tails) + tails
+
 
 def _dotplot_geometry(
     domain: tuple[float, float], ref: float, width: int, dot_size: float, inset: int
@@ -2057,14 +2063,18 @@ def _prepare_dotplot_row(
     """Prepare positions and visible overflow text once per source row."""
     effective = _dotplot_geometry(domain, ref, width, dot_size, inset)
     layout = layout_dots(
-        values, domain=domain, project=_projector(domain, width, effective), dot_size=dot_size
+        values,
+        domain=domain,
+        project=_projector(domain, width, effective),
+        dot_size=dot_size,
+        ref=ref,
     )
-    left = f"← {layout.below}/{layout.dot_count} dots off-scale" if layout.below else ""
-    right = f"{layout.above}/{layout.dot_count} dots off-scale →" if layout.above else ""
+    left = f"← {layout.below}/{layout.dot_count} off-scale" if layout.below else ""
+    right = f"{layout.above}/{layout.dot_count} off-scale →" if layout.above else ""
     usable = width - 2 * inset
 
     def text_width(text: str) -> float:
-        return len(text) * 9 * _CHAR_WIDTH_RATIO
+        return len(text) * 11 * _CHAR_WIDTH_RATIO
 
     if any(text_width(t) > usable for t in (left, right)):
         raise SpecError("Dotplot off-scale label does not fit; increase width")
@@ -2074,10 +2084,10 @@ def _prepare_dotplot_row(
             tails = ((left, ""), ("", right))
         else:
             tails = ((left, right),)
-    area = 2 * inset
+    area = 2 * max(inset, dot_size / 2)
     if layout.levels:
         area += dot_size + (layout.levels - 1) * (dot_size + 1)
-    return _DotRow(layout, tails, max(1, math.ceil(area + 12 * len(tails))))
+    return _DotRow(layout, tails, max(1, math.ceil(area + 16 * len(tails))))
 
 
 def _render_dotplot_row(
@@ -2093,7 +2103,7 @@ def _render_dotplot_row(
     inset: int,
     annotations: Sequence[ResolvedAnnotation] = (),
 ) -> str:
-    """Render cached exact-value positions, never recalculate quantiles."""
+    """Render cached binned positions while retaining original-value semantics."""
     if isinstance(height, bool) or not isinstance(height, int) or height < row.minimum_height:
         raise SpecError(f"Dotplot height must be at least {row.minimum_height}px")
     if any(mark.axis != "x" for mark in annotations):
@@ -2101,7 +2111,7 @@ def _render_dotplot_row(
     layout = row.layout
     if not layout.dots and not (layout.below or layout.above):
         return _svg(width, height, "")
-    plot_height = height - 12 * len(row.tail_rows)
+    plot_height = height - 16 * len(row.tail_rows)
     effective = max(inset, dot_size / 2)
     project = _projector(domain, width, effective)
     area = _PlotArea(domain, None, project, None, effective, width - effective, 0, plot_height)
@@ -2109,29 +2119,31 @@ def _render_dotplot_row(
         "<title>Quantile dotplot</title>",
         f"<desc>{len(layout.dots)} visible, {layout.below} below and {layout.above} above "
         f"the axis; {layout.dot_count} equal-mass representatives of the supplied distribution. "
-        "Counts approximate distribution mass, not exact tail probabilities.</desc>",
+        "Counts approximate distribution mass, not exact tail probabilities. "
+        "Horizontal positions are rounded to shared bins.</desc>",
     ]
     parts.extend(_annotation_fragments(annotations, area=area, layer="underlay", theme=theme))
     if domain[0] <= ref <= domain[1]:
         x = project(ref)
         parts.append(
             f'<line x1="{x:.2f}" x2="{x:.2f}" y1="0" y2="{plot_height}" '
-            f'stroke="{_attr(theme.axis)}" stroke-dasharray="2,2"/>'
+            f'stroke="{_attr(theme.axis)}" stroke-width="0.75" opacity="0.25" '
+            'stroke-dasharray="2,2"/>'
         )
-    start = (plot_height - (layout.levels - 1) * (dot_size + 1)) / 2
+    baseline = plot_height - effective - dot_size / 2
     for dot in layout.dots:
-        y = start + dot.level * (dot_size + 1)
+        y = baseline - dot.level * (dot_size + 1)
         parts.append(
             f'<circle cx="{dot.x:.2f}" cy="{y:.2f}" r="{dot_size / 2:.2f}" fill="{_attr(color)}"/>'
         )
     parts.extend(_annotation_fragments(annotations, area=area, layer="overlay", theme=theme))
     for i, (left, right) in enumerate(row.tail_rows):
-        y = plot_height + 9 + i * 12
+        y = plot_height + 12 + i * 16
         for text, x, anchor in ((left, inset, "start"), (right, width - inset, "end")):
             if text:
                 parts.append(
                     f'<text x="{x}" y="{y}" text-anchor="{anchor}" '
-                    f'font-size="9" fill="{_attr(theme.text)}">{html.escape(text)}</text>'
+                    f'font-size="11" fill="{_attr(theme.text)}">{html.escape(text)}</text>'
                 )
     return _svg(width, height, "".join(parts))
 
@@ -2147,11 +2159,11 @@ def quantile_dotplot(
     theme: Theme,
     width: int = 220,
     height: int | None = None,
-    dot_size: float = 4.0,
-    inset: int = 3,
+    dot_size: float = 6.0,
+    inset: int = 5,
     annotations: Sequence[ResolvedAnnotation] = (),
 ) -> str:
-    """Render equal-mass midpoint representatives as exact-value stacked dots.
+    """Render equal-mass midpoint representatives in aligned baseline stacks.
 
     Supply equal-weight samples or nondecreasing precomputed midpoint quantiles.
     Samples use inverse empirical quantiles (no interpolation), with 20 dots by
@@ -2169,7 +2181,7 @@ def quantile_dotplot(
         color=color,
         theme=theme,
         width=width,
-        height=max(34, row.minimum_height) if height is None else height,
+        height=row.automatic_height if height is None else height,
         dot_size=dot_size,
         inset=inset,
         annotations=annotations,
@@ -2184,8 +2196,8 @@ def quantile_dotplot_axis(
     fmt: Format,
     theme: Theme,
     width: int = 220,
-    dot_size: float = 4.0,
-    inset: int = 3,
+    dot_size: float = 6.0,
+    inset: int = 5,
     show_axis: bool = True,
     show_legend: bool = True,
 ) -> str:
@@ -2195,10 +2207,10 @@ def quantile_dotplot_axis(
         raise SpecError("Dotplot axis requires a known integer dot_count >= 2")
     lines: list[str] = []
     if show_legend:
-        for word in f"1 dot ≈ 1/{dot_count} of supplied distribution".split():
-            if len(word) * 9 * _CHAR_WIDTH_RATIO > width - 2 * inset:
+        for word in f"Each dot ≈ {100 / dot_count:.3g}%".split():
+            if len(word) * 12 * _CHAR_WIDTH_RATIO > width - 2 * inset:
                 raise SpecError("Dotplot legend cannot fit; increase width")
-            if lines and len(f"{lines[-1]} {word}") * 9 * _CHAR_WIDTH_RATIO <= width - 2 * inset:
+            if lines and len(f"{lines[-1]} {word}") * 12 * _CHAR_WIDTH_RATIO <= width - 2 * inset:
                 lines[-1] += f" {word}"
             else:
                 lines.append(word)
@@ -2207,7 +2219,7 @@ def quantile_dotplot_axis(
     parts = _forest_axis_parts(domain, ref, fmt, theme, width, 22, effective) if show_axis else []
     for i, line in enumerate(lines):
         parts.append(
-            f'<text x="{inset}" y="{offset + 9 + 12 * i}" font-size="9" '
+            f'<text x="{inset}" y="{offset + 12 + 16 * i}" font-size="12" '
             f'fill="{_attr(theme.text)}">{html.escape(line)}</text>'
         )
     return _svg(width, height, "".join(parts))

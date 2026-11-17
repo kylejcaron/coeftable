@@ -802,12 +802,9 @@ def test_dotplot_rows_keep_their_distribution_through_grouping_and_splits(backen
     out = resolve(table)
     rows = nw.from_native(out.frame).rows(named=True)
     body = [row for i, row in enumerate(rows) if i not in out.axis_rows]
-    assert [
-        [float(c.attrib["cx"]) for c in _circles(row["x\u2009|\u2009Dots"])] for row in body
-    ] == [
-        [110] * 4,
-        [3, 3, 217, 217],
-    ]
+    xs = [[float(c.attrib["cx"]) for c in _circles(row["x\u2009|\u2009Dots"])] for row in body]
+    assert xs[0] == [110] * 4
+    assert 5 <= xs[1][0] == xs[1][1] < 110 < xs[1][2] == xs[1][3] <= 215
     assert not _circles(body[0]["y\u2009|\u2009Dots"])
     assert len(_circles(body[1]["y\u2009|\u2009Dots"])) == 4
     assert "1/4" in table.as_raw_html()
@@ -831,7 +828,7 @@ def test_dotplot_robust_domain_excludes_outlier_without_reweighting():
     b = nw.from_native(robust.frame)["Dots"].to_list()[0]
     assert len(_circles(a)) == 20
     assert len(_circles(b)) == 19
-    assert "1/20 dots off-scale" in b
+    assert "1/20 off-scale" in b
     explicit = resolve(_dot_table(data, quantiles="q", autoscale="robust", ylim=(-1, 1001)))
     assert len(_circles(nw.from_native(explicit.frame)["Dots"].to_list()[0])) == 20
 
@@ -856,3 +853,27 @@ def test_dotplot_footer_toggles_and_empty_estimate_do_not_hide_distribution():
     )
     root = _circles(nw.from_native(resolve(custom).frame)["Dots"].to_list()[0])
     assert root[0].attrib["fill"] == custom.theme.unfavorable
+
+
+@pytest.mark.integration
+def test_dotplot_point_mass_grows_only_its_own_row():
+    data = pd.DataFrame(
+        {
+            "term": ["point", "spread"],
+            "value": [0, 0],
+            "q": [[0] * 20, [i / 10 - 0.95 for i in range(20)]],
+        }
+    )
+    out = resolve(_dot_table(data, quantiles="q", ylim=(-1, 1)))
+    cells = nw.from_native(out.frame)["Dots"].to_list()
+    roots = [ET.fromstring(s) for i, s in enumerate(cells) if i not in out.axis_rows]  # noqa: S314
+    assert [int(r.attrib["height"]) for r in roots] == [149, 44]
+    with pytest.raises(SpecError):
+        resolve(_dot_table(data, quantiles="q", ylim=(-1, 1), height=148))
+    data["q"] = [[-0.8, 0.8], [-0.8, 0.8]]
+    short = resolve(_dot_table(data, quantiles="q", ylim=(-1, 1), height=16))
+    assert all(
+        ET.fromstring(s).attrib["height"] == "16"  # noqa: S314
+        for i, s in enumerate(nw.from_native(short.frame)["Dots"].to_list())
+        if i not in short.axis_rows
+    )

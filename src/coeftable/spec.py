@@ -474,7 +474,7 @@ class _DotForestState:
     rows: tuple[_DotRow, ...]
     values: tuple[DotValues, ...]
     dot_count: int | None
-    height: int
+    heights: tuple[int, ...]
     source: Estimate
     estimates: _EstimateState
     annotations: PreparedAnnotations
@@ -561,7 +561,7 @@ class Forest:
     samples: str | None = None
     quantiles: str | None = None
     dot_count: int | None = None
-    dot_size: float = 4.0
+    dot_size: float = 6.0
     show_legend: bool = True
 
     def sources(self) -> Iterable[str]:
@@ -692,16 +692,20 @@ class Forest:
                 ref=self.ref,
                 width=self.width,
                 dot_size=self.dot_size,
-                inset=3,
+                inset=5,
             )
             for value, key in zip(values, keys, strict=True)
         )
         minimum = max((row.minimum_height for row in rows), default=1)
-        height = (
-            max(minimum, _plot_height((source,), None)) if self.height is None else self.height
-        )
-        if isinstance(height, bool) or not isinstance(height, int) or height < minimum:
+        if self.height is not None and (
+            isinstance(self.height, bool)
+            or not isinstance(self.height, int)
+            or self.height < minimum
+        ):
             raise SpecError(f"Forest {self.label!r}: height must be at least {minimum}px")
+        heights = tuple(
+            row.automatic_height if self.height is None else self.height for row in rows
+        )
         footer_key = (
             (lambda row, group, split: _domain_key(self, row, group, split))
             if count is not None and (self.show_axis or self.show_legend)
@@ -709,7 +713,7 @@ class Forest:
         )
         return Prepared(
             payload=_DotForestState(
-                domains, rows, values, count, height, source, estimates, annotations
+                domains, rows, values, count, heights, source, estimates, annotations
             ),
             footer_key=footer_key,
             shared_footer=self.scale in ("table", "split_column"),
@@ -735,9 +739,9 @@ class Forest:
             color=ctx.theme.color(role),
             theme=ctx.theme,
             width=self.width,
-            height=state.height,
+            height=state.heights[ctx.index],
             dot_size=self.dot_size,
-            inset=3,
+            inset=5,
             annotations=state.annotations.by_row[ctx.index],
         )
 
@@ -1746,7 +1750,7 @@ class CoefTable:
         samples: str | None = None,
         quantiles: str | None = None,
         dot_count: int | None = None,
-        dot_size: float = 4.0,
+        dot_size: float = 6.0,
         show_legend: bool = True,
     ) -> CoefTable:
         """Append a forest-plot column bound to an existing estimate.

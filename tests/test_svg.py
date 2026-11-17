@@ -2589,11 +2589,12 @@ def _dots_svg(**kwargs):
 def test_dotplot_clipping_keeps_original_denominator():
     root = _dots_svg()
     circles = root.findall("{*}circle")
-    assert [float(c.attrib["cx"]) for c in circles] == [3, 110, 217]
-    assert [float(c.attrib["r"]) for c in circles] == [2, 2, 2]
+    xs = [float(c.attrib["cx"]) for c in circles]
+    assert 5 <= xs[0] < 110 == xs[1] < xs[2] <= 215
+    assert [float(c.attrib["r"]) for c in circles] == [3, 3, 3]
     texts = [t.text for t in root.findall("{*}text")]
-    assert "← 1/5 dots off-scale" in texts
-    assert "1/5 dots off-scale →" in texts
+    assert "← 1/5 off-scale" in texts
+    assert "1/5 off-scale →" in texts
     outside = _dots_svg(quantiles=[-3, 3])
     assert not outside.findall("{*}circle")
     assert "1/2" in "".join(outside.itertext())
@@ -2601,13 +2602,16 @@ def test_dotplot_clipping_keeps_original_denominator():
 
 def test_dotplot_height_preserves_dense_stacks():
     root = _dots_svg(quantiles=[0] * 20)
-    assert int(root.attrib["height"]) == 105
+    assert int(root.attrib["height"]) == 149
     circles = root.findall("{*}circle")
     assert len(circles) == 20
     ys = [float(c.attrib["cy"]) for c in circles]
-    assert [b - a for a, b in pairwise(ys)] == [5] * 19
+    assert [b - a for a, b in pairwise(ys)] == [-7] * 19
     with pytest.raises(SpecError):
-        _dots_svg(quantiles=[0] * 20, height=104)
+        _dots_svg(quantiles=[0] * 20, height=148)
+    short = _dots_svg(quantiles=[-0.8, 0.8], height=16)
+    assert short.attrib["height"] == "16"
+    assert _dots_svg(quantiles=[-0.8, 0.8]).attrib["height"] == "44"
 
 
 def test_dotplot_footer_wraps_and_toggles_axis_independently():
@@ -2627,14 +2631,14 @@ def test_dotplot_footer_wraps_and_toggles_axis_independently():
         )
 
     wide = footer(220, show_axis=False)
-    narrow = footer(120, show_axis=False)
+    narrow = footer(70, show_axis=False)
     assert int(narrow.attrib["height"]) > int(wide.attrib["height"])
     assert not wide.findall("{*}line")
     assert "supplied distribution" in " ".join(wide.itertext())
     axis = footer(220, show_legend=False)
     assert axis.findall("{*}line")
     assert "<" in "".join(axis.itertext()) and "&" in "".join(axis.itertext())
-    assert "supplied" not in "".join(axis.itertext())
+    assert "Each dot" not in "".join(axis.itertext())
     tails = _dots_svg(width=120)
     assert len({t.attrib["y"] for t in tails.findall("{*}text")}) == 2
 
@@ -2646,7 +2650,8 @@ def test_dotplot_annotations_and_fractional_inset_share_true_axis():
     rule = ResolvedRule(0, "x", "overlay", False, None, 1, 1, "solid")
     root = _dots_svg(quantiles=[-1, 0, 1], dot_size=9, annotations=[band, rule])
     circles = root.findall("{*}circle")
-    assert [float(c.attrib["cx"]) for c in circles] == [4.5, 110, 215.5]
+    xs = [float(c.attrib["cx"]) for c in circles]
+    assert 5 <= xs[0] < 110 == xs[1] < xs[2] <= 215
     children = list(root)
     assert children.index(root.find("{*}rect")) < children.index(circles[0])
     overlay = root.findall("{*}line")[-1]
@@ -2658,6 +2663,6 @@ def test_dotplot_annotations_and_fractional_inset_share_true_axis():
         )
     )
     line = axis.find("{*}line")
-    assert line is not None and float(line.attrib["x1"]) == 4.5
+    assert line is not None and float(line.attrib["x1"]) == 5
     with pytest.raises(SpecError):
         _dots_svg(annotations=[ResolvedRule(0, "y", "overlay", False, None, 1, 1, "solid")])

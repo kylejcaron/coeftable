@@ -641,9 +641,9 @@ class QuantileDotplot(Region):
     quantiles: Sequence[float] | None = None
     dot_count: int | None = None
     ref: float = 0.0
-    dot_size: float = 4.0
+    dot_size: float = 6.0
     height: int | None = None
-    inset: int = 3
+    inset: int = 5
     fmt: Format = _DEFAULT_FORMAT
     role: Role | None = None
     show_axis: bool = True
@@ -693,7 +693,7 @@ class QuantileDotplot(Region):
             dot_size=self.dot_size,
             inset=self.inset,
         )
-        height = max(34, row.minimum_height) if self.height is None else self.height
+        height = row.automatic_height if self.height is None else self.height
         svg = _render_dotplot_row(
             row,
             domain=self.domain,

@@ -1,4 +1,4 @@
-"""Prepare equal-mass quantile representatives and deterministic exact-x stacks."""
+"""Prepare equal-mass quantiles and reference-safe binned display positions."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ class DotValues:
 
 @dataclass(frozen=True)
 class DotPosition:
-    """One visible representative at its true projected coordinate."""
+    """One original representative and its binned display coordinate."""
 
     value: float
     x: float
@@ -93,13 +93,17 @@ def layout_dots(
     domain: tuple[float, float],
     project: Callable[[float], float],
     dot_size: float,
+    ref: float = 0.0,
 ) -> DotLayout:
-    """Stack without changing x, retaining the full denominator when cropped."""
+    """Bin visible values on a shared grid, without crossing the reference."""
     low, high = domain
     below = above = 0
     rightmost: list[float] = []
     positions: list[DotPosition] = []
     pitch = dot_size + 1
+    bin_pitch = 2 * pitch
+    left, right = project(low), project(high)
+    anchor = project(min(high, max(low, ref)))
     for value in values.quantiles:
         if value < low:
             below += 1
@@ -107,7 +111,16 @@ def layout_dots(
         if value > high:
             above += 1
             continue
-        x = project(value)
+        actual = project(value)
+        if value == ref:
+            x = actual
+        else:
+            index = math.floor((actual - anchor) / bin_pitch)
+            if low <= ref <= high:
+                index = min(-1, index) if value < ref else max(0, index)
+            start = max(left, anchor + index * bin_pitch)
+            end = min(right, anchor + (index + 1) * bin_pitch)
+            x = (start + end) / 2
         level = next((i for i, end in enumerate(rightmost) if x - end >= pitch), len(rightmost))
         if level == len(rightmost):
             rightmost.append(x)
