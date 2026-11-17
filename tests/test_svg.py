@@ -2790,3 +2790,32 @@ def test_dotplot_extreme_finite_domain_keeps_dots_and_axis_aligned():
         float(t.text or "") for t in labels if re.fullmatch(r"-?\d+e[+-]\d+", t.text or "")
     ]
     assert min(tick_values) < 0 < max(tick_values)
+
+
+@pytest.mark.parametrize("low", [1e-12, 1e-323])
+def test_dotplot_small_domain_ticks_stay_distinct_and_inside_viewport(low):
+    from coeftable.plots import quantile_dotplot_axis
+
+    high = 2 * low
+    axis = ET.fromstring(  # noqa: S314 - generated SVG
+        quantile_dotplot_axis(
+            domain=(low, high),
+            ref=0,
+            dot_count=20,
+            fmt=lambda v: f"{v:.3g}",
+            theme=DEFAULT,
+            show_legend=False,
+        )
+    )
+    xs = [
+        float(line.attrib["x1"])
+        for line in axis.findall("{*}line")
+        if line.attrib["x1"] == line.attrib["x2"]
+    ]
+    assert len(xs) >= 2
+    assert all(5 <= x <= 215 for x in xs)
+    assert xs == sorted(set(xs))
+    values = [float(label.text or "nan") for label in axis.findall("{*}text")]
+    assert len(values) >= 2
+    assert all(low <= value <= high for value in values)
+    assert values == sorted(set(values))

@@ -157,6 +157,8 @@ as needed; a point mass does not enlarge unrelated rows. An explicit height that
 cannot fit raises `SpecError`. Subpixel diameters retain their radius in SVG;
 sizes whose radius underflows to zero raise `SpecError`. Subpixel dots can still
 be too small to see at normal zoom, so 6px remains the default.
+For very small or large values, a compact formatter such as
+`axis_fmt=lambda v: f"{v:.3g}"` keeps the axis readable.
 
 For another quantile convention or an analytical distribution, calculate the
 midpoint quantiles yourself. `quantiles="column"` selects a list-valued column

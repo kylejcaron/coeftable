@@ -53,11 +53,17 @@ def nice_ticks(low: float, high: float, target: int = 4) -> list[float]:
         # Scale before subtraction; finite endpoints can have an infinite span.
         return [tick * 10 for tick in nice_ticks(low / 10, high / 10, target)]
     raw = span / max(target, 1)
-    magnitude = 10.0 ** math.floor(math.log10(raw))
+    magnitude = 10.0 ** math.floor(math.log10(raw)) if raw else 0.0
+    if magnitude == 0:
+        # Normalize subnormal spacing before choosing a step; conversion back
+        # may map several ticks to the same representable float.
+        ticks = {tick / 10 for tick in nice_ticks(low * 10, high * 10, target)}
+        return sorted(tick for tick in ticks if low <= tick <= high)
     step = next((m * magnitude for m in _TICK_STEPS if raw <= m * magnitude), 10.0 * magnitude)
     start = math.ceil(low / step) * step
     count = math.floor((high - start) / step) + 1
-    return [round(start + i * step, 10) for i in range(max(count, 0))]
+    precision = max(0, 1 - math.floor(math.log10(step)))
+    return [round(start + i * step, precision) for i in range(max(count, 0))]
 
 
 _SECONDS_PER_DAY = 86_400.0
