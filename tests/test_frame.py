@@ -775,14 +775,16 @@ def _circles(svg):
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize("backend", ["pandas", "polars", "arrow", "arrow_pandas"])
+@pytest.mark.parametrize(
+    "backend", ["pandas", "polars", "arrow", "arrow_pandas", "arrow_nullable_pandas"]
+)
 def test_dotplot_rows_keep_their_distribution_through_grouping_and_splits(backend):
     raw = {
         "term": ["same", "same", "same", "same"],
         "group": ["B", "A", "B", "A"],
         "split": ["x", "x", "y", "y"],
         "value": [None, 99.0, 3.0, 2.0],
-        "draws": [[0.0], [-1.0, 1.0], [], [0.5]],
+        "draws": [[0.0], [-1.0, 1.0], None, [0.5]],
     }
     if backend == "pandas":
         data = pd.DataFrame(raw)
@@ -794,6 +796,8 @@ def test_dotplot_rows_keep_their_distribution_through_grouping_and_splits(backen
         data = pa.table(raw)
         if backend == "arrow_pandas":
             data = data.to_pandas()
+        elif backend == "arrow_nullable_pandas":
+            data = data.to_pandas(types_mapper=pd.ArrowDtype)
     table = (
         CoefTable(data, rows="term", groups="group", split_columns="split")
         .estimate("Effect", "value")

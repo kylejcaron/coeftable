@@ -655,11 +655,13 @@ class Forest:
         estimates: _EstimateState = source.prepare(scan).payload
         name = self.samples if self.samples is not None else self.quantiles
         assert name is not None  # noqa: S101 - validated source configuration
-        raw = scan.frame[name].to_list()
+        source_values = scan.frame[name]
+        raw = source_values.to_list()
+        missing = source_values.is_null().to_list()
         values = tuple(
             prepare_dots(
-                samples=([] if cell is None else cell) if self.samples is not None else None,
-                quantiles=([] if cell is None else cell) if self.quantiles is not None else None,
+                samples=([] if missing[i] else cell) if self.samples is not None else None,
+                quantiles=([] if missing[i] else cell) if self.quantiles is not None else None,
                 dot_count=self.dot_count,
                 context=f"Forest {self.label!r}, column {name!r}, row {scan.row_keys[i]!r}",
             )
@@ -1810,14 +1812,16 @@ class CoefTable:
             instead, so a single extreme interval stops flattening every
             other bar; a discounted interval clips against the resulting
             domain edge and continues into a reserved margin as a
-            gradient fade rather than being hidden. Composes with
-            `symmetric`: the fence runs first, then the mirrored padding.
+            gradient fade rather than being hidden. Dotplots instead count
+            excluded representatives in visible off-scale labels, retaining
+            the original denominator. Composes with `symmetric`: the fence
+            runs first, then the mirrored padding.
         width
             Bar width in pixels.
         height
-            Bar row height in pixels. `None` (the default) picks a height
-            that fills the row based on the bound estimate's
-            `ci_style.layout`.
+            Plot row height in pixels. For intervals, `None` fills the row
+            based on the bound estimate's `ci_style.layout`. For dotplots,
+            automatic height grows each row to fit its stacks and tail labels.
         show_axis
             Emit an axis row per distinct domain.
         axis_fmt
