@@ -3,6 +3,7 @@
 import re
 from dataclasses import replace
 from typing import Any, TypedDict
+from xml.etree import ElementTree as ET
 
 import pytest
 
@@ -964,3 +965,45 @@ def test_interval_explicit_role_override():
 def test_projection_guards_name_effective_spans(region, width, message):
     with pytest.raises(SpecError, match=message):
         region.resolve(width=width, theme=DEFAULT, chrome=DEFAULT_CHROME)
+
+
+@pytest.mark.integration
+def test_quantile_dotplot_region_matches_shared_svg_and_measures_footer():
+    from coeftable.cards import Card, QuantileDotplot
+    from coeftable.plots import quantile_dotplot
+
+    source = [-3, -1, 0, 0, 1, 3]
+    region = QuantileDotplot(quantiles=source, domain=(-1, 1))
+    source[:] = [99]
+    row, footer = region.resolve(width=120, theme=DEFAULT, chrome=DEFAULT_CHROME)
+    expected = quantile_dotplot(
+        quantiles=[-3, -1, 0, 0, 1, 3],
+        domain=(-1, 1),
+        ref=0,
+        color=DEFAULT.neutral,
+        theme=DEFAULT,
+        width=120,
+    )
+    root = ET.fromstring(row.svg)  # noqa: S314 - generated SVG
+    other = ET.fromstring(expected)  # noqa: S314
+    assert [c.attrib for c in root.findall("{*}circle")] == [
+        c.attrib for c in other.findall("{*}circle")
+    ]
+    assert row.height == int(root.attrib["height"]) == 39
+    axis = ET.fromstring(footer.svg)  # noqa: S314
+    assert footer.height == int(axis.attrib["height"])
+    assert "1/6" in "".join(root.itertext())
+    assert "supplied" in "".join(axis.itertext())
+    card = Card("Posterior", content=[region], width=160)
+    assert "1/6" in card.as_raw_html()
+    assert card.measure().expanded_height > row.height + footer.height
+
+
+def test_empty_quantile_region_omits_unknown_count_footer():
+    from coeftable.cards import QuantileDotplot
+
+    (row,) = QuantileDotplot(quantiles=[], domain=(-1, 1)).resolve(**RESOLVE_KW)
+    root = ET.fromstring(row.svg)  # noqa: S314
+    assert not list(root)
+    known = QuantileDotplot(quantiles=[], dot_count=20, domain=(-1, 1)).resolve(**RESOLVE_KW)
+    assert "1/20" in known[1].svg

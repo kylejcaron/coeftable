@@ -181,6 +181,9 @@ def to_gt(table: CoefTable) -> GT:
     side_border_style = "none" if theme.border_style == "minimal" else "solid"
     return gt.tab_options(
         table_font_size=theme.table_font_size,
+        table_background_color=theme.surface,
+        table_font_color=theme.text,
+        table_font_color_light=theme.text,
         column_labels_font_size="16px",
         data_row_padding="10px",
         column_labels_padding="12px",

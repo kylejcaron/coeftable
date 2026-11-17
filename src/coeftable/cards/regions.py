@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import re
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol, cast, runtime_checkable
 
 from coeftable.annotations import (
@@ -34,12 +34,16 @@ from coeftable.cards.adornments import (
     _require_str,
 )
 from coeftable.cards.chrome import CardChrome
+from coeftable.dotplots import DotValues, prepare_dots
 from coeftable.errors import SpecError
 from coeftable.format import DateAxis, Format, Number, TimeFormat, is_missing
 from coeftable.svg import (
+    _prepare_dotplot_row,
+    _render_dotplot_row,
     _sparkline_y_axis_gutter,
     forest_axis,
     forest_bar,
+    quantile_dotplot_axis,
     sparkline_axis,
     sparkline_bar,
 )
@@ -620,3 +624,106 @@ class Interval(Region):
         )
         axis = InlineSvg(axis_svg, width=width, height=_svg_height(axis_svg, name="Interval axis"))
         return (bar, axis)
+
+
+@dataclass(frozen=True, slots=True)
+class QuantileDotplot(Region):
+    """Equal-mass uncertainty dots with a matching axis and legend.
+
+    Supply equal-weight samples or ordered midpoint quantiles; intervals alone
+    cannot determine the distribution. Source arrays are snapshotted. The
+    default is 20 inverse empirical quantiles for samples; precomputed values
+    determine their own count. Off-scale representatives retain their denominator.
+    """
+
+    domain: tuple[float, float]
+    samples: Sequence[float] | None = None
+    quantiles: Sequence[float] | None = None
+    dot_count: int | None = None
+    ref: float = 0.0
+    dot_size: float = 4.0
+    height: int | None = None
+    inset: int = 3
+    fmt: Format = _DEFAULT_FORMAT
+    role: Role | None = None
+    show_axis: bool = True
+    show_legend: bool = True
+    annotations: Sequence[ResolvedAnnotation] = ()
+    _values: DotValues = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        """Validate and snapshot intrinsic input, before card width is known."""
+        values = prepare_dots(
+            samples=self.samples,
+            quantiles=self.quantiles,
+            dot_count=self.dot_count,
+            context="QuantileDotplot",
+        )
+        _set(self, "_values", values)
+        if self.samples is not None:
+            _set(self, "samples", tuple(self.samples))
+        if self.quantiles is not None:
+            _set(self, "quantiles", tuple(self.quantiles))
+        _set(self, "domain", _canonical_domain(self.domain, name="QuantileDotplot.domain"))
+        _require_finite_number(self.ref, name="QuantileDotplot.ref")
+        _require_finite_number(self.dot_size, name="QuantileDotplot.dot_size")
+        if self.dot_size <= 0:
+            raise SpecError("QuantileDotplot.dot_size must be positive")
+        _require_nonnegative_int(self.inset, name="QuantileDotplot.inset")
+        if self.height is not None:
+            _require_positive_int(self.height, name="QuantileDotplot.height")
+        _require_callable(self.fmt, name="QuantileDotplot.fmt")
+        if self.role is not None:
+            _require_member(self.role, _ROLES, name="QuantileDotplot.role")
+        _require_bool(self.show_axis, name="QuantileDotplot.show_axis")
+        _require_bool(self.show_legend, name="QuantileDotplot.show_legend")
+        marks = _canonical(self.annotations, name="QuantileDotplot.annotations")
+        if any(not isinstance(m, (ResolvedRule, ResolvedBand)) or m.axis != "x" for m in marks):
+            raise SpecError("QuantileDotplot requires resolved x annotations")
+        _set(self, "annotations", marks)
+
+    def resolve(self, *, width: int, theme: Theme, chrome: CardChrome) -> tuple[InlineSvg, ...]:
+        """Resolve through the shared SVG geometry with exact measured heights."""
+        del chrome
+        row = _prepare_dotplot_row(
+            self._values,
+            domain=self.domain,
+            ref=self.ref,
+            width=width,
+            dot_size=self.dot_size,
+            inset=self.inset,
+        )
+        height = max(34, row.minimum_height) if self.height is None else self.height
+        svg = _render_dotplot_row(
+            row,
+            domain=self.domain,
+            ref=self.ref,
+            color=theme.color(self.role or "neutral"),
+            theme=theme,
+            width=width,
+            height=height,
+            dot_size=self.dot_size,
+            inset=self.inset,
+            annotations=self.annotations,
+        )
+        bar = InlineSvg(svg, width=width, height=height)
+        if self._values.dot_count is None or not (self.show_axis or self.show_legend):
+            return (bar,)
+        footer = quantile_dotplot_axis(
+            domain=self.domain,
+            ref=self.ref,
+            dot_count=self._values.dot_count,
+            fmt=self.fmt,
+            theme=theme,
+            width=width,
+            dot_size=self.dot_size,
+            inset=self.inset,
+            show_axis=self.show_axis,
+            show_legend=self.show_legend,
+        )
+        return (
+            bar,
+            InlineSvg(
+                footer, width=width, height=_svg_height(footer, name="QuantileDotplot axis")
+            ),
+        )

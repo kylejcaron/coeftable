@@ -115,6 +115,92 @@ experiment = pl.DataFrame(
 )
 ```
 
+## Quantile dotplots
+
+Use `style="dotplot"` to show a supplied uncertainty distribution instead of an
+interval. Each dot represents approximately the same share of that distribution;
+20 dots means about 5% per dot. This is display resolution, **not sample size**.
+Existing `.forest(...)` calls still render intervals.
+
+Supply a list of equal-weight draws for each row. No confidence interval is
+required, and a missing point estimate does not hide a valid distribution:
+
+```python
+import pandas as pd
+import coeftable as ct
+
+results = pd.DataFrame({
+    "term": ["Treatment", "Interaction"],
+    "effect": [0.3, -0.1],
+    "draws": [
+        [-0.2, 0.0, 0.1, 0.2, 0.3, 0.3, 0.4, 0.5, 0.7, 1.0],
+        [-0.8, -0.4, -0.3, -0.2, -0.1, -0.1, 0.0, 0.1, 0.3, 0.5],
+    ],
+})
+
+table = (
+    ct.CoefTable(results, rows="term")
+    .estimate("Effect", "effect")
+    .forest("Uncertainty", of="Effect", style="dotplot",
+            samples="draws", dot_count=20)
+)
+html = table.as_raw_html()
+```
+
+Samples use deterministic inverse empirical quantiles at probabilities
+`(i + 0.5) / N`, without interpolation. Repeated values retain their weight;
+discrete outcomes never acquire invented intermediate values. Dots keep their
+horizontal values and stack vertically. `dot_size` sets their shared diameter
+in pixels (default 4). Automatic row height fits the densest stack; an explicit
+height that cannot fit raises `SpecError`.
+
+For another quantile convention or an analytical distribution, calculate the
+midpoint quantiles yourself. `quantiles="column"` selects a list-valued column
+instead of `samples`; every nonempty row must have the same count N and contain
+nondecreasing values. An explicit `dot_count` must match N.
+
+The same primitives work outside tables:
+
+```python
+from statistics import NormalDist
+from coeftable import Number
+from coeftable.plots import quantile_dotplot, quantile_dotplot_axis
+from coeftable.theme import DEFAULT
+from coeftable.cards import Card, QuantileDotplot
+
+quantiles = [NormalDist(0.3, 0.4).inv_cdf((i + 0.5) / 20) for i in range(20)]
+plot_svg = quantile_dotplot(
+    quantiles=quantiles, domain=(-1, 2), ref=0,
+    color=DEFAULT.neutral, theme=DEFAULT,
+)
+axis_svg = quantile_dotplot_axis(
+    domain=(-1, 2), ref=0, dot_count=20, fmt=Number(), theme=DEFAULT,
+)
+card = Card("Uncertainty", content=[
+    QuantileDotplot(quantiles=quantiles, domain=(-1, 2))
+])
+card_html = card.as_raw_html()
+```
+
+Table axes fit all represented quantiles by default. Explicit `ylim` or
+`autoscale="robust"` may crop them: directional labels count off-scale dots
+using the **original denominator**, never renormalizing or piling them onto
+the boundary. These counts approximate omitted mass, not exact model tail
+probabilities. Even a full-range dotplot does not show an unbounded
+distribution's entire support.
+
+`show_axis=False` hides ticks without hiding the explanation;
+`show_legend=False` hides the explanation independently. In standalone output,
+pair the row SVG with the matching axis/legend SVG. Empty precomputed input
+without a known count has no footer. `None`/empty table cells are blank;
+nonempty distributions containing null, nonfinite, or nonnumeric entries fail
+rather than silently changing weights.
+
+Label what the inputs mean: posterior draws, bootstrap replicates and predictive
+outcomes are not interchangeable. Dots default to neutral color, not a
+significance verdict; existing explicit color rules/roles remain available.
+Coeftable does not fit a distribution from interval endpoints.
+
 ## Comparing methods
 
 Use `split_columns` to compare multiple methods side by side. Each value in the

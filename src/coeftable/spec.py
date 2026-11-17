@@ -482,7 +482,7 @@ class _DotForestState:
 
 @dataclass(frozen=True)
 class Forest:
-    """A column rendering an inline SVG interval bar.
+    """A column rendering an inline interval bar or equal-mass quantile dotplot.
 
     Parameters
     ----------
@@ -522,6 +522,27 @@ class Forest:
         Callable labelling axis ticks; defaults to the bound estimate's `fmt`.
     annotations
         Rules and bands drawn in each non-empty plot cell.
+    style
+        ``"interval"`` (default), or ``"dotplot"`` for a supplied distribution.
+    samples, quantiles
+        Exactly one list-valued source column in dotplot mode. Samples use
+        inverse empirical midpoint quantiles without interpolation. Precomputed
+        quantiles must be ordered values at levels ``(i + 0.5) / N``.
+    dot_count
+        Sample display count (default 20), or a check on supplied quantile count.
+        Nonempty quantile rows must share N across groups/splits.
+    dot_size
+        Dot diameter in pixels, shared across rows. Automatic row height grows
+        to fit stacks; an explicit insufficient height raises ``SpecError``.
+    show_legend
+        Show the shared equal-mass explanation independently of axis ticks.
+
+    Notes
+    -----
+    Dotplots need no CI and survive missing point estimates. Missing/empty
+    distributions render blank. Neutral dots do not claim significance; an
+    explicit color rule still applies. Cropping shows omitted-dot counts with
+    original N, not exact source tail probabilities. Interval mode is unchanged.
     """
 
     label: str
@@ -1766,6 +1787,17 @@ class CoefTable:
             Callable labelling axis ticks.
         annotations
             Rules and bands drawn in each non-empty plot cell.
+        style
+            ``"interval"`` (default) or ``"dotplot"``; see `Forest`.
+        samples, quantiles
+            Exactly one distribution source column for dotplots: equal-weight
+            draws or nondecreasing midpoint quantiles, never CI endpoints.
+        dot_count
+            Sample display count (default 20); precomputed rows infer/check N.
+        dot_size
+            Shared dot diameter in pixels. Automatic height fits dense stacks.
+        show_legend
+            Display the shared dot-mass explanation independently of axis ticks.
 
         Returns
         -------

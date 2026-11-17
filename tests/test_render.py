@@ -1,5 +1,6 @@
 import random
 import re
+from dataclasses import replace
 from datetime import date
 from html.parser import HTMLParser
 
@@ -172,8 +173,13 @@ def test_groups_emit_section_headers():
 
 
 def test_theme_colours_reach_the_html():
-    html = table().with_theme(MONO).forest("Plot", of="Lift %").gt().as_raw_html()
-    assert MONO.color("favorable").lstrip("#").lower() in html.lower()
+    theme = replace(MONO, surface="#17191d", text="#eeeeee")
+    html = table().with_theme(theme).forest("Plot", of="Lift %").gt().as_raw_html()
+    assert theme.color("favorable").lstrip("#").lower() in html.lower()
+    table_css = re.search(r"\.gt_table\s*\{([^}]+)\}", html)
+    assert table_css is not None
+    assert "background-color: #17191d" in table_css[1].lower()
+    assert "color: #eeeeee" in table_css[1].lower()
 
 
 def test_repr_html_delegates_to_gt():
