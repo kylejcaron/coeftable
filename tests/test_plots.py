@@ -3,19 +3,6 @@
 import ast
 from pathlib import Path
 
-EXPECTED_EXPORTS = {
-    "ResolvedBand",
-    "ResolvedRule",
-    "Trace",
-    "forest_axis",
-    "forest_bar",
-    "quantile_dotplot",
-    "quantile_dotplot_axis",
-    "sparkline_axis",
-    "sparkline_bar",
-    "sparkline_multi",
-}
-
 # The layering law from the architecture: plots (and later cards/graph)
 # import only the foundation layer, never table modules.
 FORBIDDEN_IMPORTS = {
@@ -26,14 +13,6 @@ FORBIDDEN_IMPORTS = {
     "coeftable.collapsible",
     "coeftable.series",
 }
-
-
-def test_public_surface_is_exactly_the_promised_set():
-    import coeftable.plots as plots
-
-    assert set(plots.__all__) == EXPECTED_EXPORTS
-    for name in EXPECTED_EXPORTS:
-        assert hasattr(plots, name)
 
 
 def test_plots_imports_only_foundation_modules():

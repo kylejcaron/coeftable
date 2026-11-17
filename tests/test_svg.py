@@ -2819,3 +2819,182 @@ def test_dotplot_small_domain_ticks_stay_distinct_and_inside_viewport(low):
     assert len(values) >= 2
     assert all(low <= value <= high for value in values)
     assert values == sorted(set(values))
+
+
+@pytest.mark.integration
+def test_tooltip_payload_preserves_original_clipped_values_and_literal_extras():
+    import json
+    import xml.etree.ElementTree as ET
+
+    from coeftable import Tooltip, TooltipValues
+
+    hostile = 'quotes " <script>alert(1)</script> &'
+    svg = sparkline_bar(
+        [0, 2, 4],
+        [1, None, 5],
+        [None] * 3,
+        [None] * 3,
+        x_domain=(0, 4),
+        domain=(0, 3),
+        ref=None,
+        color="#123456",
+        fmt=str,
+        tooltip=Tooltip(fmt=str),
+        tooltip_values=[TooltipValues("Note", [hostile] * 3)],
+    )
+    root = ET.fromstring(svg)  # noqa: S314 - generated SVG
+    payload = json.loads(root.attrib["data-ct-tooltip"])
+    points = payload["traces"][0]["points"]
+    assert points[1]["status"] == "missing"
+    assert points[1]["py"] is None
+    assert points[2]["value_text"] == "5"
+    assert points[2]["status"] == "above"
+    assert points[2]["py"] == payload["rect"]["top"]
+    assert points[0]["extras"] == [["Note", hostile]]
+    assert json.dumps(payload, allow_nan=False)
+    del root.attrib["data-ct-tooltip"]
+    static = sparkline_bar(
+        [0, 2, 4],
+        [1, None, 5],
+        [None] * 3,
+        [None] * 3,
+        x_domain=(0, 4),
+        domain=(0, 3),
+        ref=None,
+        color="#123456",
+        fmt=str,
+    )
+    assert ET.tostring(root) == ET.tostring(ET.fromstring(static))  # noqa: S314
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("estimate", "bounds", "status"),
+    [
+        (None, (-1, 1), "missing"),
+        (5, (4, 6), "right"),
+        (1, (None, float("inf")), "value"),
+    ],
+)
+def test_forest_tooltip_retains_missing_offscale_and_unbounded_records(estimate, bounds, status):
+    import json
+    import xml.etree.ElementTree as ET
+
+    from coeftable import Tooltip, TooltipValues
+
+    svg = forest_bar(
+        estimate,
+        *bounds,
+        domain=(-2, 2),
+        ref=0,
+        color="#123456",
+        theme=DEFAULT,
+        tooltip=Tooltip(fmt=str),
+        tooltip_values=[TooltipValues("n", [20])],
+    )
+    payload = json.loads(ET.fromstring(svg).attrib["data-ct-tooltip"])  # noqa: S314
+    point = payload["traces"][0]["points"][0]
+    assert point["status"] == status
+    assert point["x"] is point["px"] is point["py"] is None
+    assert point["extras"] == [["n", "20"]]
+    assert point["lower_text"] == ("−∞" if bounds[0] is None else str(bounds[0]))
+    assert point["upper_text"] == ("∞" if bounds[1] == float("inf") else str(bounds[1]))
+    json.dumps(payload, allow_nan=False)
+
+
+@pytest.mark.integration
+def test_tooltip_equal_domains_keep_positive_interaction_bounds():
+    import json
+    import xml.etree.ElementTree as ET
+
+    from coeftable import Tooltip
+
+    svg = sparkline_bar(
+        [1],
+        [1],
+        [None],
+        [None],
+        x_domain=(1, 1),
+        domain=(1, 1),
+        ref=None,
+        color="#123456",
+        fmt=str,
+        tooltip=Tooltip(),
+    )
+    rect = json.loads(ET.fromstring(svg).attrib["data-ct-tooltip"])["rect"]  # noqa: S314
+    assert rect["top"] == 3
+    assert rect["bottom"] == 27
+    assert rect["right"] > rect["left"]
+    with pytest.raises(SpecError):
+        sparkline_bar(
+            [1],
+            [1],
+            [None],
+            [None],
+            x_domain=(1, 1),
+            domain=(1, 1),
+            ref=None,
+            color="#123456",
+            fmt=str,
+            tooltip=Tooltip(),
+            height=6,
+        )
+
+
+@pytest.mark.integration
+def test_multitrace_tooltip_validates_outer_and_each_inner_alignment():
+    import json
+    import xml.etree.ElementTree as ET
+
+    from coeftable import Tooltip, TooltipValues
+
+    traces = [
+        Trace([0, 1], [1, 2], [None] * 2, [None] * 2, "#111", False, "A"),
+        Trace([0], [3], [None], [None], "#222", False, "B"),
+    ]
+    kwargs: dict[str, Any] = dict(
+        x_domain=(0, 1), domain=(0, 3), ref=None, ref_color="#333", fmt=str
+    )
+    with pytest.raises(SpecError):
+        sparkline_multi(traces, **kwargs, tooltip=Tooltip(), tooltip_values=[[]])
+    with pytest.raises(SpecError):
+        sparkline_multi(
+            traces,
+            **kwargs,
+            tooltip=Tooltip(),
+            tooltip_values=[[TooltipValues("n", [10])], []],
+        )
+    svg = sparkline_multi(
+        traces,
+        **kwargs,
+        tooltip=Tooltip(),
+        tooltip_values=[[TooltipValues("n", [10, 20])], [TooltipValues("n", [30])]],
+    )
+    payload = json.loads(ET.fromstring(svg).attrib["data-ct-tooltip"])  # noqa: S314
+    assert payload["traces"][1]["points"][0]["extras"] == [["n", "30"]]
+
+
+@pytest.mark.integration
+def test_forest_nan_bounds_match_existing_unbounded_drawing_semantics():
+    import json
+    import xml.etree.ElementTree as ET
+
+    from coeftable import Tooltip
+
+    points = []
+    for bound in (None, float("nan")):
+        svg = forest_bar(
+            1,
+            bound,
+            bound,
+            domain=(-2, 2),
+            ref=0,
+            color="#123",
+            theme=DEFAULT,
+            tooltip=Tooltip(),
+        )
+        payload = json.loads(ET.fromstring(svg).attrib["data-ct-tooltip"])  # noqa: S314
+        points.append(payload["traces"][0]["points"][0])
+    assert points[0] == points[1]
+    assert points[1]["unbounded_lower"] is True
+    assert points[1]["unbounded_upper"] is True

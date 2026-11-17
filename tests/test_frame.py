@@ -954,3 +954,51 @@ def test_dotplot_automatic_domain_retains_extreme_finite_values(quantiles, ref):
     else:
         assert 5 <= left < middle == 110 < right <= 215
     assert resolved.axis_rows
+
+
+@pytest.mark.integration
+def test_forest_inspection_uses_row_fields_primary_format_and_preserves_blank_cells():
+    import html
+    import json
+    import re
+
+    from coeftable import CoefTable, Tooltip, TooltipField
+
+    raw = pl.DataFrame(
+        {
+            "metric": ["A", "Missing"],
+            "y": [5, None],
+            "lo": [4, -1],
+            "hi": [6, 1],
+            "n": [20, 99],
+        }
+    )
+    table = (
+        CoefTable(raw, rows="metric")
+        .estimate("Value", "y", ci=("lo", "hi"), fmt=lambda value: f"v={value:g}")
+        .forest(
+            "Plot",
+            of="Value",
+            ylim=(-2, 2),
+            tooltip=Tooltip(fields=[TooltipField("n")], value_label="Effect"),
+        )
+    )
+    payloads = re.findall(r'data-ct-tooltip="([^"]+)"', table.as_raw_html())
+    assert len(payloads) == 1
+    payload = json.loads(html.unescape(payloads[0]))
+    assert payload["labels"]["value"] == "Effect"
+    point = payload["traces"][0]["points"][0]
+    assert point["value_text"] == "v=5"
+    assert point["lower_text"] == "v=4"
+    assert point["upper_text"] == "v=6"
+    assert point["status"] == "right"
+    assert point["extras"] == [["n", "20"]]
+
+
+@pytest.mark.integration
+def test_dotplot_rejects_interval_tooltip_instead_of_silently_ignoring_it():
+    from coeftable import SpecError, Tooltip
+
+    data = pd.DataFrame({"term": ["a"], "value": [0.0], "q": [[-1, 1]]})
+    with pytest.raises(SpecError):
+        _dot_table(data, quantiles="q", tooltip=Tooltip()).as_raw_html()

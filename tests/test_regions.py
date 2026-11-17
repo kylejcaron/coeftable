@@ -1033,3 +1033,92 @@ def test_empty_quantile_region_omits_unknown_count_footer():
     assert not list(root)
     known = QuantileDotplot(quantiles=[], dot_count=20, domain=(-1, 1)).resolve(**RESOLVE_KW)
     assert "1/20" in known[1].svg
+
+
+@pytest.mark.integration
+def test_region_inspection_matches_direct_primitives_without_changing_dimensions():
+    import json
+    import xml.etree.ElementTree as ET
+
+    from coeftable import Tooltip, TooltipValues
+    from coeftable.plots import forest_bar, sparkline_bar
+
+    class ObservationFormat:
+        def __bool__(self):
+            return False
+
+        def __call__(self, value):
+            return f"observed:{value:g}"
+
+    tooltip = Tooltip(
+        fmt=ObservationFormat(),
+        x_fmt=ObservationFormat(),
+        value_label="Sales",
+        x_label="Date",
+    )
+    extras = [TooltipValues("n", [10, 20])]
+    trend = Trend(
+        x=[0, 2],
+        y=[1, 1],
+        domain=(1, 1),
+        x_domain=(0, 2),
+        fmt=str,
+        tooltip=tooltip,
+        tooltip_values=extras,
+        show_axis=False,
+        show_endpoint=False,
+    )
+    inline = trend.resolve(width=220, theme=DEFAULT, chrome=DEFAULT_CHROME)[0]
+    direct = sparkline_bar(
+        [0, 2],
+        [1, 1],
+        [None, None],
+        [None, None],
+        x_domain=(0, 2),
+        domain=(1, 1),
+        ref=None,
+        color=DEFAULT.neutral,
+        fmt=str,
+        show_endpoint=False,
+        tooltip=tooltip,
+        tooltip_values=extras,
+    )
+    region_root = ET.fromstring(inline.svg)  # noqa: S314 - generated SVG
+    direct_root = ET.fromstring(direct)  # noqa: S314
+    assert json.loads(region_root.attrib["data-ct-tooltip"]) == json.loads(
+        direct_root.attrib["data-ct-tooltip"]
+    )
+    assert json.loads(region_root.attrib["data-ct-tooltip"])["labels"] == {
+        "value": "Sales",
+        "x": "Date",
+    }
+    point = json.loads(region_root.attrib["data-ct-tooltip"])["traces"][0]["points"][0]
+    assert point["value_text"] == "observed:1"
+    assert point["x_text"] == "observed:0"
+    assert (inline.width, inline.height) == (220, 30)
+    interval = Interval(
+        1,
+        0,
+        2,
+        domain=(-2, 2),
+        fmt=str,
+        tooltip=tooltip,
+        tooltip_values=[TooltipValues("n", [10])],
+        show_axis=False,
+    )
+    region_bar = interval.resolve(width=220, theme=DEFAULT, chrome=DEFAULT_CHROME)[0]
+    bar = forest_bar(
+        1,
+        0,
+        2,
+        domain=(-2, 2),
+        ref=0,
+        color=DEFAULT.inconclusive,
+        theme=DEFAULT,
+        tooltip=tooltip,
+        tooltip_values=[TooltipValues("n", [10])],
+    )
+    assert json.loads(ET.fromstring(region_bar.svg).attrib["data-ct-tooltip"]) == json.loads(  # noqa: S314
+        ET.fromstring(bar).attrib["data-ct-tooltip"]  # noqa: S314
+    )
+    assert (region_bar.width, region_bar.height) == (220, 18)

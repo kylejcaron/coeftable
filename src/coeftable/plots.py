@@ -25,10 +25,14 @@ from coeftable.svg import (
     sparkline_bar,
     sparkline_multi,
 )
+from coeftable.tooltips import Tooltip, TooltipField, TooltipValues
 
 __all__ = [
     "ResolvedBand",
     "ResolvedRule",
+    "Tooltip",
+    "TooltipField",
+    "TooltipValues",
     "Trace",
     "forest_axis",
     "forest_bar",
