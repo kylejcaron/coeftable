@@ -20,6 +20,7 @@ from coeftable.annotations import (
 )
 from coeftable.cards import Card
 from coeftable.collapsible import make_collapsible
+from coeftable.dotplots import DotValues, prepare_dots
 from coeftable.errors import ColumnNotFoundError, SpecError
 from coeftable.format import (
     CIStyle,
@@ -34,9 +35,13 @@ from coeftable.format import (
 from coeftable.svg import (
     CLIP_MARGIN,
     Trace,
+    _DotRow,
+    _prepare_dotplot_row,
+    _render_dotplot_row,
     _sparkline_y_axis_gutter,
     forest_axis,
     forest_bar,
+    quantile_dotplot_axis,
     sparkline_axis,
     sparkline_bar,
     sparkline_multi,
@@ -464,6 +469,18 @@ class _ForestState:
 
 
 @dataclass(frozen=True)
+class _DotForestState:
+    domains: dict[Any, tuple[float, float]]
+    rows: tuple[_DotRow, ...]
+    values: tuple[DotValues, ...]
+    dot_count: int | None
+    height: int
+    source: Estimate
+    estimates: _EstimateState
+    annotations: PreparedAnnotations
+
+
+@dataclass(frozen=True)
 class Forest:
     """A column rendering an inline SVG interval bar.
 
@@ -519,13 +536,23 @@ class Forest:
     show_axis: bool = True
     axis_fmt: Format | None = None
     annotations: tuple[Annotation, ...] = ()
+    style: Literal["interval", "dotplot"] = "interval"
+    samples: str | None = None
+    quantiles: str | None = None
+    dot_count: int | None = None
+    dot_size: float = 4.0
+    show_legend: bool = True
 
     def sources(self) -> Iterable[str]:
-        """Frame columns read by this plot's annotations."""
-        return annotation_sources(self.annotations)
+        """Frame columns read by the distribution and annotations."""
+        sources = list(annotation_sources(self.annotations))
+        sources.extend(name for name in (self.samples, self.quantiles) if name is not None)
+        return sources
 
     def prepare(self, scan: Scan) -> Prepared:
         """Compute this column's per-key domains, annotations, and footer schedule."""
+        if self.style == "dotplot":
+            return self._prepare_dots(scan)
         source = _estimate_by_label(scan.columns, self.of)
         assert source.ci is not None  # noqa: S101 - guaranteed by validate_columns
         source_state: _EstimateState = source.prepare(scan).payload
@@ -585,8 +612,118 @@ class Forest:
             shared_footer=self.scale in ("table", "split_column"),
         )
 
+    def _prepare_dots(self, scan: Scan) -> Prepared:
+        source = _estimate_by_label(scan.columns, self.of)
+        estimates: _EstimateState = source.prepare(scan).payload
+        name = self.samples if self.samples is not None else self.quantiles
+        assert name is not None  # noqa: S101 - validated source configuration
+        raw = scan.frame[name].to_list()
+        values = tuple(
+            prepare_dots(
+                samples=([] if cell is None else cell) if self.samples is not None else None,
+                quantiles=([] if cell is None else cell) if self.quantiles is not None else None,
+                dot_count=self.dot_count,
+                context=f"Forest {self.label!r}, column {name!r}, row {scan.row_keys[i]!r}",
+            )
+            for i, cell in enumerate(raw)
+        )
+        counts = {v.dot_count for v in values if v.dot_count is not None}
+        if len(counts) > 1:
+            raise SpecError(f"Forest {self.label!r}: all rows must share one dot_count")
+        count = next(iter(counts), self.dot_count)
+        annotations = prepare_annotations(
+            self.annotations,
+            scan.frame,
+            axis_kinds={"x": "numeric"},
+            plot_label=self.label,
+            row_identities=tuple(
+                zip(scan.row_keys, scan.nest_keys, scan.group_keys, scan.split_keys, strict=True)
+            ),
+        )
+        keys = [
+            _domain_key(self, row, group, split)
+            for row, group, split in zip(
+                scan.row_keys, scan.group_keys, scan.split_keys, strict=True
+            )
+        ]
+        buckets: dict[Any, list[float]] = {}
+        required: dict[Any, list[float]] = {}
+        for i, key in enumerate(keys):
+            buckets.setdefault(key, []).extend(values[i].quantiles)
+            if values[i].quantiles:
+                required.setdefault(key, []).extend(domain_values(annotations.by_row[i], axis="x"))
+        domains = {
+            key: _bucket_domain(
+                vals,
+                self.ref,
+                override=self.ylim,
+                max_domain=None,
+                autoscale=self.autoscale,
+                required=required.get(key, ()),
+                symmetric=self.symmetric,
+            )
+            for key, vals in buckets.items()
+        }
+        rows = tuple(
+            _prepare_dotplot_row(
+                value,
+                domain=domains[key],
+                ref=self.ref,
+                width=self.width,
+                dot_size=self.dot_size,
+                inset=3,
+            )
+            for value, key in zip(values, keys, strict=True)
+        )
+        minimum = max((row.minimum_height for row in rows), default=1)
+        height = (
+            max(minimum, _plot_height((source,), None)) if self.height is None else self.height
+        )
+        if isinstance(height, bool) or not isinstance(height, int) or height < minimum:
+            raise SpecError(f"Forest {self.label!r}: height must be at least {minimum}px")
+        footer_key = (
+            (lambda row, group, split: _domain_key(self, row, group, split))
+            if count is not None and (self.show_axis or self.show_legend)
+            else None
+        )
+        return Prepared(
+            payload=_DotForestState(
+                domains, rows, values, count, height, source, estimates, annotations
+            ),
+            footer_key=footer_key,
+            shared_footer=self.scale in ("table", "split_column"),
+        )
+
+    def _dot_cell(self, ctx: Cell, state: _DotForestState) -> str:
+        if not state.values[ctx.index].quantiles:
+            return ""
+        estimates = state.estimates
+        role: Role = "neutral"
+        if ctx.color_rule is not None:
+            role = ctx.color_rule(
+                estimates.value[ctx.index],
+                estimates.low[ctx.index] if estimates.low is not None else None,
+                estimates.high[ctx.index] if estimates.high is not None else None,
+                self.ref,
+            )
+        key = _domain_key(self, ctx.row_key, ctx.group, ctx.split)
+        return _render_dotplot_row(
+            state.rows[ctx.index],
+            domain=state.domains[key],
+            ref=self.ref,
+            color=ctx.theme.color(role),
+            theme=ctx.theme,
+            width=self.width,
+            height=state.height,
+            dot_size=self.dot_size,
+            inset=3,
+            annotations=state.annotations.by_row[ctx.index],
+        )
+
     def cell(self, ctx: Cell) -> str:
         """Render an interval bar, coloured by role, against its shared domain."""
+        if isinstance(ctx.prepared.payload, _DotForestState):
+            return self._dot_cell(ctx, ctx.prepared.payload)
         state: _ForestState = ctx.prepared.payload
         value = state.value[ctx.index]
         low = state.low[ctx.index]
@@ -612,6 +749,21 @@ class Forest:
 
     def footer(self, ctx: Footer) -> str | None:
         """Render the shared axis for a completed domain."""
+        if isinstance(ctx.prepared.payload, _DotForestState):
+            dots = ctx.prepared.payload
+            if dots.dot_count is None:
+                return None
+            return quantile_dotplot_axis(
+                domain=dots.domains[ctx.key],
+                ref=self.ref,
+                dot_count=dots.dot_count,
+                fmt=self.axis_fmt or dots.source.fmt,
+                theme=ctx.theme,
+                width=self.width,
+                dot_size=self.dot_size,
+                show_axis=self.show_axis,
+                show_legend=self.show_legend,
+            )
         state: _ForestState = ctx.prepared.payload
         return forest_axis(
             domain=state.domains[ctx.key],
@@ -1350,7 +1502,25 @@ def validate_columns(columns: tuple[Column, ...]) -> None:
                 f"Forest column {column.label!r} references estimate {column.of!r}, "
                 f"which is not declared. Declared estimates: {sorted(estimates)}."
             )
-        if target.ci is None:
+        if column.style not in ("interval", "dotplot"):
+            raise SpecError(f"Forest {column.label!r}: style must be interval or dotplot")
+        if column.style == "interval":
+            if (
+                column.samples is not None
+                or column.quantiles is not None
+                or column.dot_count is not None
+            ):
+                raise SpecError("Distribution sources and dot_count require style='dotplot'")
+        else:
+            if (column.samples is None) == (column.quantiles is None):
+                raise SpecError("Dotplot Forest requires exactly one samples or quantiles column")
+            if any(
+                name is not None and (not isinstance(name, str) or not name)
+                for name in (column.samples, column.quantiles)
+            ):
+                raise SpecError("Dotplot source column names must be nonempty strings")
+            prepare_dots(samples=[], dot_count=column.dot_count)
+        if target.ci is None and column.style == "interval":
             raise SpecError(
                 f"Forest column {column.label!r} references estimate {column.of!r}, "
                 "which has no confidence interval to plot."
@@ -1551,6 +1721,12 @@ class CoefTable:
         show_axis: bool = True,
         axis_fmt: Format | None = None,
         annotations: Sequence[Annotation] = (),
+        style: Literal["interval", "dotplot"] = "interval",
+        samples: str | None = None,
+        quantiles: str | None = None,
+        dot_count: int | None = None,
+        dot_size: float = 4.0,
+        show_legend: bool = True,
     ) -> CoefTable:
         """Append a forest-plot column bound to an existing estimate.
 
@@ -1610,6 +1786,12 @@ class CoefTable:
                 show_axis=show_axis,
                 axis_fmt=axis_fmt,
                 annotations=tuple(annotations),
+                style=style,
+                samples=samples,
+                quantiles=quantiles,
+                dot_count=dot_count,
+                dot_size=dot_size,
+                show_legend=show_legend,
             )
         )
 

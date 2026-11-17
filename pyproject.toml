@@ -96,6 +96,7 @@ convention = "numpy"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["integration: crosses dataframe rendering or composition boundaries"]
 addopts = [
     "-v",
     "--strict-markers",
