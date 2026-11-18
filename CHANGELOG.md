@@ -1,3 +1,20 @@
+<a id="v0.15.0"></a>
+# [v0.15.0](https://github.com/kylejcaron/coeftable/releases/tag/v0.15.0) - 2026-11-17
+
+<!-- Release notes generated using configuration in .github/release.yml at v0.15.0 -->
+
+## What's Changed
+### New Features
+* feat: add quantile dotplots to forest tables and cards by [@kylejcaron](https://github.com/kylejcaron) in [#71](https://github.com/kylejcaron/coeftable/pull/71)
+### Maintenance
+* Update changelog for v0.14.0 by [@github-actions](https://github.com/github-actions)[bot] in [#70](https://github.com/kylejcaron/coeftable/pull/70)
+
+
+**Full Changelog**: https://github.com/kylejcaron/coeftable/compare/v0.14.0...v0.15.0
+
+[Changes][v0.15.0]
+
+
 <a id="v0.14.0"></a>
 # [v0.14.0](https://github.com/kylejcaron/coeftable/releases/tag/v0.14.0) - 2026-11-15
 
@@ -319,6 +336,7 @@
 [Changes][v0.1.0]
 
 
+[v0.15.0]: https://github.com/kylejcaron/coeftable/compare/v0.14.0...v0.15.0
 [v0.14.0]: https://github.com/kylejcaron/coeftable/compare/v0.13.1...v0.14.0
 [v0.13.1]: https://github.com/kylejcaron/coeftable/compare/v0.13.0...v0.13.1
 [v0.13.0]: https://github.com/kylejcaron/coeftable/compare/v0.12.1...v0.13.0
